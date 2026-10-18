@@ -457,3 +457,13 @@ func TestPRBodyDropsAIAttribution(t *testing.T) {
 		t.Fatalf("PR body lost land's text or kept trailing blank lines:\n%q", pub.pr.Body)
 	}
 }
+
+func TestRunContinuesAnEarlierProgressLog(t *testing.T) {
+	j := newJob(t, 1)
+	writeFile(t, filepath.Join(j.Dir, "progress.md"), "## Iteration 1: verify gate failed\n\nmissing ok.txt\n\n")
+	f := &fakeStages{t: t, steps: []step{reports(runner.StatusDone, "try")}}
+	Pipeline{Stages: f, Shell: shell()}.Run(context.Background(), j)
+	if !strings.Contains(f.stages[0].Prompt, "## Iteration 1: verify gate failed") {
+		t.Fatalf("first prompt of a resumed job lacks its earlier log:\n%s", f.stages[0].Prompt)
+	}
+}

@@ -81,6 +81,11 @@ func (p Pipeline) Run(ctx context.Context, j Job) Outcome {
 	ctx, cancel := context.WithTimeout(ctx, j.Loop.Bounds.Timeout)
 	defer cancel()
 	r := &jobRun{Pipeline: p, job: j, progress: progressLog{path: filepath.Join(j.Dir, "progress.md")}}
+	earlier, err := os.ReadFile(r.progress.path)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return Outcome{State: store.Failed, Err: err}
+	}
+	r.progress.text = string(earlier)
 	out, err := r.iterate(ctx)
 	switch {
 	case errors.Is(err, context.DeadlineExceeded):
