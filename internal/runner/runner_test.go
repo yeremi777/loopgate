@@ -163,9 +163,9 @@ func TestRunKeepsOnlyAllowlistedEnv(t *testing.T) {
 }
 
 func TestTimeoutKillsWholeProcessGroup(t *testing.T) {
-	fake := newFake(t, `cat >/dev/null; sleep 300 & echo $! > "$REC/grandchild"; echo $$ > "$REC/child"; wait`)
+	fake := newFake(t, `echo $$ > "$REC/child"; cat >/dev/null; sleep 300 & echo $! > "$REC/grandchild"; wait`)
 	start := time.Now()
-	_, err := fake.runner().Run(context.Background(), Stage{Dir: t.TempDir(), Prompt: "p", Timeout: 500 * time.Millisecond})
+	_, err := fake.runner().Run(context.Background(), Stage{Dir: t.TempDir(), Prompt: "p", Timeout: 3 * time.Second})
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("want DeadlineExceeded, got %v", err)
 	}
@@ -294,7 +294,7 @@ func TestShellReportsExitCodeAndOutput(t *testing.T) {
 func TestShellTimeoutKillsWholeProcessGroup(t *testing.T) {
 	rec := t.TempDir()
 	r := Runner{Environ: []string{"PATH=" + os.Getenv("PATH")}}
-	_, err := r.Shell(context.Background(), t.TempDir(), `sleep 300 & echo $! > `+rec+`/grandchild; wait`, 500*time.Millisecond)
+	_, err := r.Shell(context.Background(), t.TempDir(), `sleep 300 & echo $! > `+rec+`/grandchild; wait`, 3*time.Second)
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("want DeadlineExceeded, got %v", err)
 	}

@@ -9,18 +9,28 @@ import (
 	"time"
 )
 
-// hangFirst hangs on the first stage, as a long stage would, then behaves like fakeClaude.
-func hangFirst(t *testing.T) string {
+// hangFirst hangs on the first stage, as a long stage would, then behaves like
+// fakeClaude. The returned wait blocks until that first stage has started.
+func hangFirst(t *testing.T) (script string, wait func()) {
 	marker := filepath.Join(t.TempDir(), "hung-once")
-	return "#!/bin/sh\nif [ ! -f " + marker + " ]; then touch " + marker + "; cat >/dev/null; sleep 300; exit 1; fi\n" + fakeClaudeBody
+	script = "#!/bin/sh\nif [ ! -f " + marker + " ]; then touch " + marker + "; cat >/dev/null; sleep 300; exit 1; fi\n" + fakeClaudeBody
+	return script, func() {
+		for deadline := time.Now().Add(20 * time.Second); time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
+			if _, err := os.Stat(marker); err == nil {
+				return
+			}
+		}
+		t.Fatal("first stage never started")
+	}
 }
 
 func TestTakeoverThenHandbackShipsTheHumansWork(t *testing.T) {
 	e := newEnv(t, "exit 0")
-	checkout := e.timerLoop(t, "work", hangFirst(t))
+	claude, started := hangFirst(t)
+	e.timerLoop(t, "work", claude)
 	out := e.mustLoopctl("run", "work")
 	id := regexp.MustCompile(`job (\d+) running`).FindStringSubmatch(out)[1]
-	time.Sleep(500 * time.Millisecond)
+	started()
 
 	taken := e.mustLoopctl("takeover", id)
 	wt := regexp.MustCompile(`cd (\S+)`).FindStringSubmatch(taken)
@@ -44,14 +54,14 @@ func TestTakeoverThenHandbackShipsTheHumansWork(t *testing.T) {
 	if log := gitIn(t, wt[1], "log", "--format=%s"); !strings.Contains(log, "human work") {
 		t.Fatalf("handback lost the human's commit:\n%s", log)
 	}
-	_ = checkout
 }
 
 func TestStopEndsARunningJob(t *testing.T) {
 	e := newEnv(t, "exit 0")
-	e.timerLoop(t, "work", hangFirst(t))
+	claude, started := hangFirst(t)
+	e.timerLoop(t, "work", claude)
 	id := regexp.MustCompile(`job (\d+) running`).FindStringSubmatch(e.mustLoopctl("run", "work"))[1]
-	time.Sleep(500 * time.Millisecond)
+	started()
 	e.mustLoopctl("stop", "work")
 	e.waitState(t, id, "failed")
 	if out, code := e.loopctl("stop", "work"); code == 0 || !strings.Contains(out, "no running job") {
