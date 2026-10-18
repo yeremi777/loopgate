@@ -147,3 +147,20 @@ func readFile(t *testing.T, path string) string {
 	}
 	return string(data)
 }
+
+func TestWorktreeReusesThePathOfAWorktreeWhoseDirectoryIsGone(t *testing.T) {
+	checkout, _ := cloneWithOrigin(t)
+	wt := filepath.Join(realDir(t), "jobs", "1", "worktree")
+	if _, err := CreateWorktree(context.Background(), Worktree{Checkout: checkout, Path: wt, Branch: "loop/x-1"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(filepath.Dir(wt)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(wt), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := CreateWorktree(context.Background(), Worktree{Checkout: checkout, Path: wt, Branch: "loop/x-2"}); err != nil {
+		t.Fatalf("new job at the path of a deleted one: %v", err)
+	}
+}

@@ -43,6 +43,11 @@ func CreateWorktree(ctx context.Context, w Worktree) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("find origin's default branch (run `git remote set-head origin --auto` in %s): %w", w.Checkout, err)
 	}
+	// A worktree whose directory was deleted, as when ~/.loopd is wiped and job
+	// ids start again, stays registered and blocks its path until pruned.
+	if _, err := Git(ctx, 30*time.Second, w.Checkout, "worktree", "prune"); err != nil {
+		return "", err
+	}
 	if _, err := Git(ctx, time.Minute, w.Checkout, "worktree", "add", "--quiet", "-b", w.Branch, w.Path, ref); err != nil {
 		return "", err
 	}
