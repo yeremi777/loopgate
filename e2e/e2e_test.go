@@ -190,3 +190,16 @@ func TestInstallServiceWritesAgentForBuiltLoopd(t *testing.T) {
 		t.Fatalf("output does not say how to start it: %s", out)
 	}
 }
+
+func TestHelpExitsZeroAndExplainsStop(t *testing.T) {
+	e := newEnv(t, "exit 0")
+	for _, arg := range []string{"help", "-h", "--help"} {
+		out, code := e.loopctl(arg)
+		if code != 0 || !strings.Contains(out, "takeover <job>") {
+			t.Fatalf("loopctl %s: exit %d, %q", arg, code, out)
+		}
+		if !strings.Contains(out, "stop <name>") || !strings.Contains(out, "end the loop's running job") {
+			t.Fatalf("usage does not say what stop does:\n%s", out)
+		}
+	}
+}

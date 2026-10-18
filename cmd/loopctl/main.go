@@ -15,19 +15,21 @@ import (
 	"github.com/yeremi777/loopgate/internal/service"
 )
 
-const usage = `usage:
-  loopctl list
-  loopctl add <loop.yaml>
-  loopctl remove <name>
-  loopctl pause <name>
-  loopctl resume <name>
-  loopctl run <name> [--spec <path>]
-  loopctl stop <name>
-  loopctl requeue <name> <issue>
-  loopctl logs <job>
-  loopctl takeover <job>
-  loopctl handback <job>
-  loopctl install-service`
+const usage = `loopctl controls loopd, which runs Claude Code on loops and stops at a draft PR.
+
+usage:
+  loopctl list                         show loops and whether each is paused
+  loopctl add <loop.yaml>              register a loop file
+  loopctl remove <name>                unregister a loop
+  loopctl pause <name>                 stop a loop's timer or issue polling
+  loopctl resume <name>                start them again
+  loopctl run <name> [--spec <path>]   start a job now, on a spec or the loop's own task
+  loopctl stop <name>                  end the loop's running job; the loop stays
+  loopctl logs <job>                   show a job's state, branch, PR, cost and progress
+  loopctl takeover <job>               stop a job and hand its worktree to you
+  loopctl handback <job>               give a taken-over job back to its loop
+  loopctl requeue <name> <issue>       let a github loop run an issue again
+  loopctl install-service              start loopd at login with launchd`
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
@@ -45,6 +47,10 @@ func run(args []string) error {
 	ctx := context.Background()
 	if len(args) == 0 {
 		return errors.New(usage)
+	}
+	if args[0] == "help" || args[0] == "-h" || args[0] == "--help" {
+		fmt.Println(usage)
+		return nil
 	}
 	cmd, rest := args[0], args[1:]
 	switch {
