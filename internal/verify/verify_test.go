@@ -86,3 +86,53 @@ func write(t *testing.T, path, content string) {
 		t.Fatal(err)
 	}
 }
+
+func TestShipCheckAllowsOnlyMarkdownAfterTheGatedCommit(t *testing.T) {
+	commit := func(repo string, files ...string) {
+		for _, f := range files {
+			write(t, filepath.Join(repo, f), "x")
+		}
+		git(t, repo, "add", "-A")
+		git(t, repo, "commit", "-q", "-m", "c")
+	}
+	t.Run("unchanged", func(t *testing.T) {
+		repo := newRepo(t)
+		if err := ShipCheck(context.Background(), repo, git(t, repo, "rev-parse", "HEAD")); err != nil {
+			t.Fatal(err)
+		}
+	})
+	t.Run("markdown commits", func(t *testing.T) {
+		repo := newRepo(t)
+		gated := git(t, repo, "rev-parse", "HEAD")
+		commit(repo, "docs/adr/0002-x.md", "CONTEXT.md")
+		if err := ShipCheck(context.Background(), repo, gated); err != nil {
+			t.Fatal(err)
+		}
+	})
+	t.Run("code commit", func(t *testing.T) {
+		repo := newRepo(t)
+		gated := git(t, repo, "rev-parse", "HEAD")
+		commit(repo, "CONTEXT.md", "main.go")
+		if err := ShipCheck(context.Background(), repo, gated); err == nil || !strings.Contains(err.Error(), "main.go") {
+			t.Fatalf("want error naming main.go, got %v", err)
+		}
+	})
+	t.Run("uncommitted", func(t *testing.T) {
+		repo := newRepo(t)
+		gated := git(t, repo, "rev-parse", "HEAD")
+		write(t, filepath.Join(repo, "notes.md"), "x")
+		if err := ShipCheck(context.Background(), repo, gated); err == nil {
+			t.Fatal("dirty tree passed")
+		}
+	})
+	t.Run("history rewritten", func(t *testing.T) {
+		repo := newRepo(t)
+		commit(repo, "a.go")
+		gated := git(t, repo, "rev-parse", "HEAD")
+		git(t, repo, "reset", "-q", "--hard", "HEAD~1")
+		commit(repo, "b.md")
+		if err := ShipCheck(context.Background(), repo, gated); err == nil {
+			t.Fatal("head that dropped the gated commit passed")
+		}
+	})
+}

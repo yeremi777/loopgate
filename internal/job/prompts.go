@@ -36,3 +36,46 @@ Report status revise when any finding is act on, and put every act-on finding in
 Report status done when act on is empty.
 Write the summary as the tldr skill says.`, defaultBranch)
 }
+
+func landPrompt(w Work) string {
+	head := "/land PR"
+	if s, ok := w.(Spec); ok {
+		head = "/land PR, keep spec " + s.Path
+	}
+	return head + `
+
+You run unattended inside loopgate, with no network. Nobody can answer a question during this run.
+- Do not run git push or gh. loopgate pushes this branch and opens the draft pull request after its own checks.
+- Change only Markdown files, and commit every change you make. loopgate refuses to ship any other change after the gate.
+- Report status done with the summary set to the pull request text: the title on the first line, a blank line, then the body.
+- Report status blocked, with one question, only when landing needs a decision that only the human can make.`
+}
+
+// parsePR splits land's summary into the PR title line and its body.
+func parsePR(text string) (PR, error) {
+	title, body, _ := strings.Cut(strings.TrimSpace(text), "\n")
+	title = strings.TrimSpace(strings.TrimLeft(title, "# "))
+	if title == "" {
+		return PR{}, fmt.Errorf("land wrote no pull request title")
+	}
+	return PR{Title: title, Body: strings.TrimSpace(body)}, nil
+}
+
+// report opens the PR body with what loopgate checked, so a reviewer sees
+// the evidence and the changed tests before the description.
+func report(j Job, out Outcome, cost float64) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "## loopgate\n\n")
+	fmt.Fprintf(&b, "- Job %d of loop `%s` passed `%s` and a rubric review at %s.\n", j.ID, j.Loop.Name, j.Loop.Verify, out.Gated)
+	fmt.Fprintf(&b, "- Cost so far: $%.2f.\n", cost)
+	if len(out.TestChanges) == 0 {
+		b.WriteString("- Changed or deleted tests: none.\n")
+	} else {
+		b.WriteString("- Changed or deleted tests, check that none was weakened:\n")
+		for _, c := range out.TestChanges {
+			fmt.Fprintf(&b, "  - `%s` (%s)\n", c.Path, c.Kind)
+		}
+	}
+	fmt.Fprintf(&b, "\n### Implement summary\n\n%s", out.Summary)
+	return b.String()
+}

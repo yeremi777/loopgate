@@ -3,7 +3,9 @@ package verify
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/yeremi777/loopgate/internal/runner"
@@ -34,4 +36,33 @@ func Gate(ctx context.Context, r runner.Runner, dir, command string, timeout tim
 		return Outcome{}, fmt.Errorf("verify command: %w", err)
 	}
 	return Outcome{Passed: res.ExitCode == 0, Head: head, Output: res.Output}, nil
+}
+
+// ShipCheck passes only a clean tree whose HEAD descends from gated and
+// differs from it in Markdown files alone.
+func ShipCheck(ctx context.Context, dir, gated string) error {
+	status, err := runner.Git(ctx, 30*time.Second, dir, "status", "--porcelain")
+	if err != nil {
+		return err
+	}
+	if status != "" {
+		return errors.New("tree has uncommitted changes after the gate:\n" + status)
+	}
+	if _, err := runner.Git(ctx, 30*time.Second, dir, "merge-base", "--is-ancestor", gated, "HEAD"); err != nil {
+		return fmt.Errorf("HEAD no longer contains the gated commit %s", gated)
+	}
+	changed, err := runner.Git(ctx, 30*time.Second, dir, "diff", "--name-only", gated, "HEAD")
+	if err != nil {
+		return err
+	}
+	var code []string
+	for _, f := range strings.Split(changed, "\n") {
+		if f != "" && !strings.HasSuffix(f, ".md") {
+			code = append(code, f)
+		}
+	}
+	if code != nil {
+		return errors.New("files other than Markdown changed after the gate: " + strings.Join(code, ", "))
+	}
+	return nil
 }

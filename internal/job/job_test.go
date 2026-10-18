@@ -3,6 +3,7 @@ package job
 import (
 	"context"
 	"errors"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -22,15 +23,28 @@ func TestHappyPathEndsReadyToShipAtGatedCommit(t *testing.T) {
 	f := &fakeStages{t: t, steps: []step{
 		commits(j, "ok.txt"),
 		reports(runner.StatusDone, "no act-on findings"),
+		lands("Add ok marker\n\nThe body that land wrote."),
 	}}
-	out := Pipeline{Stages: f, Shell: shell()}.Run(context.Background(), j)
-	if out.State != store.Done || out.Err != nil {
-		t.Fatalf("got %+v, want done", out)
+	pub := &fakePublisher{url: "https://github.com/me/app/pull/7"}
+	out := Pipeline{Stages: f, Shell: shell(), Publisher: pub}.Run(context.Background(), j)
+	if out.State != store.Done || out.Err != nil || out.PRURL != pub.url {
+		t.Fatalf("got %+v, want done with the PR url", out)
 	}
 	if want := git(t, j.Worktree, "rev-parse", "HEAD"); out.Gated != want {
 		t.Fatalf("gated %q, want head %q", out.Gated, want)
 	}
-	f.wantKinds("/implement", "/rubric")
+	f.wantKinds("/implement", "/rubric", "/land")
+	if pub.calls != 1 || pub.branch != "loop/x-1" || pub.base != "main" || pub.pr.Title != "Add ok marker" {
+		t.Fatalf("publish %+v", pub)
+	}
+	for _, want := range []string{"The body that land wrote.", out.Gated, j.Loop.Verify, "committed"} {
+		if !strings.Contains(pub.pr.Body, want) {
+			t.Fatalf("PR body lacks %q:\n%s", want, pub.pr.Body)
+		}
+	}
+	if math.Abs(out.CostUSD-0.3) > 1e-9 {
+		t.Fatalf("cost %v, want 0.3 for three stages", out.CostUSD)
+	}
 	first := f.stages[0]
 	if !strings.HasPrefix(first.Prompt, "/implement docs/specs/x.md") || first.Dir != j.Worktree ||
 		!reflect.DeepEqual(first.Network, []string{"proxy.golang.org"}) {
@@ -47,12 +61,13 @@ func TestFailedGateFeedsItsOutputToTheNextImplementRun(t *testing.T) {
 		reports(runner.StatusDone, "done, trust me"),
 		commits(j, "ok.txt"),
 		reports(runner.StatusDone, "clean"),
+		lands("t\n\nb"),
 	}}
-	out := Pipeline{Stages: f, Shell: shell()}.Run(context.Background(), j)
+	out := Pipeline{Stages: f, Shell: shell(), Publisher: &fakePublisher{}}.Run(context.Background(), j)
 	if out.State != store.Done {
 		t.Fatalf("got %+v, want done", out)
 	}
-	f.wantKinds("/implement", "/implement", "/rubric")
+	f.wantKinds("/implement", "/implement", "/rubric", "/land")
 	if !strings.Contains(f.stages[1].Prompt, "missing ok.txt") {
 		t.Fatalf("second implement prompt lacks gate output: %q", f.stages[1].Prompt)
 	}
@@ -78,8 +93,9 @@ func TestUncommittedWorkFailsTheGate(t *testing.T) {
 			return runner.Result{Status: runner.StatusDone, Summary: "committed"}, nil
 		},
 		reports(runner.StatusDone, "clean"),
+		lands("t\n\nb"),
 	}}
-	out := Pipeline{Stages: f, Shell: shell()}.Run(context.Background(), j)
+	out := Pipeline{Stages: f, Shell: shell(), Publisher: &fakePublisher{}}.Run(context.Background(), j)
 	if out.State != store.Done {
 		t.Fatalf("got %+v, want done", out)
 	}
@@ -150,12 +166,13 @@ func TestRubricRevisionGoesBackToImplement(t *testing.T) {
 		reports(runner.StatusRevise, "nil map write at store.go:40"),
 		commits(j, "fix.txt"),
 		reports(runner.StatusDone, "clean"),
+		lands("t\n\nb"),
 	}}
-	out := Pipeline{Stages: f, Shell: shell()}.Run(context.Background(), j)
+	out := Pipeline{Stages: f, Shell: shell(), Publisher: &fakePublisher{}}.Run(context.Background(), j)
 	if out.State != store.Done {
 		t.Fatalf("got %+v, want done", out)
 	}
-	f.wantKinds("/implement", "/rubric", "/implement", "/rubric")
+	f.wantKinds("/implement", "/rubric", "/implement", "/rubric", "/land")
 	if !strings.Contains(f.stages[2].Prompt, "nil map write at store.go:40") {
 		t.Fatalf("second implement prompt lacks rubric findings: %q", f.stages[2].Prompt)
 	}
@@ -193,10 +210,86 @@ func TestOutcomeReportsChangedTests(t *testing.T) {
 	f := &fakeStages{t: t, steps: []step{
 		commits(j, "ok.txt", "a_test.go"),
 		reports(runner.StatusDone, "clean"),
+		lands("t\n\nb"),
 	}}
-	out := Pipeline{Stages: f, Shell: shell()}.Run(context.Background(), j)
+	pub := &fakePublisher{}
+	out := Pipeline{Stages: f, Shell: shell(), Publisher: pub}.Run(context.Background(), j)
 	if want := []verify.Change{{Path: "a_test.go", Kind: verify.Modified}}; !reflect.DeepEqual(out.TestChanges, want) {
 		t.Fatalf("test changes %+v, want %+v", out.TestChanges, want)
+	}
+	if !strings.Contains(pub.pr.Body, "a_test.go") {
+		t.Fatalf("PR body does not list the changed test:\n%s", pub.pr.Body)
+	}
+}
+
+func TestLandMayCommitMarkdownOnly(t *testing.T) {
+	j := newJob(t, 3)
+	f := &fakeStages{t: t, steps: []step{
+		commits(j, "ok.txt"),
+		reports(runner.StatusDone, "clean"),
+		landsAfter(commits(j, "docs/adr/0002-x.md", "CONTEXT.md"), "t\n\nb"),
+	}}
+	pub := &fakePublisher{}
+	out := Pipeline{Stages: f, Shell: shell(), Publisher: pub}.Run(context.Background(), j)
+	if out.State != store.Done || pub.calls != 1 {
+		t.Fatalf("got %+v, %d publishes; want done and published", out, pub.calls)
+	}
+}
+
+func TestLandThatChangesCodeIsNeverPublished(t *testing.T) {
+	cases := map[string]func(Job) step{
+		"commits code": func(j Job) step { return landsAfter(commits(j, "ok.txt", "main.go"), "t\n\nb") },
+		"leaves edits": func(j Job) step {
+			return func(s runner.Stage) (runner.Result, error) {
+				writeFile(t, filepath.Join(j.Worktree, "notes.md"), "uncommitted")
+				return lands("t\n\nb")(s)
+			}
+		},
+	}
+	for name, land := range cases {
+		t.Run(name, func(t *testing.T) {
+			j := newJob(t, 3)
+			f := &fakeStages{t: t, steps: []step{commits(j, "ok.txt"), reports(runner.StatusDone, "clean"), land(j)}}
+			pub := &fakePublisher{}
+			out := Pipeline{Stages: f, Shell: shell(), Publisher: pub}.Run(context.Background(), j)
+			if out.State != store.Failed || pub.calls != 0 {
+				t.Fatalf("got %+v, %d publishes; want failed and unpublished", out, pub.calls)
+			}
+		})
+	}
+}
+
+func TestBlockedLandIsNotPublished(t *testing.T) {
+	j := newJob(t, 3)
+	f := &fakeStages{t: t, steps: []step{
+		commits(j, "ok.txt"),
+		reports(runner.StatusDone, "clean"),
+		func(runner.Stage) (runner.Result, error) {
+			return runner.Result{Status: runner.StatusBlocked, Question: "delete the old spec?", Summary: "s"}, nil
+		},
+	}}
+	pub := &fakePublisher{}
+	out := Pipeline{Stages: f, Shell: shell(), Publisher: pub}.Run(context.Background(), j)
+	if out.State != store.Blocked || pub.calls != 0 {
+		t.Fatalf("got %+v, %d publishes", out, pub.calls)
+	}
+}
+
+func TestPublishErrorFailsTheJob(t *testing.T) {
+	j := newJob(t, 3)
+	f := &fakeStages{t: t, steps: []step{commits(j, "ok.txt"), reports(runner.StatusDone, "clean"), lands("t\n\nb")}}
+	out := Pipeline{Stages: f, Shell: shell(), Publisher: &fakePublisher{err: errors.New("push rejected")}}.Run(context.Background(), j)
+	if out.State != store.Failed || out.Err == nil {
+		t.Fatalf("got %+v, want failed", out)
+	}
+}
+
+func TestCostIsRecordedWhenTheJobDoesNotShip(t *testing.T) {
+	j := newJob(t, 2)
+	f := &fakeStages{t: t, steps: []step{reports(runner.StatusDone, "try 1"), reports(runner.StatusDone, "try 2")}}
+	out := Pipeline{Stages: f, Shell: shell()}.Run(context.Background(), j)
+	if out.State != store.Exhausted || math.Abs(out.CostUSD-0.2) > 1e-9 {
+		t.Fatalf("got %+v, want exhausted costing 0.2", out)
 	}
 }
 
@@ -240,8 +333,33 @@ func (f *fakeStages) wantKinds(kinds ...string) {
 
 func reports(status runner.Status, summary string) step {
 	return func(runner.Stage) (runner.Result, error) {
-		return runner.Result{Status: status, Summary: summary}, nil
+		return runner.Result{Status: status, Summary: summary, CostUSD: 0.1}, nil
 	}
+}
+
+func lands(pr string) step { return reports(runner.StatusDone, pr) }
+
+func landsAfter(work step, pr string) step {
+	return func(s runner.Stage) (runner.Result, error) {
+		if _, err := work(s); err != nil {
+			return runner.Result{}, err
+		}
+		return lands(pr)(s)
+	}
+}
+
+type fakePublisher struct {
+	url          string
+	err          error
+	calls        int
+	branch, base string
+	pr           PR
+}
+
+func (f *fakePublisher) Publish(_ context.Context, _, branch, base string, pr PR) (string, error) {
+	f.calls++
+	f.branch, f.base, f.pr = branch, base, pr
+	return f.url, f.err
 }
 
 func commits(j Job, files ...string) step {
@@ -262,7 +380,7 @@ func commits(j Job, files ...string) step {
 				return runner.Result{}, errors.New(string(out))
 			}
 		}
-		return runner.Result{Status: runner.StatusDone, Summary: "committed"}, nil
+		return runner.Result{Status: runner.StatusDone, Summary: "committed", CostUSD: 0.1}, nil
 	}
 }
 
@@ -298,6 +416,7 @@ func newJob(t *testing.T, maxIterations int) Job {
 		Work:          Spec{Path: "docs/specs/x.md"},
 		Dir:           dir,
 		Worktree:      wt,
+		Branch:        "loop/x-1",
 		DefaultBranch: "main",
 	}
 }
