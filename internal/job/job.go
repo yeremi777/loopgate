@@ -97,18 +97,40 @@ func (p Pipeline) Run(ctx context.Context, j Job) Outcome {
 	return out
 }
 
-// jobRun is one Run in progress: its progress log and the cost of its stages so far.
+// jobRun is one Run in progress: the work it implements, its progress log,
+// and the cost of its stages so far. An issue's work is what drill made of it.
 type jobRun struct {
 	Pipeline
 	job      Job
+	work     Work
+	drill    string
 	progress progressLog
 	cost     float64
 }
 
 func (r *jobRun) iterate(ctx context.Context) (Outcome, error) {
 	j := r.job
+	r.work = j.Work
+	if issue, ok := j.Work.(Issue); ok {
+		res, err := r.stage(ctx, drillPrompt(issue))
+		if err != nil {
+			return Outcome{}, err
+		}
+		switch res.Status {
+		case runner.StatusBlocked:
+			return Outcome{State: store.Blocked, Question: res.Question, Summary: res.Summary}, nil
+		case runner.StatusRevise:
+			return Outcome{}, errors.New("drill reported revise, which only rubric may report")
+		}
+		r.drill = res.Summary
+		r.work = Task{Text: res.Summary}
+		spec := issueSpec(issue)
+		if _, err := os.Stat(filepath.Join(j.Worktree, spec)); err == nil {
+			r.work = Spec{Path: spec}
+		}
+	}
 	for i := 1; i <= j.Loop.Bounds.MaxIterations; i++ {
-		res, err := r.stage(ctx, implementPrompt(j.Work, r.progress.text))
+		res, err := r.stage(ctx, implementPrompt(r.work, r.progress.text))
 		if err != nil {
 			return Outcome{}, err
 		}
@@ -172,7 +194,7 @@ func (r *jobRun) iterate(ctx context.Context) (Outcome, error) {
 // and publishes the branch as a draft PR.
 func (r *jobRun) ship(ctx context.Context, out Outcome) (Outcome, error) {
 	j := r.job
-	land, err := r.stage(ctx, landPrompt(j.Work))
+	land, err := r.stage(ctx, landPrompt(r.work))
 	if err != nil {
 		return Outcome{}, err
 	}
@@ -189,7 +211,7 @@ func (r *jobRun) ship(ctx context.Context, out Outcome) (Outcome, error) {
 	if err != nil {
 		return Outcome{}, err
 	}
-	pr.Body = report(j, out, r.cost) + "\n\n---\n\n" + pr.Body
+	pr.Body = report(j, out, r.drill, r.cost) + "\n\n---\n\n" + pr.Body
 	url, err := r.Publisher.Publish(ctx, j.Worktree, j.Branch, j.DefaultBranch, pr)
 	if err != nil {
 		return Outcome{}, fmt.Errorf("publish: %w", err)
@@ -255,3 +277,12 @@ func tail(s string) string {
 	}
 	return s
 }
+
+// Issue is a GitHub issue that a Job drills before it implements.
+type Issue struct {
+	Number int
+	Title  string
+	Body   string
+}
+
+func (Issue) isWork() {}
