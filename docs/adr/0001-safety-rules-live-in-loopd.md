@@ -1,0 +1,3 @@
+# Safety rules live in loopd, not in prompts
+
+Jobs run the user's own `land` skill, which can merge and does not open draft PRs by itself. We kept `land` for its PR body and gate, and put every safety rule where the model cannot talk its way past it: `loopd` passes Claude Code deny rules for merge, ready, force-push, and pushes to the default branch, decides pass or fail only from the verify command's exit code, and checks the PR after `land`, returning it to draft and failing the Job when it is not. The rejected option was a restricted `land` variant whose prompt forbids those actions; a prompt is advice to the model, and an issue author can write text that argues against it.
