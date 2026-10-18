@@ -26,7 +26,7 @@ A local macOS service (`loopd`) and CLI (`loopctl`) that run Claude Code with th
 - AC-7: Each stage runs `claude -p` in the Job worktree with `--permission-mode auto`, `--permission-prompts none`, a `--json-schema` for `{status: done|blocked|revise, question, summary}`, and `--settings` that enable the sandbox, allow network only to the Loop's `network` domains, and deny every `gh` call, `git push`, and `git merge`; each stage's `total_cost_usd` is recorded on its Job.
 - AC-8: The child environment holds only allowlisted variables; a variable outside the allowlist, set in `loopd`'s environment, is absent in the child.
 - AC-9: On timeout, `stop`, or Takeover, the child's whole process group ends, including grandchildren.
-- AC-10: Each Job runs in its own worktree on branch `loop/<loop>-<issue>` or `loop/<loop>-<timestamp>-<job id>`, cut from `origin/<default>`; uncommitted changes in the main checkout are absent from it.
+- AC-10: Each Job runs in its own worktree on branch `loop/<loop>-<issue>-<job id>` or `loop/<loop>-<timestamp>-<job id>`, cut from `origin/<default>`; uncommitted changes in the main checkout are absent from it.
 - AC-11: `run --spec <path>` copies the Spec into the worktree at the same path and commits it on the Job branch when the branch lacks it.
 - AC-33: A Loop's optional `network` lists the domains its stages may reach; a domain that is or ends in `github.com` or `githubusercontent.com` fails to load.
 

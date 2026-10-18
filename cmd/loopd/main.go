@@ -68,6 +68,7 @@ func run() error {
 	r := runner.Runner{Claude: claude, Environ: os.Environ(), Cache: cache}
 	d, err := daemon.New(home, st, daemon.Deps{
 		Pipeline: job.Pipeline{Stages: r, Shell: r, Publisher: github.Publisher{GH: "gh"}},
+		Issues:   github.Issues{GH: "gh"},
 		Notify:   notify,
 	})
 	if err != nil {

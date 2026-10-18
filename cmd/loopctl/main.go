@@ -23,6 +23,7 @@ const usage = `usage:
   loopctl resume <name>
   loopctl run <name> [--spec <path>]
   loopctl stop <name>
+  loopctl requeue <name> <issue>
   loopctl logs <job>
   loopctl takeover <job>
   loopctl handback <job>
@@ -94,6 +95,12 @@ func run(args []string) error {
 		}
 		fmt.Printf("job %d running on %s in %s\n", j.ID, j.Branch, j.Worktree)
 		return nil
+	case cmd == "requeue" && len(rest) == 2:
+		n, err := strconv.Atoi(rest[1])
+		if err != nil {
+			return fmt.Errorf("issue %q is not a number", rest[1])
+		}
+		return c.Requeue(ctx, rest[0], n)
 	case cmd == "stop" && len(rest) == 1:
 		return c.Stop(ctx, rest[0])
 	case cmd == "takeover" && len(rest) == 1:

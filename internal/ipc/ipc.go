@@ -66,6 +66,14 @@ func Serve(ln net.Listener, d *daemon.Daemon) error {
 		log, err := d.Job(id)
 		reply(w, log, err)
 	})
+	mux.HandleFunc("POST /loops/{name}/requeue/{issue}", func(w http.ResponseWriter, r *http.Request) {
+		n, err := strconv.Atoi(r.PathValue("issue"))
+		if err != nil {
+			reply(w, struct{}{}, fmt.Errorf("issue %q is not a number", r.PathValue("issue")))
+			return
+		}
+		reply(w, struct{}{}, d.Requeue(r.PathValue("name"), n))
+	})
 	mux.HandleFunc("POST /loops/{name}/stop", func(w http.ResponseWriter, r *http.Request) {
 		reply(w, struct{}{}, d.Stop(r.PathValue("name")))
 	})
@@ -169,6 +177,10 @@ func (c *Client) Job(ctx context.Context, id int64) (daemon.JobLog, error) {
 	var log daemon.JobLog
 	err := call(ctx, c, http.MethodGet, "/jobs/"+strconv.FormatInt(id, 10), nil, &log)
 	return log, err
+}
+
+func (c *Client) Requeue(ctx context.Context, name string, issue int) error {
+	return call[struct{}](ctx, c, http.MethodPost, "/loops/"+url.PathEscape(name)+"/requeue/"+strconv.Itoa(issue), nil, nil)
 }
 
 func (c *Client) Stop(ctx context.Context, name string) error {

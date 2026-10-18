@@ -88,8 +88,10 @@ func (e env) waitState(t *testing.T, id, want string) {
 	t.Helper()
 	var logs string
 	for deadline := time.Now().Add(30 * time.Second); time.Now().Before(deadline); time.Sleep(100 * time.Millisecond) {
-		if logs = e.mustLoopctl("logs", id); field(logs, "state") == want {
+		if out, code := e.loopctl("logs", id); code == 0 && field(out, "state") == want {
 			return
+		} else {
+			logs = out
 		}
 	}
 	t.Fatalf("job %s never reached %s:\n%s", id, want, logs)
