@@ -33,7 +33,7 @@ func TestHappyPathEndsReadyToShipAtGatedCommit(t *testing.T) {
 	f.wantKinds("/implement", "/rubric")
 	first := f.stages[0]
 	if !strings.HasPrefix(first.Prompt, "/implement docs/specs/x.md") || first.Dir != j.Worktree ||
-		first.DefaultBranch != "main" || !reflect.DeepEqual(first.Network, []string{"proxy.golang.org"}) {
+		!reflect.DeepEqual(first.Network, []string{"proxy.golang.org"}) {
 		t.Fatalf("implement stage %+v", first)
 	}
 	if !strings.Contains(f.stages[1].Prompt, "origin/main") {

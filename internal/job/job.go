@@ -139,11 +139,10 @@ func (p Pipeline) iterate(ctx context.Context, j Job) (Outcome, error) {
 
 func (p Pipeline) stage(ctx context.Context, j Job, prompt string) (runner.Result, error) {
 	return p.Stages.Run(ctx, runner.Stage{
-		Dir:           j.Worktree,
-		Prompt:        prompt,
-		Timeout:       remaining(ctx),
-		DefaultBranch: j.DefaultBranch,
-		Network:       j.Loop.Network,
+		Dir:     j.Worktree,
+		Prompt:  prompt,
+		Timeout: remaining(ctx),
+		Network: j.Loop.Network,
 	})
 }
 

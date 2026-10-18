@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -21,11 +22,12 @@ const (
 	StatusRevise  Status = "revise"
 )
 
-// Result is the stage's structured report.
+// Result is the stage's structured report and what the stage cost.
 type Result struct {
 	Status   Status
 	Question string
 	Summary  string
+	CostUSD  float64
 }
 
 // Runner starts claude with Environ filtered to the allowlist.
@@ -37,9 +39,8 @@ type Runner struct {
 type Stage struct {
 	Dir           string
 	Prompt        string
-	Timeout       time.Duration
-	DefaultBranch string
-	Network       []string
+	Timeout time.Duration
+	Network []string
 }
 
 const resultSchema = `{"type":"object","properties":{` +
@@ -60,7 +61,7 @@ func (r Runner) Run(ctx context.Context, s Stage) (Result, error) {
 	ctx, cancel := context.WithTimeout(ctx, s.Timeout)
 	defer cancel()
 
-	settings, err := settingsJSON(s.DefaultBranch, s.Network)
+	settings, err := settingsJSON(s.Network)
 	if err != nil {
 		return Result{}, err
 	}
@@ -72,6 +73,7 @@ func (r Runner) Run(ctx context.Context, s Stage) (Result, error) {
 		"--json-schema", resultSchema,
 		"--settings", settings,
 	)
+	cmd.Env = append(cmd.Env, "GOCACHE="+filepath.Join(tempDir(cmd.Env), "loopgate", "go-build"))
 	cmd.Stdin = strings.NewReader(s.Prompt)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
@@ -83,8 +85,9 @@ func (r Runner) Run(ctx context.Context, s Stage) (Result, error) {
 
 func parseResult(data []byte) (Result, error) {
 	var out struct {
-		IsError    bool   `json:"is_error"`
-		Subtype    string `json:"subtype"`
+		IsError    bool    `json:"is_error"`
+		Subtype    string  `json:"subtype"`
+		CostUSD    float64 `json:"total_cost_usd"`
 		Structured *struct {
 			Status   Status `json:"status"`
 			Question string `json:"question"`
@@ -100,7 +103,7 @@ func parseResult(data []byte) (Result, error) {
 	if out.Structured == nil {
 		return Result{}, errors.New("claude output has no structured_output")
 	}
-	res := Result{Status: out.Structured.Status, Question: out.Structured.Question, Summary: out.Structured.Summary}
+	res := Result{Status: out.Structured.Status, Question: out.Structured.Question, Summary: out.Structured.Summary, CostUSD: out.CostUSD}
 	switch {
 	case res.Status != StatusDone && res.Status != StatusBlocked && res.Status != StatusRevise:
 		return Result{}, fmt.Errorf("claude reported unknown status %q", res.Status)
@@ -110,13 +113,9 @@ func parseResult(data []byte) (Result, error) {
 	return res, nil
 }
 
-// settingsJSON enables the sandbox, opens only the network domains given, and denies the git and gh commands that
-// would merge, force-push, push to the default branch, or mark a PR ready.
-// Deny rules match command prefixes only; loopd checks the PR after land.
-func settingsJSON(defaultBranch string, network []string) (string, error) {
-	if defaultBranch == "" {
-		return "", errors.New("stage needs the default branch")
-	}
+// settingsJSON enables the sandbox, opens only the network domains given,
+// and denies every gh call, push, and merge: loopd alone ships work.
+func settingsJSON(network []string) (string, error) {
 	var settings struct {
 		Sandbox struct {
 			Enabled                  bool `json:"enabled"`
@@ -132,18 +131,20 @@ func settingsJSON(defaultBranch string, network []string) (string, error) {
 	settings.Sandbox.Enabled = true
 	settings.Sandbox.AutoAllowBashIfSandboxed = true
 	settings.Sandbox.Network.AllowedDomains = append([]string{}, network...)
-	settings.Permissions.Deny = []string{
-		"Bash(gh pr merge:*)",
-		"Bash(gh pr ready:*)",
-		"Bash(git merge:*)",
-		"Bash(git push --force:*)",
-		"Bash(git push --force-with-lease:*)",
-		"Bash(git push -f:*)",
-		"Bash(git push origin " + defaultBranch + ":*)",
-		"Bash(git push origin HEAD:" + defaultBranch + ":*)",
-	}
+	settings.Permissions.Deny = []string{"Bash(gh:*)", "Bash(git push:*)", "Bash(git merge:*)"}
 	data, err := json.Marshal(settings)
 	return string(data), err
+}
+
+// tempDir is the child's TMPDIR. The sandbox lets a stage write there, and
+// not to the default Go build cache under ~/Library/Caches.
+func tempDir(env []string) string {
+	for _, kv := range env {
+		if dir, ok := strings.CutPrefix(kv, "TMPDIR="); ok && dir != "" {
+			return dir
+		}
+	}
+	return "/tmp"
 }
 
 // command builds a child with the allowlisted env that runGroup runs in its own process group.

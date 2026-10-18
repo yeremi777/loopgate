@@ -14,17 +14,17 @@ import (
 	"time"
 )
 
-const doneJSON = `{"type":"result","subtype":"success","is_error":false,"structured_output":{"status":"done","summary":"fixed it"}}`
+const doneJSON = `{"type":"result","subtype":"success","is_error":false,"total_cost_usd":0.25,"structured_output":{"status":"done","summary":"fixed it"}}`
 
 func TestRunPassesSafetyFlagsAndPromptInWorktree(t *testing.T) {
 	fake := newFake(t, `printf '%s\n' "$@" > "$REC/args"; pwd -P > "$REC/cwd"; cat > "$REC/stdin"; echo '`+doneJSON+`'`)
 	dir := realDir(t)
 
-	res, err := fake.runner().Run(context.Background(), Stage{Dir: dir, Prompt: "/implement docs/specs/x.md", Timeout: time.Minute, DefaultBranch: "trunk", Network: []string{"proxy.golang.org"}})
+	res, err := fake.runner().Run(context.Background(), Stage{Dir: dir, Prompt: "/implement docs/specs/x.md", Timeout: time.Minute, Network: []string{"proxy.golang.org"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := (Result{Status: StatusDone, Summary: "fixed it"}); res != want {
+	if want := (Result{Status: StatusDone, Summary: "fixed it", CostUSD: 0.25}); res != want {
 		t.Fatalf("got %+v, want %+v", res, want)
 	}
 	if got := fake.read("cwd"); got != dir+"\n" {
@@ -82,15 +82,7 @@ func TestRunPassesSafetyFlagsAndPromptInWorktree(t *testing.T) {
 	if got := settings.Sandbox.Network.AllowedDomains; !slices.Equal(got, []string{"proxy.golang.org"}) {
 		t.Fatalf("allowed domains %q", got)
 	}
-	for _, rule := range []string{
-		"Bash(gh pr merge:*)",
-		"Bash(gh pr ready:*)",
-		"Bash(git merge:*)",
-		"Bash(git push --force:*)",
-		"Bash(git push -f:*)",
-		"Bash(git push origin trunk:*)",
-		"Bash(git push origin HEAD:trunk:*)",
-	} {
+	for _, rule := range []string{"Bash(gh:*)", "Bash(git push:*)", "Bash(git merge:*)"} {
 		if !slices.Contains(settings.Permissions.Deny, rule) {
 			t.Fatalf("deny rules %q lack %q", settings.Permissions.Deny, rule)
 		}
@@ -99,7 +91,7 @@ func TestRunPassesSafetyFlagsAndPromptInWorktree(t *testing.T) {
 
 func TestRunReportsBlockedQuestion(t *testing.T) {
 	fake := newFake(t, `cat >/dev/null; echo '{"is_error":false,"structured_output":{"status":"blocked","question":"which db?","summary":"stopped"}}'`)
-	res, err := fake.runner().Run(context.Background(), Stage{Dir: t.TempDir(), Prompt: "p", Timeout: time.Minute, DefaultBranch: "main"})
+	res, err := fake.runner().Run(context.Background(), Stage{Dir: t.TempDir(), Prompt: "p", Timeout: time.Minute})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,7 +102,7 @@ func TestRunReportsBlockedQuestion(t *testing.T) {
 
 func TestRunReportsRevision(t *testing.T) {
 	fake := newFake(t, `cat >/dev/null; echo '{"is_error":false,"structured_output":{"status":"revise","summary":"nil map write in store.go:40"}}'`)
-	res, err := fake.runner().Run(context.Background(), Stage{Dir: t.TempDir(), Prompt: "p", Timeout: time.Minute, DefaultBranch: "main"})
+	res, err := fake.runner().Run(context.Background(), Stage{Dir: t.TempDir(), Prompt: "p", Timeout: time.Minute})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +123,7 @@ func TestRunRejectsBadResults(t *testing.T) {
 	for name, body := range cases {
 		t.Run(name, func(t *testing.T) {
 			fake := newFake(t, "cat >/dev/null; "+body)
-			if res, err := fake.runner().Run(context.Background(), Stage{Dir: t.TempDir(), Prompt: "p", Timeout: time.Minute, DefaultBranch: "main"}); err == nil {
+			if res, err := fake.runner().Run(context.Background(), Stage{Dir: t.TempDir(), Prompt: "p", Timeout: time.Minute}); err == nil {
 				t.Fatalf("want error, got %+v", res)
 			}
 		})
@@ -144,16 +136,18 @@ func TestRunKeepsOnlyAllowlistedEnv(t *testing.T) {
 	r.Environ = append(r.Environ,
 		"HOME=/home/me",
 		"SSH_AUTH_SOCK=/tmp/agent",
+		"TMPDIR=/tmp/me/",
+		"GOCACHE=/home/me/Library/Caches/go-build",
 		"AWS_SECRET_ACCESS_KEY=secret",
 		"GITHUB_TOKEN=secret",
 		"ANTHROPIC_API_KEY=secret",
 		"DATABASE_URL=postgres://secret",
 	)
-	if _, err := r.Run(context.Background(), Stage{Dir: t.TempDir(), Prompt: "p", Timeout: time.Minute, DefaultBranch: "main"}); err != nil {
+	if _, err := r.Run(context.Background(), Stage{Dir: t.TempDir(), Prompt: "p", Timeout: time.Minute}); err != nil {
 		t.Fatal(err)
 	}
 	env := strings.Split(fake.read("env"), "\n")
-	for _, want := range []string{"HOME=/home/me", "SSH_AUTH_SOCK=/tmp/agent"} {
+	for _, want := range []string{"HOME=/home/me", "SSH_AUTH_SOCK=/tmp/agent", "TMPDIR=/tmp/me/", "GOCACHE=/tmp/me/loopgate/go-build"} {
 		if !slices.Contains(env, want) {
 			t.Fatalf("child env lacks %s: %q", want, env)
 		}
@@ -168,7 +162,7 @@ func TestRunKeepsOnlyAllowlistedEnv(t *testing.T) {
 func TestTimeoutKillsWholeProcessGroup(t *testing.T) {
 	fake := newFake(t, `cat >/dev/null; sleep 300 & echo $! > "$REC/grandchild"; echo $$ > "$REC/child"; wait`)
 	start := time.Now()
-	_, err := fake.runner().Run(context.Background(), Stage{Dir: t.TempDir(), Prompt: "p", Timeout: 500 * time.Millisecond, DefaultBranch: "main"})
+	_, err := fake.runner().Run(context.Background(), Stage{Dir: t.TempDir(), Prompt: "p", Timeout: 500 * time.Millisecond})
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("want DeadlineExceeded, got %v", err)
 	}
@@ -184,7 +178,7 @@ func TestCancelKillsWholeProcessGroup(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		_, err := fake.runner().Run(ctx, Stage{Dir: t.TempDir(), Prompt: "p", Timeout: time.Minute, DefaultBranch: "main"})
+		_, err := fake.runner().Run(ctx, Stage{Dir: t.TempDir(), Prompt: "p", Timeout: time.Minute})
 		done <- err
 	}()
 	fake.waitFor("grandchild")
@@ -197,7 +191,7 @@ func TestCancelKillsWholeProcessGroup(t *testing.T) {
 
 func TestLeftoverProcessesDieAfterStage(t *testing.T) {
 	fake := newFake(t, `cat >/dev/null; sleep 300 >/dev/null 2>&1 & echo $! > "$REC/grandchild"; echo '`+doneJSON+`'`)
-	if _, err := fake.runner().Run(context.Background(), Stage{Dir: t.TempDir(), Prompt: "p", Timeout: time.Minute, DefaultBranch: "main"}); err != nil {
+	if _, err := fake.runner().Run(context.Background(), Stage{Dir: t.TempDir(), Prompt: "p", Timeout: time.Minute}); err != nil {
 		t.Fatal(err)
 	}
 	fake.assertDead("grandchild")
