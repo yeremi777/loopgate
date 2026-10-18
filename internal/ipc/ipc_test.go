@@ -98,7 +98,7 @@ func serve(t *testing.T) *Client {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	d, err := daemon.New(home, st)
+	d, err := daemon.New(home, st, daemon.Deps{})
 	if err != nil {
 		t.Fatal(err)
 	}

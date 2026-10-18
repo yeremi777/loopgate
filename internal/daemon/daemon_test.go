@@ -104,7 +104,7 @@ func newDaemon(t *testing.T, home string) *Daemon {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	d, err := New(home, st)
+	d, err := New(home, st, Deps{})
 	if err != nil {
 		t.Fatal(err)
 	}

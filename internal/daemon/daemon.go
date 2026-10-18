@@ -2,6 +2,7 @@
 package daemon
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -24,16 +25,24 @@ var (
 	ErrUnknownLoop = errors.New("unknown loop")
 )
 
-// Daemon owns the Loop files in its loops directory and their state in the store.
+// Daemon owns the Loop files in its loops directory, their state in the
+// store, and the one Job that may run at a time.
 type Daemon struct {
 	mu    sync.Mutex
+	home  string
 	dir   string
 	st    *store.Store
 	loops map[string]config.Loop
+	deps  Deps
+	busy  bool
+
+	ctx    context.Context
+	cancel context.CancelFunc
+	jobs   sync.WaitGroup
 }
 
 // New loads the Loop files in home/loops.
-func New(home string, st *store.Store) (*Daemon, error) {
+func New(home string, st *store.Store, deps Deps) (*Daemon, error) {
 	dir := filepath.Join(home, "loops")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
@@ -54,7 +63,8 @@ func New(home string, st *store.Store) (*Daemon, error) {
 		}
 		loops[loop.Name] = loop
 	}
-	return &Daemon{dir: dir, st: st, loops: loops}, nil
+	ctx, cancel := context.WithCancel(context.Background())
+	return &Daemon{home: home, dir: dir, st: st, loops: loops, deps: deps, ctx: ctx, cancel: cancel}, nil
 }
 
 func (d *Daemon) Add(data []byte) (config.Loop, error) {

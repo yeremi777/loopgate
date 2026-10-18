@@ -7,12 +7,16 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"syscall"
 
 	"github.com/yeremi777/loopgate/internal/daemon"
+	"github.com/yeremi777/loopgate/internal/github"
 	"github.com/yeremi777/loopgate/internal/ipc"
+	"github.com/yeremi777/loopgate/internal/job"
+	"github.com/yeremi777/loopgate/internal/runner"
 	"github.com/yeremi777/loopgate/internal/store"
 )
 
@@ -43,15 +47,28 @@ func run() error {
 		return err
 	}
 
+	claude, err := exec.LookPath("claude")
+	if err != nil {
+		return fmt.Errorf("claude not found on PATH: %w", err)
+	}
+
 	st, err := store.Open(filepath.Join(home, "state.db"))
 	if err != nil {
 		return err
 	}
 	defer func() { _ = st.Close() }()
-	d, err := daemon.New(home, st)
+	if err := st.InterruptRunning("loopd stopped while the job ran"); err != nil {
+		return err
+	}
+	r := runner.Runner{Claude: claude, Environ: os.Environ()}
+	d, err := daemon.New(home, st, daemon.Deps{
+		Pipeline: job.Pipeline{Stages: r, Shell: r, Publisher: github.Publisher{GH: "gh"}},
+		Notify:   notify,
+	})
 	if err != nil {
 		return err
 	}
+	defer d.Close()
 
 	sock := daemon.Socket(home)
 	if err := os.Remove(sock); err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -72,4 +89,17 @@ func run() error {
 		return err
 	}
 	return nil
+}
+
+// notify shows a macOS notification. The text goes in as arguments, never
+// as AppleScript source, so a question from a Job cannot inject script.
+func notify(title, message string) {
+	cmd := exec.Command("osascript",
+		"-e", "on run argv",
+		"-e", "display notification (item 2 of argv) with title (item 1 of argv)",
+		"-e", "end run",
+		title, message)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		fmt.Fprintf(os.Stderr, "loopd: notify: %v: %s\n", err, out)
+	}
 }
