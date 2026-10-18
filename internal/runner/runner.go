@@ -78,6 +78,8 @@ func (r Runner) Run(ctx context.Context, s Stage) (Result, error) {
 		"--json-schema", resultSchema,
 		"--settings", settings,
 		"--add-dir", r.Cache,
+		"--setting-sources", "user",
+		"--strict-mcp-config",
 	)
 	cmd.Env = append(cmd.Env, "GOCACHE="+filepath.Join(r.Cache, "go-build"))
 	cmd.Stdin = strings.NewReader(s.Prompt)
@@ -119,13 +121,16 @@ func parseResult(data []byte) (Result, error) {
 	return res, nil
 }
 
-// settingsJSON enables the sandbox, opens only the network domains given,
-// and denies every gh call, push, and merge: loopd alone ships work.
+// settingsJSON enables the sandbox with no way to run a command outside it,
+// opens only the network domains given, and denies gh, push and merge:
+// loopd alone ships work. The flags beside it keep the worktree's own
+// .claude settings and every MCP server out of the stage.
 func settingsJSON(network []string) (string, error) {
 	var settings struct {
 		Sandbox struct {
 			Enabled                  bool `json:"enabled"`
 			AutoAllowBashIfSandboxed bool `json:"autoAllowBashIfSandboxed"`
+			AllowUnsandboxedCommands bool `json:"allowUnsandboxedCommands"`
 			Network                  struct {
 				AllowedDomains []string `json:"allowedDomains"`
 			} `json:"network"`

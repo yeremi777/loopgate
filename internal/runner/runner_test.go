@@ -44,8 +44,13 @@ func TestRunPassesSafetyFlagsAndPromptInWorktree(t *testing.T) {
 			t.Fatalf("want %s %s in %q", pair[0], pair[1], args)
 		}
 	}
-	if !slices.Contains(args, "-p") {
-		t.Fatalf("want -p in %q", args)
+	for _, flag := range []string{"-p", "--strict-mcp-config"} {
+		if !slices.Contains(args, flag) {
+			t.Fatalf("want %s in %q", flag, args)
+		}
+	}
+	if got := flagValue(args, "--setting-sources"); got != "user" {
+		t.Fatalf("--setting-sources %q, want user so worktree settings and hooks never load", got)
 	}
 	if got := flagValue(args, "--add-dir"); got != fake.runner().Cache {
 		t.Fatalf("--add-dir %q, want the cache dir %q", got, fake.runner().Cache)
@@ -67,8 +72,9 @@ func TestRunPassesSafetyFlagsAndPromptInWorktree(t *testing.T) {
 
 	var settings struct {
 		Sandbox struct {
-			Enabled bool `json:"enabled"`
-			Network struct {
+			Enabled                  bool  `json:"enabled"`
+			AllowUnsandboxedCommands *bool `json:"allowUnsandboxedCommands"`
+			Network                  struct {
 				AllowedDomains []string `json:"allowedDomains"`
 			} `json:"network"`
 		} `json:"sandbox"`
@@ -81,6 +87,9 @@ func TestRunPassesSafetyFlagsAndPromptInWorktree(t *testing.T) {
 	}
 	if !settings.Sandbox.Enabled {
 		t.Fatal("sandbox not enabled")
+	}
+	if u := settings.Sandbox.AllowUnsandboxedCommands; u == nil || *u {
+		t.Fatal("stages may ask to run commands outside the sandbox")
 	}
 	if got := settings.Sandbox.Network.AllowedDomains; !slices.Equal(got, []string{"proxy.golang.org"}) {
 		t.Fatalf("allowed domains %q", got)
