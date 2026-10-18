@@ -40,6 +40,26 @@ func TestWorktreeComesFromOriginDefaultBranchAndCarriesSpec(t *testing.T) {
 	if got := readFile(t, filepath.Join(checkout, "README")); got != "dirty" {
 		t.Fatalf("checkout README changed to %q", got)
 	}
+	if got := gitOut(t, wt, "status", "--porcelain"); got != "" {
+		t.Fatalf("worktree not clean after creation: %q", got)
+	}
+	if got := gitOut(t, wt, "log", "-1", "--format=%s"); got != "add spec docs/specs/x.md" {
+		t.Fatalf("last commit %q, want the spec commit", got)
+	}
+}
+
+func TestWorktreeAddsNoCommitForSpecAlreadyOnDefaultBranch(t *testing.T) {
+	checkout, seed := cloneWithOrigin(t)
+	commitFile(t, seed, "docs/specs/x.md", "spec")
+	gitRun(t, seed, "push", "-q", "origin", "trunk")
+	gitRun(t, checkout, "pull", "-q")
+	wt := filepath.Join(t.TempDir(), "wt")
+	if _, err := CreateWorktree(context.Background(), Worktree{Checkout: checkout, Path: wt, Branch: "loop/fix-1", Spec: "docs/specs/x.md"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := gitOut(t, wt, "log", "-1", "--format=%s"); got != "spec" {
+		t.Fatalf("last commit %q, want origin's head", got)
+	}
 }
 
 func TestWorktreeWithoutSpec(t *testing.T) {

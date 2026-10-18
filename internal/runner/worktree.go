@@ -21,7 +21,8 @@ type Worktree struct {
 }
 
 // CreateWorktree fetches origin, adds the worktree on a new branch from
-// origin's default branch, copies the Spec in, and returns the default branch.
+// origin's default branch, commits the Spec onto it when the branch lacks it,
+// and returns the default branch.
 func CreateWorktree(ctx context.Context, w Worktree) (string, error) {
 	var spec []byte
 	if w.Spec != "" {
@@ -53,6 +54,18 @@ func CreateWorktree(ctx context.Context, w Worktree) (string, error) {
 		}
 		if err := os.WriteFile(dst, spec, 0o644); err != nil {
 			return "", err
+		}
+		changed, err := Git(ctx, 30*time.Second, w.Path, "status", "--porcelain", "--", w.Spec)
+		if err != nil {
+			return "", err
+		}
+		if changed != "" {
+			if _, err := Git(ctx, 30*time.Second, w.Path, "add", "--", w.Spec); err != nil {
+				return "", err
+			}
+			if _, err := Git(ctx, 30*time.Second, w.Path, "commit", "--quiet", "-m", "add spec "+w.Spec, "--", w.Spec); err != nil {
+				return "", err
+			}
 		}
 	}
 	return strings.TrimPrefix(ref, "origin/"), nil
