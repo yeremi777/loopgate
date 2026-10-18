@@ -47,6 +47,9 @@ func TestRunPassesSafetyFlagsAndPromptInWorktree(t *testing.T) {
 	if !slices.Contains(args, "-p") {
 		t.Fatalf("want -p in %q", args)
 	}
+	if got := flagValue(args, "--add-dir"); got != fake.runner().Cache {
+		t.Fatalf("--add-dir %q, want the cache dir %q", got, fake.runner().Cache)
+	}
 
 	var schema struct {
 		Properties struct {
@@ -147,7 +150,7 @@ func TestRunKeepsOnlyAllowlistedEnv(t *testing.T) {
 		t.Fatal(err)
 	}
 	env := strings.Split(fake.read("env"), "\n")
-	for _, want := range []string{"HOME=/home/me", "SSH_AUTH_SOCK=/tmp/agent", "TMPDIR=/tmp/me/", "GOCACHE=/tmp/me/loopgate/go-build"} {
+	for _, want := range []string{"HOME=/home/me", "SSH_AUTH_SOCK=/tmp/agent", "TMPDIR=/tmp/me/", "GOCACHE=" + r.Cache + "/go-build"} {
 		if !slices.Contains(env, want) {
 			t.Fatalf("child env lacks %s: %q", want, env)
 		}
@@ -220,7 +223,7 @@ func newFake(t *testing.T, body string) fake {
 }
 
 func (f fake) runner() Runner {
-	return Runner{Claude: f.claude, Environ: []string{"PATH=" + os.Getenv("PATH")}}
+	return Runner{Claude: f.claude, Environ: []string{"PATH=" + os.Getenv("PATH")}, Cache: filepath.Join(filepath.Dir(f.rec), "cache")}
 }
 
 func (f fake) read(name string) string {

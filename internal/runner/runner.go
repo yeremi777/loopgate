@@ -30,10 +30,12 @@ type Result struct {
 	CostUSD  float64
 }
 
-// Runner starts claude with Environ filtered to the allowlist.
+// Runner starts claude with Environ filtered to the allowlist. Cache is the
+// one directory outside the worktree that a stage may write: build caches.
 type Runner struct {
 	Claude  string
 	Environ []string
+	Cache   string
 }
 
 type Stage struct {
@@ -61,6 +63,9 @@ func (r Runner) Run(ctx context.Context, s Stage) (Result, error) {
 	ctx, cancel := context.WithTimeout(ctx, s.Timeout)
 	defer cancel()
 
+	if r.Cache == "" {
+		return Result{}, errors.New("runner needs a cache directory")
+	}
 	settings, err := settingsJSON(s.Network)
 	if err != nil {
 		return Result{}, err
@@ -72,8 +77,9 @@ func (r Runner) Run(ctx context.Context, s Stage) (Result, error) {
 		"--permission-prompts", "none",
 		"--json-schema", resultSchema,
 		"--settings", settings,
+		"--add-dir", r.Cache,
 	)
-	cmd.Env = append(cmd.Env, "GOCACHE="+filepath.Join(tempDir(cmd.Env), "loopgate", "go-build"))
+	cmd.Env = append(cmd.Env, "GOCACHE="+filepath.Join(r.Cache, "go-build"))
 	cmd.Stdin = strings.NewReader(s.Prompt)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
@@ -134,17 +140,6 @@ func settingsJSON(network []string) (string, error) {
 	settings.Permissions.Deny = []string{"Bash(gh:*)", "Bash(git push:*)", "Bash(git merge:*)"}
 	data, err := json.Marshal(settings)
 	return string(data), err
-}
-
-// tempDir is the child's TMPDIR. The sandbox lets a stage write there, and
-// not to the default Go build cache under ~/Library/Caches.
-func tempDir(env []string) string {
-	for _, kv := range env {
-		if dir, ok := strings.CutPrefix(kv, "TMPDIR="); ok && dir != "" {
-			return dir
-		}
-	}
-	return "/tmp"
 }
 
 // command builds a child with the allowlisted env that runGroup runs in its own process group.

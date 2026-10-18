@@ -60,7 +60,11 @@ func run() error {
 	if err := st.InterruptRunning("loopd stopped while the job ran"); err != nil {
 		return err
 	}
-	r := runner.Runner{Claude: claude, Environ: os.Environ()}
+	cache := filepath.Join(home, "cache")
+	if err := os.MkdirAll(cache, 0o700); err != nil {
+		return err
+	}
+	r := runner.Runner{Claude: claude, Environ: os.Environ(), Cache: cache}
 	d, err := daemon.New(home, st, daemon.Deps{
 		Pipeline: job.Pipeline{Stages: r, Shell: r, Publisher: github.Publisher{GH: "gh"}},
 		Notify:   notify,
