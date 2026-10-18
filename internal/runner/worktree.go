@@ -35,14 +35,14 @@ func CreateWorktree(ctx context.Context, w Worktree) (string, error) {
 		spec = data
 	}
 
-	if _, err := git(ctx, 2*time.Minute, w.Checkout, "fetch", "--quiet", "origin"); err != nil {
+	if _, err := Git(ctx, 2*time.Minute, w.Checkout, "fetch", "--quiet", "origin"); err != nil {
 		return "", err
 	}
-	ref, err := git(ctx, 30*time.Second, w.Checkout, "symbolic-ref", "--short", "refs/remotes/origin/HEAD")
+	ref, err := Git(ctx, 30*time.Second, w.Checkout, "symbolic-ref", "--short", "refs/remotes/origin/HEAD")
 	if err != nil {
 		return "", fmt.Errorf("find origin's default branch (run `git remote set-head origin --auto` in %s): %w", w.Checkout, err)
 	}
-	if _, err := git(ctx, time.Minute, w.Checkout, "worktree", "add", "--quiet", "-b", w.Branch, w.Path, ref); err != nil {
+	if _, err := Git(ctx, time.Minute, w.Checkout, "worktree", "add", "--quiet", "-b", w.Branch, w.Path, ref); err != nil {
 		return "", err
 	}
 
@@ -58,7 +58,8 @@ func CreateWorktree(ctx context.Context, w Worktree) (string, error) {
 	return strings.TrimPrefix(ref, "origin/"), nil
 }
 
-func git(ctx context.Context, timeout time.Duration, dir string, args ...string) (string, error) {
+// Git runs git in dir for loopd itself, outside any stage, and returns its trimmed output.
+func Git(ctx context.Context, timeout time.Duration, dir string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "git", args...)
