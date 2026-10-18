@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"errors"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -137,6 +138,12 @@ func Parse(data []byte) (Loop, error) {
 	if raw.Bounds.Timeout <= 0 {
 		return Loop{}, &FieldError{Field: "bounds.timeout", Reason: "required, must be positive"}
 	}
+	if err := checkGlobs("protected", raw.Protected); err != nil {
+		return Loop{}, err
+	}
+	if err := checkGlobs("tests", raw.Tests); err != nil {
+		return Loop{}, err
+	}
 	network, err := parseNetwork(raw.Network)
 	if err != nil {
 		return Loop{}, err
@@ -151,6 +158,18 @@ func Parse(data []byte) (Loop, error) {
 		Tests:     raw.Tests,
 		Network:   network,
 	}, nil
+}
+
+// checkGlobs refuses a pattern that path.Match rejects, which would otherwise never match.
+func checkGlobs(field string, globs []string) error {
+	for _, g := range globs {
+		for _, seg := range strings.Split(g, "/") {
+			if _, err := path.Match(seg, ""); err != nil {
+				return &FieldError{Field: field, Reason: "bad pattern " + g}
+			}
+		}
+	}
+	return nil
 }
 
 // parseNetwork keeps GitHub out of reach of every stage: loopd alone talks to GitHub.

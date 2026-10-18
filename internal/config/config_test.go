@@ -98,6 +98,8 @@ func TestParseRejectsInvalidFields(t *testing.T) {
 		{"github domain", swap("proxy.golang.org", "api.github.com"), "network"},
 		{"bare github domain", swap("proxy.golang.org", "GitHub.com"), "network"},
 		{"githubusercontent domain", swap("proxy.golang.org", "raw.githubusercontent.com"), "network"},
+		{"bad protected glob", swap(`".github/**"`, `".github/["`), "protected"},
+		{"bad tests glob", swap(`"**/*_test.go"`, `"**/[_test.go"`), "tests"},
 		{"url not domain", swap("proxy.golang.org", "https://proxy.golang.org"), "network"},
 	}
 	for _, c := range cases {
