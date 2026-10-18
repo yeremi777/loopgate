@@ -161,3 +161,32 @@ func hasRow(out, name, state string) bool {
 	return false
 }
 
+
+func TestInstallServiceWritesAgentForBuiltLoopd(t *testing.T) {
+	e := newEnv(t, "exit 0")
+	home := t.TempDir()
+	cmd := e.cmd("loopctl", "install-service")
+	cmd.Env = append(cmd.Env, "HOME="+home)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("install-service: %v: %s", err, out)
+	}
+	plist := filepath.Join(home, "Library/LaunchAgents/loopgate.loopd.plist")
+	if lint, err := exec.Command("plutil", "-lint", plist).CombinedOutput(); err != nil {
+		t.Fatalf("plutil -lint: %v: %s", err, lint)
+	}
+	args, err := exec.Command("plutil", "-extract", "ProgramArguments.0", "raw", plist).Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := filepath.EvalSymlinks(filepath.Join(bin, "loopd"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(string(args)); got != want {
+		t.Fatalf("agent runs %q, want the loopd next to loopctl", got)
+	}
+	if !strings.Contains(string(out), "launchctl bootstrap gui/") {
+		t.Fatalf("output does not say how to start it: %s", out)
+	}
+}

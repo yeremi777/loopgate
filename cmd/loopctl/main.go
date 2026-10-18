@@ -12,6 +12,7 @@ import (
 
 	"github.com/yeremi777/loopgate/internal/daemon"
 	"github.com/yeremi777/loopgate/internal/ipc"
+	"github.com/yeremi777/loopgate/internal/service"
 )
 
 const usage = `usage:
@@ -21,7 +22,8 @@ const usage = `usage:
   loopctl pause <name>
   loopctl resume <name>
   loopctl run <name> [--spec <path>]
-  loopctl logs <job>`
+  loopctl logs <job>
+  loopctl install-service`
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
@@ -42,6 +44,8 @@ func run(args []string) error {
 	}
 	cmd, rest := args[0], args[1:]
 	switch {
+	case cmd == "install-service" && len(rest) == 0:
+		return installService(home)
 	case cmd == "list" && len(rest) == 0:
 		loops, err := c.List(ctx)
 		if err != nil {
@@ -101,6 +105,36 @@ func run(args []string) error {
 	default:
 		return errors.New(usage)
 	}
+}
+
+// installService writes the launchd agent for the loopd that sits next to
+// this loopctl, and says how to start it.
+func installService(home string) error {
+	exe, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	if exe, err = filepath.EvalSymlinks(exe); err != nil {
+		return err
+	}
+	loopd := filepath.Join(filepath.Dir(exe), "loopd")
+	if _, err := os.Stat(loopd); err != nil {
+		return fmt.Errorf("loopd must sit next to loopctl: %w", err)
+	}
+	user, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		return err
+	}
+	path, err := service.Install(filepath.Join(user, "Library", "LaunchAgents"), service.Config{Loopd: loopd, Home: home, Path: os.Getenv("PATH")})
+	if err != nil {
+		return err
+	}
+	fmt.Printf("wrote %s\nstart it now and at every login with:\n  launchctl bootstrap gui/%d %s\nlogs: %s\n",
+		path, os.Getuid(), path, filepath.Join(home, "loopd.log"))
+	return nil
 }
 
 func printLog(log daemon.JobLog) {
