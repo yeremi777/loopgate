@@ -443,3 +443,17 @@ func writeFile(t *testing.T, path, content string) {
 		t.Fatal(err)
 	}
 }
+
+func TestPRBodyDropsAIAttribution(t *testing.T) {
+	j := newJob(t, 3)
+	land := "Add ok\n\nbody line\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n"
+	f := &fakeStages{t: t, steps: []step{commits(j, "ok.txt"), reports(runner.StatusDone, "clean"), lands(land)}}
+	pub := &fakePublisher{}
+	Pipeline{Stages: f, Shell: shell(), Publisher: pub}.Run(context.Background(), j)
+	if strings.Contains(pub.pr.Body, "Generated with") || strings.Contains(pub.pr.Body, "Co-Authored-By") {
+		t.Fatalf("PR body keeps attribution:\n%s", pub.pr.Body)
+	}
+	if !strings.HasSuffix(pub.pr.Body, "body line") {
+		t.Fatalf("PR body lost land's text or kept trailing blank lines:\n%q", pub.pr.Body)
+	}
+}

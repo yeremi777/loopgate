@@ -58,7 +58,21 @@ func parsePR(text string) (PR, error) {
 	if title == "" {
 		return PR{}, fmt.Errorf("land wrote no pull request title")
 	}
-	return PR{Title: title, Body: strings.TrimSpace(body)}, nil
+	return PR{Title: title, Body: dropAttribution(body)}, nil
+}
+
+// dropAttribution removes the lines that credit an AI tool, which the user's
+// rules forbid in anything loopgate publishes.
+func dropAttribution(body string) string {
+	var kept []string
+	for _, line := range strings.Split(body, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.Contains(trimmed, "Generated with [Claude Code]") || strings.HasPrefix(strings.ToLower(trimmed), "co-authored-by: claude") {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	return strings.TrimSpace(strings.Join(kept, "\n"))
 }
 
 // report opens the PR body with what loopgate checked, so a reviewer sees
