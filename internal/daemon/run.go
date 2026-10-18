@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -19,7 +20,29 @@ import (
 // Deps are the parts of a Daemon that reach outside it.
 type Deps struct {
 	Pipeline job.Pipeline
+	Issues   IssueTracker
 	Notify   func(title, message string)
+}
+
+// IssueTracker reads a GitHub Loop's issues and answers on them.
+type IssueTracker interface {
+	List(ctx context.Context, repo, label string) ([]job.Issue, error)
+	Comment(ctx context.Context, repo string, number int, body string) error
+	Label(ctx context.Context, repo string, number int, label string) error
+}
+
+// Requeue lets the next poll of a GitHub Loop run issue again.
+func (d *Daemon) Requeue(loop string, issue int) error {
+	d.mu.Lock()
+	l, ok := d.loops[loop]
+	d.mu.Unlock()
+	if !ok {
+		return fmt.Errorf("%s: %w", loop, ErrUnknownLoop)
+	}
+	if _, ok := l.Trigger.(config.GitHub); !ok {
+		return fmt.Errorf("%s is not a github loop", loop)
+	}
+	return d.st.UnclaimIssue(loop, issue)
 }
 
 var (
@@ -45,13 +68,17 @@ type running struct {
 // spec when spec is empty. The worktree is ready when Run returns; the
 // stages run in the background.
 func (d *Daemon) Run(name, spec string) (store.Job, error) {
+	return d.runWork(name, func(loop config.Loop) (job.Work, error) { return workFor(loop, spec) })
+}
+
+func (d *Daemon) runWork(name string, workOf func(config.Loop) (job.Work, error)) (store.Job, error) {
 	d.mu.Lock()
 	loop, ok := d.loops[name]
 	if !ok {
 		d.mu.Unlock()
 		return store.Job{}, fmt.Errorf("%s: %w", name, ErrUnknownLoop)
 	}
-	work, err := workFor(loop, spec)
+	work, err := workOf(loop)
 	if err != nil {
 		d.mu.Unlock()
 		return store.Job{}, err
@@ -178,12 +205,16 @@ func (d *Daemon) start(loop config.Loop, work job.Work) (job.Job, error) {
 	if err != nil {
 		return job.Job{}, err
 	}
+	tag := time.Now().Format("20060102-150405")
+	if issue, ok := work.(job.Issue); ok {
+		tag = strconv.Itoa(issue.Number)
+	}
 	j := job.Job{
 		ID:     created.ID,
 		Loop:   loop,
 		Work:   work,
 		Dir:    d.jobDir(created.ID),
-		Branch: "loop/" + loop.Name + "-" + time.Now().Format("20060102-150405") + "-" + strconv.FormatInt(created.ID, 10),
+		Branch: "loop/" + loop.Name + "-" + tag + "-" + strconv.FormatInt(created.ID, 10),
 	}
 	j.Worktree = filepath.Join(j.Dir, "worktree")
 	if err := os.MkdirAll(j.Dir, 0o700); err != nil {
@@ -203,6 +234,14 @@ func (d *Daemon) resume(loop config.Loop, stored store.Job) (job.Job, error) {
 	work, err := parseWork(stored.Work)
 	if err != nil {
 		return job.Job{}, err
+	}
+	// The issue was drilled before the takeover; resume from what drill left.
+	if issue, ok := work.(job.Issue); ok {
+		work = job.Task{Text: fmt.Sprintf("GitHub issue #%d: %s", issue.Number, issue.Title)}
+		spec := fmt.Sprintf("docs/specs/issue-%d.md", issue.Number)
+		if _, err := os.Stat(filepath.Join(stored.Worktree, spec)); err == nil {
+			work = job.Spec{Path: spec}
+		}
 	}
 	ref, err := runner.Git(d.ctx, 30*time.Second, stored.Worktree, "symbolic-ref", "--short", "refs/remotes/origin/HEAD")
 	if err != nil {
@@ -246,6 +285,60 @@ func (d *Daemon) finish(ctx context.Context, cur *running, j job.Job) {
 
 	if !takenOver {
 		d.deps.Notify(notice(j, end))
+		d.answerIssue(j, end)
+	}
+}
+
+// answerIssue tells an issue's author how its Job ended: the PR link, or the
+// question that blocks it with the needs-drill label.
+func (d *Daemon) answerIssue(j job.Job, end store.Finish) {
+	issue, ok := j.Work.(job.Issue)
+	gh, isGitHub := j.Loop.Trigger.(config.GitHub)
+	if !ok || !isGitHub {
+		return
+	}
+	var err error
+	switch end.State {
+	case store.Done:
+		err = d.deps.Issues.Comment(d.ctx, gh.Repo, issue.Number, "loopgate opened a draft pull request for this issue: "+end.PRURL)
+	case store.Blocked:
+		err = d.deps.Issues.Comment(d.ctx, gh.Repo, issue.Number, "loopgate stopped before building this and needs a human decision:\n\n"+end.Question)
+		if err == nil {
+			err = d.deps.Issues.Label(d.ctx, gh.Repo, issue.Number, "needs-drill")
+		}
+	}
+	if err != nil {
+		log.Printf("loopd: answer issue #%d: %v", issue.Number, err)
+	}
+}
+
+// poll starts a Job on the lowest open issue that the Loop has not handled.
+func (d *Daemon) poll(name string, gh config.GitHub) {
+	if d.isBusy() {
+		return
+	}
+	issues, err := d.deps.Issues.List(d.ctx, gh.Repo, gh.Label)
+	if err != nil {
+		log.Printf("loopd: poll %s: %v", name, err)
+		return
+	}
+	for _, issue := range issues {
+		fresh, err := d.st.ClaimIssue(name, issue.Number)
+		if err != nil {
+			log.Printf("loopd: poll %s: %v", name, err)
+			return
+		}
+		if !fresh {
+			continue
+		}
+		_, err = d.runWork(name, func(config.Loop) (job.Work, error) { return issue, nil })
+		if errors.Is(err, ErrBusy) {
+			err = d.st.UnclaimIssue(name, issue.Number)
+		}
+		if err != nil {
+			log.Printf("loopd: issue #%d of %s: %v", issue.Number, name, err)
+		}
+		return
 	}
 }
 
@@ -311,18 +404,29 @@ func workFor(loop config.Loop, spec string) (job.Work, error) {
 	return job.Task{Text: timer.Task}, nil
 }
 
-// describe and parseWork store a Job's Work as one line: "spec <path>" or "task <text>".
+// describe and parseWork store a Job's Work as one line: "spec <path>",
+// "task <text>", or "issue <number> <title>".
 func describe(w job.Work) string {
 	switch w := w.(type) {
 	case job.Spec:
 		return "spec " + w.Path
 	case job.Task:
 		return "task " + w.Text
+	case job.Issue:
+		return "issue " + strconv.Itoa(w.Number) + " " + w.Title
 	}
 	return ""
 }
 
 func parseWork(s string) (job.Work, error) {
+	if rest, ok := strings.CutPrefix(s, "issue "); ok {
+		num, title, _ := strings.Cut(rest, " ")
+		n, err := strconv.Atoi(num)
+		if err != nil {
+			return nil, fmt.Errorf("stored work %q: %w", s, err)
+		}
+		return job.Issue{Number: n, Title: title}, nil
+	}
 	if path, ok := strings.CutPrefix(s, "spec "); ok {
 		return job.Spec{Path: path}, nil
 	}

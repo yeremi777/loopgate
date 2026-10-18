@@ -116,6 +116,7 @@ type runEnv struct {
 	st       *store.Store
 	checkout string
 	stages   *scriptedStages
+	issues   *fakeIssues
 	mu       sync.Mutex
 	notified []string
 }
@@ -139,10 +140,12 @@ func newRunEnv(t *testing.T) *runEnv {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	r := &runEnv{st: st, checkout: checkout, stages: &scriptedStages{gate: make(chan struct{})}}
+	r := &runEnv{st: st, checkout: checkout, stages: &scriptedStages{gate: make(chan struct{})},
+		issues: &fakeIssues{comments: map[int][]string{}, labels: map[int]string{}}}
 	shell := runner.Runner{Environ: os.Environ()}
 	d, err := New(home, st, Deps{
 		Pipeline: job.Pipeline{Stages: r.stages, Shell: shell, Publisher: fakePublisher{}},
+		Issues:   r.issues,
 		Notify: func(title, message string) {
 			r.mu.Lock()
 			defer r.mu.Unlock()
@@ -210,6 +213,11 @@ func (s *scriptedStages) Run(ctx context.Context, st runner.Stage) (runner.Resul
 	s.mu.Unlock()
 	done := runner.Result{Status: runner.StatusDone, Summary: "ok", CostUSD: 0.1}
 	switch {
+	case strings.HasPrefix(st.Prompt, "/drill"):
+		if s.blockFirst && n == 1 {
+			return runner.Result{Status: runner.StatusBlocked, Question: "which db?", Summary: "stopped"}, nil
+		}
+		done.Summary = "add ok.txt"
 	case strings.HasPrefix(st.Prompt, "/implement"):
 		if s.blockFirst && n == 1 {
 			return runner.Result{Status: runner.StatusBlocked, Question: "which db?", Summary: "stopped"}, nil

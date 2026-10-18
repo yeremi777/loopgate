@@ -3,49 +3,59 @@ package daemon
 import (
 	"log"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/yeremi777/loopgate/internal/config"
+	"github.com/yeremi777/loopgate/internal/trigger/timer"
 )
 
-// Tick runs each timer Loop whose fire is due at now. A fire that finds the
-// Loop paused or a Job running is skipped, and the next fire is computed from
-// now, so missed fires are never caught up.
+// Tick fires each timer Loop and polls each GitHub Loop that is due at now.
+// A fire that finds the Loop paused or a Job running is skipped, and the next
+// fire is computed from now, so missed fires are never caught up.
 func (d *Daemon) Tick(now time.Time) {
-	for _, name := range d.due(now) {
-		if _, err := d.Run(name, ""); err != nil {
-			log.Printf("loopd: timer fire of %s skipped: %v", name, err)
+	for _, loop := range d.due(now) {
+		switch t := loop.Trigger.(type) {
+		case config.Timer:
+			if _, err := d.Run(loop.Name, ""); err != nil {
+				log.Printf("loopd: timer fire of %s skipped: %v", loop.Name, err)
+			}
+		case config.GitHub:
+			d.poll(loop.Name, t)
 		}
 	}
 }
 
-func (d *Daemon) due(now time.Time) []string {
+func (d *Daemon) due(now time.Time) []config.Loop {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	var names []string
+	var due []config.Loop
 	for name, loop := range d.loops {
-		t, ok := loop.Trigger.(config.Timer)
-		if !ok {
-			continue
+		var sched timer.Schedule
+		switch t := loop.Trigger.(type) {
+		case config.Timer:
+			sched = t.Schedule
+		case config.GitHub:
+			sched = timer.Every(t.Every)
 		}
 		next, seen := d.next[name]
 		if !seen {
-			d.next[name] = t.Schedule.Next(now)
+			d.next[name] = sched.Next(now)
 			continue
 		}
 		if next.IsZero() || now.Before(next) {
 			continue
 		}
-		d.next[name] = t.Schedule.Next(now)
+		d.next[name] = sched.Next(now)
 		paused, err := d.st.Paused(name)
 		if err != nil {
 			log.Printf("loopd: timer fire of %s skipped: %v", name, err)
 			continue
 		}
 		if !paused {
-			names = append(names, name)
+			due = append(due, loop)
 		}
 	}
-	slices.Sort(names)
-	return names
+	slices.SortFunc(due, func(a, b config.Loop) int { return strings.Compare(a.Name, b.Name) })
+	return due
 }

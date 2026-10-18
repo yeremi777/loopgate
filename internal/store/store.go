@@ -166,3 +166,9 @@ func (s *Store) ClaimIssue(loop string, issue int) (bool, error) {
 	n, err := res.RowsAffected()
 	return n == 1, err
 }
+
+// UnclaimIssue forgets that loop handled issue, so the next poll runs it again.
+func (s *Store) UnclaimIssue(loop string, issue int) error {
+	_, err := s.db.Exec(`DELETE FROM issues WHERE loop = ? AND number = ?`, loop, issue)
+	return err
+}

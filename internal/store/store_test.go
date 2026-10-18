@@ -156,3 +156,16 @@ func TestFinishAddsCostAcrossRuns(t *testing.T) {
 		t.Fatalf("cost %v, want 2.25 over both runs", got.CostUSD)
 	}
 }
+
+func TestUnclaimLetsAnIssueRunAgain(t *testing.T) {
+	st := open(t, filepath.Join(t.TempDir(), "state.db"))
+	if fresh, _ := st.ClaimIssue("fix", 3); !fresh {
+		t.Fatal("first claim not fresh")
+	}
+	if err := st.UnclaimIssue("fix", 3); err != nil {
+		t.Fatal(err)
+	}
+	if fresh, _ := st.ClaimIssue("fix", 3); !fresh {
+		t.Fatal("claim after unclaim not fresh")
+	}
+}
