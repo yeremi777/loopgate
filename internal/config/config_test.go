@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/yeremi777/loopgate/internal/trigger/timer"
 )
 
 const githubLoop = `
@@ -47,6 +49,10 @@ func TestParseTimerLoop(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	cron, err := timer.ParseCron("0 9 * * 1-5")
+	if err != nil {
+		t.Fatal(err)
+	}
 	got, err := Parse([]byte(`
 name: deps
 checkout: ~/src/app
@@ -62,7 +68,7 @@ bounds: { max_iterations: 3, timeout: 1h }
 	want := Loop{
 		Name:     "deps",
 		Checkout: filepath.Join(home, "src/app"),
-		Trigger:  Timer{Cron: "0 9 * * 1-5", Task: "bump go dependencies"},
+		Trigger:  Timer{Schedule: cron, Task: "bump go dependencies"},
 		Verify:   "go test ./...",
 		Bounds:   Bounds{MaxIterations: 3, Timeout: time.Hour},
 	}
@@ -126,6 +132,8 @@ bounds: { max_iterations: 3, timeout: 1h }
 		{"every and cron", "every: 1h, cron: '0 9 * * *'", "task: x", "trigger.timer"},
 		{"no work", "every: 1h", "", "task"},
 		{"task and spec", "every: 1h", "task: x\nspec: docs/specs/x.md", "task"},
+		{"bad cron", "cron: '61 * * * *'", "task: x", "trigger.timer.cron"},
+		{"cron that never fires", "cron: '0 0 31 2 *'", "task: x", "trigger.timer.cron"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

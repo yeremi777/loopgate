@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"go.yaml.in/yaml/v3"
+
+	"github.com/yeremi777/loopgate/internal/trigger/timer"
 )
 
 // Loop is a validated Loop definition. Only Parse builds one.
@@ -36,12 +38,11 @@ type GitHub struct {
 	Every time.Duration
 }
 
-// Timer fires on Every or Cron, and runs exactly one of Task or Spec.
+// Timer fires on its Schedule, and runs exactly one of Task or Spec.
 type Timer struct {
-	Every time.Duration
-	Cron  string
-	Task  string
-	Spec  string
+	Schedule timer.Schedule
+	Task     string
+	Spec     string
 }
 
 func (GitHub) isTrigger() {}
@@ -208,8 +209,8 @@ func parseCheckout(path string) (string, error) {
 }
 
 func parseTrigger(raw rawLoop) (Trigger, error) {
-	gh, timer := raw.Trigger.GitHub, raw.Trigger.Timer
-	if (gh == nil) == (timer == nil) {
+	gh, rt := raw.Trigger.GitHub, raw.Trigger.Timer
+	if (gh == nil) == (rt == nil) {
 		return nil, &FieldError{Field: "trigger", Reason: "needs exactly one of github or timer"}
 	}
 	if gh != nil {
@@ -225,13 +226,24 @@ func parseTrigger(raw rawLoop) (Trigger, error) {
 		}
 		return GitHub{Repo: gh.Repo, Label: gh.Label, Every: gh.Every}, nil
 	}
-	if (timer.Every > 0) == (timer.Cron != "") {
+	if (rt.Every > 0) == (rt.Cron != "") {
 		return nil, &FieldError{Field: "trigger.timer", Reason: "needs exactly one of every or cron"}
 	}
 	if (raw.Task == "") == (raw.Spec == "") {
 		return nil, &FieldError{Field: "task", Reason: "a timer loop needs exactly one of task or spec"}
 	}
-	return Timer{Every: timer.Every, Cron: timer.Cron, Task: raw.Task, Spec: raw.Spec}, nil
+	var sched timer.Schedule = timer.Every(rt.Every)
+	if rt.Cron != "" {
+		cron, err := timer.ParseCron(rt.Cron)
+		if err != nil {
+			return nil, &FieldError{Field: "trigger.timer.cron", Reason: err.Error()}
+		}
+		if cron.Next(time.Now()).IsZero() {
+			return nil, &FieldError{Field: "trigger.timer.cron", Reason: "never fires"}
+		}
+		sched = cron
+	}
+	return Timer{Schedule: sched, Task: raw.Task, Spec: raw.Spec}, nil
 }
 
 func missing(field string) *FieldError { return &FieldError{Field: field, Reason: "required"} }
