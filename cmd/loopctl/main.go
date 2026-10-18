@@ -22,7 +22,10 @@ const usage = `usage:
   loopctl pause <name>
   loopctl resume <name>
   loopctl run <name> [--spec <path>]
+  loopctl stop <name>
   loopctl logs <job>
+  loopctl takeover <job>
+  loopctl handback <job>
   loopctl install-service`
 
 func main() {
@@ -91,10 +94,34 @@ func run(args []string) error {
 		}
 		fmt.Printf("job %d running on %s in %s\n", j.ID, j.Branch, j.Worktree)
 		return nil
-	case cmd == "logs" && len(rest) == 1:
-		id, err := strconv.ParseInt(rest[0], 10, 64)
+	case cmd == "stop" && len(rest) == 1:
+		return c.Stop(ctx, rest[0])
+	case cmd == "takeover" && len(rest) == 1:
+		id, err := jobID(rest[0])
 		if err != nil {
-			return fmt.Errorf("job id %q is not a number", rest[0])
+			return err
+		}
+		j, err := c.Takeover(ctx, id)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("job %d is yours on %s; the loop stays off it until handback.\n  cd %s\n", j.ID, j.Branch, j.Worktree)
+		return nil
+	case cmd == "handback" && len(rest) == 1:
+		id, err := jobID(rest[0])
+		if err != nil {
+			return err
+		}
+		j, err := c.Handback(ctx, id)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("job %d is back with the loop on %s\n", j.ID, j.Branch)
+		return nil
+	case cmd == "logs" && len(rest) == 1:
+		id, err := jobID(rest[0])
+		if err != nil {
+			return err
 		}
 		log, err := c.Job(ctx, id)
 		if err != nil {
@@ -105,6 +132,14 @@ func run(args []string) error {
 	default:
 		return errors.New(usage)
 	}
+}
+
+func jobID(s string) (int64, error) {
+	id, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("job id %q is not a number", s)
+	}
+	return id, nil
 }
 
 // installService writes the launchd agent for the loopd that sits next to

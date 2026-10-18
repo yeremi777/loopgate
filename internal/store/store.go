@@ -35,7 +35,7 @@ type Job struct {
 	Error    string
 }
 
-// Finish is how a Job ended.
+// Finish is how one run of a Job ended. CostUSD adds to the cost of earlier runs.
 type Finish struct {
 	State    JobState
 	Question string
@@ -126,7 +126,7 @@ func (s *Store) StartJob(id int64, work, branch, worktree string) error {
 }
 
 func (s *Store) FinishJob(id int64, f Finish) error {
-	return s.updateJob(id, `UPDATE jobs SET state = ?, question = ?, summary = ?, pr_url = ?, cost_usd = ?, error = ? WHERE id = ?`,
+	return s.updateJob(id, `UPDATE jobs SET state = ?, question = ?, summary = ?, pr_url = ?, cost_usd = cost_usd + ?, error = ? WHERE id = ?`,
 		f.State, f.Question, f.Summary, f.PRURL, f.CostUSD, f.Error, id)
 }
 

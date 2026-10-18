@@ -142,3 +142,17 @@ func TestInterruptFailsJobsLeftRunning(t *testing.T) {
 		}
 	}
 }
+
+func TestFinishAddsCostAcrossRuns(t *testing.T) {
+	st := open(t, filepath.Join(t.TempDir(), "state.db"))
+	job, _ := st.CreateJob("fix")
+	if err := st.FinishJob(job.ID, Finish{State: Manual, CostUSD: 1.5}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.FinishJob(job.ID, Finish{State: Done, CostUSD: 0.75}); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := st.Job(job.ID); got.CostUSD != 2.25 {
+		t.Fatalf("cost %v, want 2.25 over both runs", got.CostUSD)
+	}
+}

@@ -191,8 +191,9 @@ func (r *runEnv) waitDone(t *testing.T, id int64) store.Job {
 // scriptedStages stands in for claude: implement commits ok.txt, rubric
 // passes, land returns PR text. The first stage waits for gate to close.
 type scriptedStages struct {
-	gate      chan struct{}
-	failFirst bool
+	gate       chan struct{}
+	failFirst  bool
+	blockFirst bool
 	mu        sync.Mutex
 	prompts   []string
 }
@@ -210,6 +211,9 @@ func (s *scriptedStages) Run(ctx context.Context, st runner.Stage) (runner.Resul
 	done := runner.Result{Status: runner.StatusDone, Summary: "ok", CostUSD: 0.1}
 	switch {
 	case strings.HasPrefix(st.Prompt, "/implement"):
+		if s.blockFirst && n == 1 {
+			return runner.Result{Status: runner.StatusBlocked, Question: "which db?", Summary: "stopped"}, nil
+		}
 		if s.failFirst && n == 1 {
 			return done, nil
 		}

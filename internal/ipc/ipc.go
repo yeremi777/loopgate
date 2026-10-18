@@ -66,6 +66,20 @@ func Serve(ln net.Listener, d *daemon.Daemon) error {
 		log, err := d.Job(id)
 		reply(w, log, err)
 	})
+	mux.HandleFunc("POST /loops/{name}/stop", func(w http.ResponseWriter, r *http.Request) {
+		reply(w, struct{}{}, d.Stop(r.PathValue("name")))
+	})
+	for action, do := range map[string]func(int64) (store.Job, error){"takeover": d.Takeover, "handback": d.Handback} {
+		mux.HandleFunc("POST /jobs/{id}/"+action, func(w http.ResponseWriter, r *http.Request) {
+			id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+			if err != nil {
+				reply(w, store.Job{}, fmt.Errorf("job id %q: %w", r.PathValue("id"), store.ErrNotFound))
+				return
+			}
+			j, err := do(id)
+			reply(w, j, err)
+		})
+	}
 	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 	return srv.Serve(ln)
 }
@@ -93,7 +107,8 @@ func statusOf(err error) int {
 	switch {
 	case errors.Is(err, daemon.ErrUnknownLoop), errors.Is(err, store.ErrNotFound):
 		return http.StatusNotFound
-	case errors.Is(err, daemon.ErrLoopExists), errors.Is(err, daemon.ErrBusy):
+	case errors.Is(err, daemon.ErrLoopExists), errors.Is(err, daemon.ErrBusy), errors.Is(err, daemon.ErrNotTakeable),
+		errors.Is(err, daemon.ErrNotManual), errors.Is(err, daemon.ErrNothingRunning), errors.Is(err, daemon.ErrStarting):
 		return http.StatusConflict
 	default:
 		return http.StatusBadRequest
@@ -154,6 +169,22 @@ func (c *Client) Job(ctx context.Context, id int64) (daemon.JobLog, error) {
 	var log daemon.JobLog
 	err := call(ctx, c, http.MethodGet, "/jobs/"+strconv.FormatInt(id, 10), nil, &log)
 	return log, err
+}
+
+func (c *Client) Stop(ctx context.Context, name string) error {
+	return call[struct{}](ctx, c, http.MethodPost, "/loops/"+url.PathEscape(name)+"/stop", nil, nil)
+}
+
+func (c *Client) Takeover(ctx context.Context, id int64) (store.Job, error) {
+	var j store.Job
+	err := call(ctx, c, http.MethodPost, "/jobs/"+strconv.FormatInt(id, 10)+"/takeover", nil, &j)
+	return j, err
+}
+
+func (c *Client) Handback(ctx context.Context, id int64) (store.Job, error) {
+	var j store.Job
+	err := call(ctx, c, http.MethodPost, "/jobs/"+strconv.FormatInt(id, 10)+"/handback", nil, &j)
+	return j, err
 }
 
 func call[T any](ctx context.Context, c *Client, method, path string, body []byte, out *T) error {

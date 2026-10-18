@@ -1,11 +1,13 @@
 package daemon
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/yeremi777/loopgate/internal/config"
@@ -21,9 +23,23 @@ type Deps struct {
 }
 
 var (
-	ErrBusy      = errors.New("a job is already running")
-	ErrNeedsSpec = errors.New("a github loop runs by hand only with --spec")
+	ErrBusy           = errors.New("a job is already running")
+	ErrNeedsSpec      = errors.New("a github loop runs by hand only with --spec")
+	ErrNotTakeable    = errors.New("a done job cannot be taken over; check out its branch instead")
+	ErrNotManual      = errors.New("only a taken-over job can be handed back")
+	ErrNothingRunning = errors.New("the loop has no running job")
+	ErrStarting       = errors.New("the job is still starting; try again")
 )
+
+// running is the Job in the slot. id and cancel are zero while its worktree is set up.
+type running struct {
+	id        int64
+	loop      string
+	cancel    context.CancelFunc
+	done      chan struct{}
+	takenOver bool
+	stopped   bool
+}
 
 // Run starts a Job of the named Loop on spec, or on the Loop's own task or
 // spec when spec is empty. The worktree is ready when Run returns; the
@@ -31,75 +47,206 @@ var (
 func (d *Daemon) Run(name, spec string) (store.Job, error) {
 	d.mu.Lock()
 	loop, ok := d.loops[name]
-	switch {
-	case !ok:
+	if !ok {
 		d.mu.Unlock()
 		return store.Job{}, fmt.Errorf("%s: %w", name, ErrUnknownLoop)
-	case d.busy:
-		d.mu.Unlock()
-		return store.Job{}, ErrBusy
 	}
 	work, err := workFor(loop, spec)
 	if err != nil {
 		d.mu.Unlock()
 		return store.Job{}, err
 	}
-	d.busy = true
+	cur, err := d.claim(name)
 	d.mu.Unlock()
-
-	started, j, err := d.start(loop, work)
 	if err != nil {
-		d.release()
 		return store.Job{}, err
 	}
-	d.jobs.Add(1)
-	go d.finish(j)
-	return started, nil
+
+	j, err := d.start(loop, work)
+	if err != nil {
+		d.release(cur)
+		return store.Job{}, err
+	}
+	return d.launch(cur, j)
 }
 
-func (d *Daemon) start(loop config.Loop, work job.Work) (store.Job, job.Job, error) {
+// Handback returns a taken-over Job to its Loop, which runs implement again
+// in the same worktree, on top of the human's commits.
+func (d *Daemon) Handback(id int64) (store.Job, error) {
+	stored, err := d.st.Job(id)
+	if err != nil {
+		return store.Job{}, err
+	}
+	if stored.State != store.Manual {
+		return store.Job{}, fmt.Errorf("job %d is %s: %w", id, stored.State, ErrNotManual)
+	}
+	d.mu.Lock()
+	loop, ok := d.loops[stored.Loop]
+	if !ok {
+		d.mu.Unlock()
+		return store.Job{}, fmt.Errorf("%s: %w", stored.Loop, ErrUnknownLoop)
+	}
+	cur, err := d.claim(loop.Name)
+	d.mu.Unlock()
+	if err != nil {
+		return store.Job{}, err
+	}
+
+	j, err := d.resume(loop, stored)
+	if err != nil {
+		d.release(cur)
+		return store.Job{}, err
+	}
+	return d.launch(cur, j)
+}
+
+// Takeover stops a running Job, or takes a Blocked, exhausted or failed one,
+// and marks it manual so the human works in its worktree.
+func (d *Daemon) Takeover(id int64) (store.Job, error) {
+	d.mu.Lock()
+	cur := d.current
+	if cur != nil && cur.id == id {
+		cur.takenOver = true
+		d.mu.Unlock()
+		cur.cancel()
+		<-cur.done
+		return d.st.Job(id)
+	}
+	d.mu.Unlock()
+
+	j, err := d.st.Job(id)
+	if err != nil {
+		return store.Job{}, err
+	}
+	switch j.State {
+	case store.Done:
+		return store.Job{}, fmt.Errorf("job %d: %w", id, ErrNotTakeable)
+	case store.Queued, store.Running:
+		return store.Job{}, fmt.Errorf("job %d: %w", id, ErrStarting)
+	case store.Manual:
+		return j, nil
+	}
+	if err := d.st.SetJobState(id, store.Manual); err != nil {
+		return store.Job{}, err
+	}
+	return d.st.Job(id)
+}
+
+// Stop ends the named Loop's running Job; it is stored as failed.
+func (d *Daemon) Stop(name string) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	cur := d.current
+	if cur == nil || cur.loop != name || cur.cancel == nil {
+		return fmt.Errorf("%s: %w", name, ErrNothingRunning)
+	}
+	cur.stopped = true
+	cur.cancel()
+	return nil
+}
+
+// claim takes the running slot for loop. The caller holds d.mu.
+func (d *Daemon) claim(loop string) (*running, error) {
+	if d.current != nil {
+		return nil, ErrBusy
+	}
+	d.current = &running{loop: loop, done: make(chan struct{})}
+	return d.current, nil
+}
+
+func (d *Daemon) release(cur *running) {
+	d.mu.Lock()
+	if d.current == cur {
+		d.current = nil
+	}
+	d.mu.Unlock()
+	close(cur.done)
+}
+
+func (d *Daemon) launch(cur *running, j job.Job) (store.Job, error) {
+	ctx, cancel := context.WithCancel(d.ctx)
+	d.mu.Lock()
+	cur.id, cur.cancel = j.ID, cancel
+	d.mu.Unlock()
+	d.jobs.Add(1)
+	go d.finish(ctx, cur, j)
+	return d.st.Job(j.ID)
+}
+
+func (d *Daemon) start(loop config.Loop, work job.Work) (job.Job, error) {
 	created, err := d.st.CreateJob(loop.Name)
 	if err != nil {
-		return store.Job{}, job.Job{}, err
-	}
-	dir := filepath.Join(d.home, "jobs", strconv.FormatInt(created.ID, 10))
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return store.Job{}, job.Job{}, d.fail(created.ID, err)
+		return job.Job{}, err
 	}
 	j := job.Job{
-		ID:       created.ID,
-		Loop:     loop,
-		Work:     work,
-		Dir:      dir,
-		Worktree: filepath.Join(dir, "worktree"),
-		Branch:   "loop/" + loop.Name + "-" + time.Now().Format("20060102-150405") + "-" + strconv.FormatInt(created.ID, 10),
+		ID:     created.ID,
+		Loop:   loop,
+		Work:   work,
+		Dir:    d.jobDir(created.ID),
+		Branch: "loop/" + loop.Name + "-" + time.Now().Format("20060102-150405") + "-" + strconv.FormatInt(created.ID, 10),
+	}
+	j.Worktree = filepath.Join(j.Dir, "worktree")
+	if err := os.MkdirAll(j.Dir, 0o700); err != nil {
+		return job.Job{}, d.fail(created.ID, err)
 	}
 	wt := runner.Worktree{Checkout: loop.Checkout, Path: j.Worktree, Branch: j.Branch}
 	if s, ok := work.(job.Spec); ok {
 		wt.Spec = s.Path
 	}
 	if j.DefaultBranch, err = runner.CreateWorktree(d.ctx, wt); err != nil {
-		return store.Job{}, job.Job{}, d.fail(created.ID, err)
+		return job.Job{}, d.fail(created.ID, err)
 	}
-	if err := d.st.StartJob(j.ID, describe(work), j.Branch, j.Worktree); err != nil {
-		return store.Job{}, job.Job{}, err
-	}
-	started, err := d.st.Job(j.ID)
-	return started, j, err
+	return j, d.st.StartJob(j.ID, describe(work), j.Branch, j.Worktree)
 }
 
-func (d *Daemon) finish(j job.Job) {
+func (d *Daemon) resume(loop config.Loop, stored store.Job) (job.Job, error) {
+	work, err := parseWork(stored.Work)
+	if err != nil {
+		return job.Job{}, err
+	}
+	ref, err := runner.Git(d.ctx, 30*time.Second, stored.Worktree, "symbolic-ref", "--short", "refs/remotes/origin/HEAD")
+	if err != nil {
+		return job.Job{}, err
+	}
+	j := job.Job{
+		ID:            stored.ID,
+		Loop:          loop,
+		Work:          work,
+		Dir:           d.jobDir(stored.ID),
+		Worktree:      stored.Worktree,
+		Branch:        stored.Branch,
+		DefaultBranch: strings.TrimPrefix(ref, "origin/"),
+	}
+	return j, d.st.SetJobState(j.ID, store.Running)
+}
+
+// finish stores the outcome and frees the slot under one lock, so no caller
+// sees a finished Job still holding the slot.
+func (d *Daemon) finish(ctx context.Context, cur *running, j job.Job) {
 	defer d.jobs.Done()
-	defer d.release()
-	out := d.deps.Pipeline.Run(d.ctx, j)
+	out := d.deps.Pipeline.Run(ctx, j)
+
+	d.mu.Lock()
 	end := store.Finish{State: out.State, Question: out.Question, Summary: out.Summary, PRURL: out.PRURL, CostUSD: out.CostUSD}
-	if out.Err != nil {
+	switch {
+	case cur.takenOver:
+		end = store.Finish{State: store.Manual, Summary: out.Summary, CostUSD: out.CostUSD}
+	case cur.stopped:
+		end = store.Finish{State: store.Failed, Error: "stopped by loopctl stop", CostUSD: out.CostUSD}
+	case out.Err != nil:
 		end.Error = out.Err.Error()
 	}
 	if err := d.st.FinishJob(j.ID, end); err != nil {
 		end.Error = errors.Join(out.Err, err).Error()
 	}
-	d.deps.Notify(notice(j, end))
+	takenOver := cur.takenOver
+	d.current = nil
+	d.mu.Unlock()
+	close(cur.done)
+
+	if !takenOver {
+		d.deps.Notify(notice(j, end))
+	}
 }
 
 // fail records a Job that could not start and returns its error.
@@ -107,16 +254,14 @@ func (d *Daemon) fail(id int64, err error) error {
 	return errors.Join(err, d.st.FinishJob(id, store.Finish{State: store.Failed, Error: err.Error()}))
 }
 
-func (d *Daemon) release() {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	d.busy = false
-}
-
 func (d *Daemon) isBusy() bool {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	return d.busy
+	return d.current != nil
+}
+
+func (d *Daemon) jobDir(id int64) string {
+	return filepath.Join(d.home, "jobs", strconv.FormatInt(id, 10))
 }
 
 // Close stops the running Job and waits until its outcome is stored.
@@ -135,7 +280,7 @@ func (d *Daemon) Job(id int64) (JobLog, error) {
 	if err != nil {
 		return JobLog{}, err
 	}
-	progress, err := os.ReadFile(filepath.Join(d.home, "jobs", strconv.FormatInt(id, 10), "progress.md"))
+	progress, err := os.ReadFile(filepath.Join(d.jobDir(id), "progress.md"))
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return JobLog{}, err
 	}
@@ -166,6 +311,7 @@ func workFor(loop config.Loop, spec string) (job.Work, error) {
 	return job.Task{Text: timer.Task}, nil
 }
 
+// describe and parseWork store a Job's Work as one line: "spec <path>" or "task <text>".
 func describe(w job.Work) string {
 	switch w := w.(type) {
 	case job.Spec:
@@ -174,6 +320,16 @@ func describe(w job.Work) string {
 		return "task " + w.Text
 	}
 	return ""
+}
+
+func parseWork(s string) (job.Work, error) {
+	if path, ok := strings.CutPrefix(s, "spec "); ok {
+		return job.Spec{Path: path}, nil
+	}
+	if text, ok := strings.CutPrefix(s, "task "); ok {
+		return job.Task{Text: text}, nil
+	}
+	return nil, fmt.Errorf("stored work %q is neither a spec nor a task", s)
 }
 
 func notice(j job.Job, end store.Finish) (string, string) {

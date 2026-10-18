@@ -35,7 +35,8 @@ type Daemon struct {
 	st    *store.Store
 	loops map[string]config.Loop
 	deps  Deps
-	busy  bool
+	// current is the one Job that holds the running slot, or nil.
+	current *running
 	// next holds each timer Loop's next fire, set when Tick first sees it.
 	next map[string]time.Time
 
