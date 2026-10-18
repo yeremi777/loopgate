@@ -280,9 +280,9 @@ func tail(s string) string {
 
 // Issue is a GitHub issue that a Job drills before it implements.
 type Issue struct {
-	Number int
-	Title  string
-	Body   string
+	Number int    `json:"number"`
+	Title  string `json:"title"`
+	Body   string `json:"body"`
 }
 
 func (Issue) isWork() {}
