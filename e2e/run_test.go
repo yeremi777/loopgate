@@ -137,3 +137,34 @@ func readFile(t *testing.T, path string) string {
 	}
 	return string(data)
 }
+
+func TestTimerLoopFiresWithoutRun(t *testing.T) {
+	e := newEnv(t, "exit 0")
+	fakes := strings.SplitN(e.path, ":", 2)[0]
+	writeExec(t, filepath.Join(fakes, "claude"), fakeClaude)
+	writeExec(t, filepath.Join(fakes, "gh"), "#!/bin/sh\n[ \"$1\" = auth ] && exit 0\ncat >/dev/null\necho https://github.com/me/app/pull/3\n")
+	writeExec(t, filepath.Join(fakes, "osascript"), "#!/bin/sh\n")
+
+	root := t.TempDir()
+	origin := filepath.Join(root, "origin.git")
+	gitIn(t, root, "init", "-q", "--bare", "-b", "main", origin)
+	checkout := filepath.Join(root, "checkout")
+	gitIn(t, root, "clone", "-q", origin, checkout)
+	gitIn(t, checkout, "commit", "-q", "--allow-empty", "-m", "base")
+	gitIn(t, checkout, "push", "-q", "origin", "HEAD:main")
+	gitIn(t, checkout, "remote", "set-head", "origin", "main")
+	file := filepath.Join(root, "tick.yaml")
+	loop := "name: tick\ncheckout: " + checkout + "\ntrigger:\n  timer: { every: 1s }\ntask: add ok.txt\nverify: test -f ok.txt\nbounds: { max_iterations: 1, timeout: 1m }\n"
+	if err := os.WriteFile(file, []byte(loop), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	e.startLoopd()
+	e.mustLoopctl("add", file)
+	for deadline := time.Now().Add(40 * time.Second); time.Now().Before(deadline); time.Sleep(250 * time.Millisecond) {
+		if out, code := e.loopctl("logs", "1"); code == 0 && field(out, "state") == "done" {
+			return
+		}
+	}
+	out, _ := e.loopctl("logs", "1")
+	t.Fatalf("timer loop never ran a job to done:\n%s", out)
+}

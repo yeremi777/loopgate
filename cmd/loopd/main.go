@@ -11,6 +11,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"syscall"
+	"time"
 
 	"github.com/yeremi777/loopgate/internal/daemon"
 	"github.com/yeremi777/loopgate/internal/github"
@@ -89,10 +90,28 @@ func run() error {
 		<-ctx.Done()
 		_ = ln.Close()
 	}()
+	go tick(ctx, d)
 	if err := ipc.Serve(ln, d); !errors.Is(err, net.ErrClosed) {
 		return err
 	}
 	return nil
+}
+
+// tickEvery bounds how late a timer fire can start; cron has minute resolution.
+const tickEvery = 10 * time.Second
+
+func tick(ctx context.Context, d *daemon.Daemon) {
+	d.Tick(time.Now())
+	t := time.NewTicker(tickEvery)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-t.C:
+			d.Tick(now)
+		}
+	}
 }
 
 // notify shows a macOS notification. The text goes in as arguments, never

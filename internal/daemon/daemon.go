@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/yeremi777/loopgate/internal/config"
 	"github.com/yeremi777/loopgate/internal/store"
@@ -35,6 +36,8 @@ type Daemon struct {
 	loops map[string]config.Loop
 	deps  Deps
 	busy  bool
+	// next holds each timer Loop's next fire, set when Tick first sees it.
+	next map[string]time.Time
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -64,7 +67,7 @@ func New(home string, st *store.Store, deps Deps) (*Daemon, error) {
 		loops[loop.Name] = loop
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	return &Daemon{home: home, dir: dir, st: st, loops: loops, deps: deps, ctx: ctx, cancel: cancel}, nil
+	return &Daemon{home: home, dir: dir, st: st, loops: loops, deps: deps, next: map[string]time.Time{}, ctx: ctx, cancel: cancel}, nil
 }
 
 func (d *Daemon) Add(data []byte) (config.Loop, error) {
@@ -101,6 +104,7 @@ func (d *Daemon) Remove(name string) error {
 		return err
 	}
 	delete(d.loops, name)
+	delete(d.next, name)
 	return nil
 }
 
