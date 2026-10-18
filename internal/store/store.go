@@ -1,7 +1,13 @@
 // Package store keeps loopd state in SQLite.
 package store
 
-import "errors"
+import (
+	"database/sql"
+	"errors"
+	"fmt"
+
+	_ "modernc.org/sqlite"
+)
 
 type JobState string
 
@@ -21,24 +27,94 @@ type Job struct {
 	State JobState
 }
 
-type Store struct{}
+var ErrNotFound = errors.New("not found")
+
+type Store struct{ db *sql.DB }
+
+const schema = `
+CREATE TABLE IF NOT EXISTS loops (
+	name   TEXT PRIMARY KEY,
+	paused INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS jobs (
+	id    INTEGER PRIMARY KEY AUTOINCREMENT,
+	loop  TEXT NOT NULL,
+	state TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS issues (
+	loop   TEXT NOT NULL,
+	number INTEGER NOT NULL,
+	PRIMARY KEY (loop, number)
+);`
 
 // Open opens or creates the state database at path.
-func Open(path string) (*Store, error) { return nil, errors.New("not implemented") }
+func Open(path string) (*Store, error) {
+	db, err := sql.Open("sqlite", "file:"+path+"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)")
+	if err != nil {
+		return nil, fmt.Errorf("open state: %w", err)
+	}
+	db.SetMaxOpenConns(1)
+	if _, err := db.Exec(schema); err != nil {
+		return nil, errors.Join(fmt.Errorf("create schema: %w", err), db.Close())
+	}
+	return &Store{db: db}, nil
+}
 
-func (s *Store) Close() error { return errors.New("not implemented") }
+func (s *Store) Close() error { return s.db.Close() }
 
-func (s *Store) SetPaused(loop string, paused bool) error { return errors.New("not implemented") }
+func (s *Store) SetPaused(loop string, paused bool) error {
+	_, err := s.db.Exec(`INSERT INTO loops (name, paused) VALUES (?, ?)
+		ON CONFLICT (name) DO UPDATE SET paused = excluded.paused`, loop, paused)
+	return err
+}
 
-func (s *Store) Paused(loop string) (bool, error) { return false, errors.New("not implemented") }
+func (s *Store) Paused(loop string) (bool, error) {
+	var paused bool
+	err := s.db.QueryRow(`SELECT paused FROM loops WHERE name = ?`, loop).Scan(&paused)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return paused, err
+}
 
-func (s *Store) CreateJob(loop string) (Job, error) { return Job{}, errors.New("not implemented") }
+func (s *Store) CreateJob(loop string) (Job, error) {
+	res, err := s.db.Exec(`INSERT INTO jobs (loop, state) VALUES (?, ?)`, loop, Queued)
+	if err != nil {
+		return Job{}, err
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return Job{}, err
+	}
+	return Job{ID: id, Loop: loop, State: Queued}, nil
+}
 
-func (s *Store) SetJobState(id int64, state JobState) error { return errors.New("not implemented") }
+func (s *Store) SetJobState(id int64, state JobState) error {
+	res, err := s.db.Exec(`UPDATE jobs SET state = ? WHERE id = ?`, state, id)
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err != nil || n == 0 {
+		return errors.Join(err, fmt.Errorf("job %d: %w", id, ErrNotFound))
+	}
+	return nil
+}
 
-func (s *Store) Job(id int64) (Job, error) { return Job{}, errors.New("not implemented") }
+func (s *Store) Job(id int64) (Job, error) {
+	job := Job{ID: id}
+	err := s.db.QueryRow(`SELECT loop, state FROM jobs WHERE id = ?`, id).Scan(&job.Loop, &job.State)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Job{}, fmt.Errorf("job %d: %w", id, ErrNotFound)
+	}
+	return job, err
+}
 
 // ClaimIssue records issue as handled by loop, and reports whether it was new.
 func (s *Store) ClaimIssue(loop string, issue int) (bool, error) {
-	return false, errors.New("not implemented")
+	res, err := s.db.Exec(`INSERT INTO issues (loop, number) VALUES (?, ?) ON CONFLICT DO NOTHING`, loop, issue)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
 }
