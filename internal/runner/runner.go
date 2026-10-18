@@ -64,7 +64,7 @@ func (r Runner) Run(ctx context.Context, s Stage) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	cmd := exec.CommandContext(ctx, r.Claude,
+	cmd := r.command(ctx, s.Dir, r.Claude,
 		"-p",
 		"--output-format", "json",
 		"--permission-mode", "auto",
@@ -72,24 +72,10 @@ func (r Runner) Run(ctx context.Context, s Stage) (Result, error) {
 		"--json-schema", resultSchema,
 		"--settings", settings,
 	)
-	cmd.Dir = s.Dir
-	cmd.Env = filterEnv(r.Environ)
 	cmd.Stdin = strings.NewReader(s.Prompt)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
-	cmd.WaitDelay = 2 * time.Second
-
-	if err := cmd.Start(); err != nil {
-		return Result{}, fmt.Errorf("start claude: %w", err)
-	}
-	err = cmd.Wait()
-	_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-	if ctxErr := ctx.Err(); ctxErr != nil {
-		return Result{}, fmt.Errorf("stage stopped: %w", ctxErr)
-	}
-	if err != nil {
+	if err := runGroup(ctx, cmd); err != nil {
 		return Result{}, fmt.Errorf("claude: %w: %s", err, tail(stderr.String()))
 	}
 	return parseResult(stdout.Bytes())
@@ -158,6 +144,31 @@ func settingsJSON(defaultBranch string, network []string) (string, error) {
 	}
 	data, err := json.Marshal(settings)
 	return string(data), err
+}
+
+// command builds a child with the allowlisted env that runGroup runs in its own process group.
+func (r Runner) command(ctx context.Context, dir, name string, args ...string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Dir = dir
+	cmd.Env = filterEnv(r.Environ)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	cmd.WaitDelay = 2 * time.Second
+	return cmd
+}
+
+// runGroup runs cmd and then kills its whole process group, so no grandchild
+// outlives it. A stop by ctx is reported as ctx's error.
+func runGroup(ctx context.Context, cmd *exec.Cmd) error {
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("start %s: %w", cmd.Path, err)
+	}
+	err := cmd.Wait()
+	_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return fmt.Errorf("stopped: %w", ctxErr)
+	}
+	return err
 }
 
 func filterEnv(environ []string) []string {

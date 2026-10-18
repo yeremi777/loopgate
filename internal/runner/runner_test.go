@@ -281,3 +281,25 @@ func realDir(t *testing.T) string {
 	}
 	return dir
 }
+
+func TestShellReportsExitCodeAndOutput(t *testing.T) {
+	r := Runner{Environ: []string{"PATH=" + os.Getenv("PATH"), "GITHUB_TOKEN=secret"}}
+	dir := realDir(t)
+	res, err := r.Shell(context.Background(), dir, `pwd -P; env | grep -c secret; echo boom >&2; exit 3`, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := (ShellResult{ExitCode: 3, Output: dir + "\n0\nboom\n"}); res != want {
+		t.Fatalf("got %+v, want %+v", res, want)
+	}
+}
+
+func TestShellTimeoutKillsWholeProcessGroup(t *testing.T) {
+	rec := t.TempDir()
+	r := Runner{Environ: []string{"PATH=" + os.Getenv("PATH")}}
+	_, err := r.Shell(context.Background(), t.TempDir(), `sleep 300 & echo $! > `+rec+`/grandchild; wait`, 500*time.Millisecond)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("want DeadlineExceeded, got %v", err)
+	}
+	fake{t: t, rec: rec}.assertDead("grandchild")
+}
