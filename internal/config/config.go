@@ -22,6 +22,7 @@ type Loop struct {
 	Bounds    Bounds
 	Protected []string
 	Tests     []string
+	Network   []string
 }
 
 // Trigger is either GitHub or Timer.
@@ -68,6 +69,7 @@ type rawLoop struct {
 	Bounds    rawBounds  `yaml:"bounds"`
 	Protected []string   `yaml:"protected"`
 	Tests     []string   `yaml:"tests"`
+	Network   []string   `yaml:"network"`
 }
 
 type rawTrigger struct {
@@ -93,6 +95,9 @@ type rawBounds struct {
 
 // A name becomes a file name and part of a branch name.
 var validName = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
+
+// A network entry is a domain or a *.domain wildcard, never a URL.
+var validDomain = regexp.MustCompile(`^(\*\.)?[a-z0-9-]+(\.[a-z0-9-]+)+$`)
 
 // yaml.v3 reports an unknown field only inside this message text.
 var unknownField = regexp.MustCompile(`field (\S+) not found in type`)
@@ -132,6 +137,10 @@ func Parse(data []byte) (Loop, error) {
 	if raw.Bounds.Timeout <= 0 {
 		return Loop{}, &FieldError{Field: "bounds.timeout", Reason: "required, must be positive"}
 	}
+	network, err := parseNetwork(raw.Network)
+	if err != nil {
+		return Loop{}, err
+	}
 	return Loop{
 		Name:      raw.Name,
 		Checkout:  checkout,
@@ -140,7 +149,26 @@ func Parse(data []byte) (Loop, error) {
 		Bounds:    Bounds{MaxIterations: raw.Bounds.MaxIterations, Timeout: raw.Bounds.Timeout},
 		Protected: raw.Protected,
 		Tests:     raw.Tests,
+		Network:   network,
 	}, nil
+}
+
+// parseNetwork keeps GitHub out of reach of every stage: loopd alone talks to GitHub.
+func parseNetwork(domains []string) ([]string, error) {
+	var out []string
+	for _, d := range domains {
+		d = strings.ToLower(d)
+		if !validDomain.MatchString(d) {
+			return nil, &FieldError{Field: "network", Reason: "entry " + d + " must be a domain such as proxy.golang.org"}
+		}
+		for _, banned := range []string{"github.com", "githubusercontent.com"} {
+			if d == banned || strings.HasSuffix(d, "."+banned) {
+				return nil, &FieldError{Field: "network", Reason: "github domains are not allowed: " + d}
+			}
+		}
+		out = append(out, d)
+	}
+	return out, nil
 }
 
 func parseCheckout(path string) (string, error) {

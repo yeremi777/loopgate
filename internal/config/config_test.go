@@ -19,6 +19,7 @@ verify: "go test ./..."
 bounds: { max_iterations: 5, timeout: 20m }
 protected: [".github/**"]
 tests: ["**/*_test.go"]
+network: [proxy.golang.org, "*.npmjs.org"]
 `
 
 func TestParseGitHubLoop(t *testing.T) {
@@ -34,6 +35,7 @@ func TestParseGitHubLoop(t *testing.T) {
 		Bounds:    Bounds{MaxIterations: 5, Timeout: 20 * time.Minute},
 		Protected: []string{".github/**"},
 		Tests:     []string{"**/*_test.go"},
+		Network:   []string{"proxy.golang.org", "*.npmjs.org"},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %+v\nwant %+v", got, want)
@@ -93,6 +95,10 @@ func TestParseRejectsInvalidFields(t *testing.T) {
 		{"github without label", swap("label: agent, ", ""), "trigger.github.label"},
 		{"github without every", swap(", every: 10m", ""), "trigger.github.every"},
 		{"github with task", add("task: do it"), "task"},
+		{"github domain", swap("proxy.golang.org", "api.github.com"), "network"},
+		{"bare github domain", swap("proxy.golang.org", "GitHub.com"), "network"},
+		{"githubusercontent domain", swap("proxy.golang.org", "raw.githubusercontent.com"), "network"},
+		{"url not domain", swap("proxy.golang.org", "https://proxy.golang.org"), "network"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

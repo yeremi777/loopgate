@@ -20,7 +20,7 @@ func TestRunPassesSafetyFlagsAndPromptInWorktree(t *testing.T) {
 	fake := newFake(t, `printf '%s\n' "$@" > "$REC/args"; pwd -P > "$REC/cwd"; cat > "$REC/stdin"; echo '`+doneJSON+`'`)
 	dir := realDir(t)
 
-	res, err := fake.runner().Run(context.Background(), Stage{Dir: dir, Prompt: "/implement docs/specs/x.md", Timeout: time.Minute, DefaultBranch: "trunk"})
+	res, err := fake.runner().Run(context.Background(), Stage{Dir: dir, Prompt: "/implement docs/specs/x.md", Timeout: time.Minute, DefaultBranch: "trunk", Network: []string{"proxy.golang.org"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,13 +58,16 @@ func TestRunPassesSafetyFlagsAndPromptInWorktree(t *testing.T) {
 	if err := json.Unmarshal([]byte(flagValue(args, "--json-schema")), &schema); err != nil {
 		t.Fatalf("json schema: %v", err)
 	}
-	if !slices.Equal(schema.Properties.Status.Enum, []string{"done", "blocked"}) {
+	if !slices.Equal(schema.Properties.Status.Enum, []string{"done", "blocked", "revise"}) {
 		t.Fatalf("schema status enum %q", schema.Properties.Status.Enum)
 	}
 
 	var settings struct {
 		Sandbox struct {
 			Enabled bool `json:"enabled"`
+			Network struct {
+				AllowedDomains []string `json:"allowedDomains"`
+			} `json:"network"`
 		} `json:"sandbox"`
 		Permissions struct {
 			Deny []string `json:"deny"`
@@ -75,6 +78,9 @@ func TestRunPassesSafetyFlagsAndPromptInWorktree(t *testing.T) {
 	}
 	if !settings.Sandbox.Enabled {
 		t.Fatal("sandbox not enabled")
+	}
+	if got := settings.Sandbox.Network.AllowedDomains; !slices.Equal(got, []string{"proxy.golang.org"}) {
+		t.Fatalf("allowed domains %q", got)
 	}
 	for _, rule := range []string{
 		"Bash(gh pr merge:*)",
@@ -98,6 +104,17 @@ func TestRunReportsBlockedQuestion(t *testing.T) {
 		t.Fatal(err)
 	}
 	if want := (Result{Status: StatusBlocked, Question: "which db?", Summary: "stopped"}); res != want {
+		t.Fatalf("got %+v, want %+v", res, want)
+	}
+}
+
+func TestRunReportsRevision(t *testing.T) {
+	fake := newFake(t, `cat >/dev/null; echo '{"is_error":false,"structured_output":{"status":"revise","summary":"nil map write in store.go:40"}}'`)
+	res, err := fake.runner().Run(context.Background(), Stage{Dir: t.TempDir(), Prompt: "p", Timeout: time.Minute, DefaultBranch: "main"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := (Result{Status: StatusRevise, Summary: "nil map write in store.go:40"}); res != want {
 		t.Fatalf("got %+v, want %+v", res, want)
 	}
 }

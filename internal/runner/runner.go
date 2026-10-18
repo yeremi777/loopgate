@@ -18,6 +18,7 @@ type Status string
 const (
 	StatusDone    Status = "done"
 	StatusBlocked Status = "blocked"
+	StatusRevise  Status = "revise"
 )
 
 // Result is the stage's structured report.
@@ -38,10 +39,11 @@ type Stage struct {
 	Prompt        string
 	Timeout       time.Duration
 	DefaultBranch string
+	Network       []string
 }
 
 const resultSchema = `{"type":"object","properties":{` +
-	`"status":{"type":"string","enum":["done","blocked"]},` +
+	`"status":{"type":"string","enum":["done","blocked","revise"]},` +
 	`"question":{"type":"string"},` +
 	`"summary":{"type":"string"}},` +
 	`"required":["status","summary"]}`
@@ -58,7 +60,7 @@ func (r Runner) Run(ctx context.Context, s Stage) (Result, error) {
 	ctx, cancel := context.WithTimeout(ctx, s.Timeout)
 	defer cancel()
 
-	settings, err := settingsJSON(s.DefaultBranch)
+	settings, err := settingsJSON(s.DefaultBranch, s.Network)
 	if err != nil {
 		return Result{}, err
 	}
@@ -114,7 +116,7 @@ func parseResult(data []byte) (Result, error) {
 	}
 	res := Result{Status: out.Structured.Status, Question: out.Structured.Question, Summary: out.Structured.Summary}
 	switch {
-	case res.Status != StatusDone && res.Status != StatusBlocked:
+	case res.Status != StatusDone && res.Status != StatusBlocked && res.Status != StatusRevise:
 		return Result{}, fmt.Errorf("claude reported unknown status %q", res.Status)
 	case res.Status == StatusBlocked && res.Question == "":
 		return Result{}, errors.New("claude reported blocked without a question")
@@ -122,10 +124,10 @@ func parseResult(data []byte) (Result, error) {
 	return res, nil
 }
 
-// settingsJSON enables the sandbox and denies the git and gh commands that
+// settingsJSON enables the sandbox, opens only the network domains given, and denies the git and gh commands that
 // would merge, force-push, push to the default branch, or mark a PR ready.
 // Deny rules match command prefixes only; loopd checks the PR after land.
-func settingsJSON(defaultBranch string) (string, error) {
+func settingsJSON(defaultBranch string, network []string) (string, error) {
 	if defaultBranch == "" {
 		return "", errors.New("stage needs the default branch")
 	}
@@ -133,6 +135,9 @@ func settingsJSON(defaultBranch string) (string, error) {
 		Sandbox struct {
 			Enabled                  bool `json:"enabled"`
 			AutoAllowBashIfSandboxed bool `json:"autoAllowBashIfSandboxed"`
+			Network                  struct {
+				AllowedDomains []string `json:"allowedDomains"`
+			} `json:"network"`
 		} `json:"sandbox"`
 		Permissions struct {
 			Deny []string `json:"deny"`
@@ -140,6 +145,7 @@ func settingsJSON(defaultBranch string) (string, error) {
 	}
 	settings.Sandbox.Enabled = true
 	settings.Sandbox.AutoAllowBashIfSandboxed = true
+	settings.Sandbox.Network.AllowedDomains = append([]string{}, network...)
 	settings.Permissions.Deny = []string{
 		"Bash(gh pr merge:*)",
 		"Bash(gh pr ready:*)",
