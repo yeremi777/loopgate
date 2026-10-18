@@ -11,10 +11,12 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"syscall"
 	"time"
 
 	"github.com/yeremi777/loopgate/internal/daemon"
+	"github.com/yeremi777/loopgate/internal/store"
 )
 
 var ErrNotRunning = errors.New("loopd not running")
@@ -46,8 +48,30 @@ func Serve(ln net.Listener, d *daemon.Daemon) error {
 	mux.HandleFunc("POST /loops/{name}/resume", func(w http.ResponseWriter, r *http.Request) {
 		reply(w, struct{}{}, d.SetPaused(r.PathValue("name"), false))
 	})
+	mux.HandleFunc("POST /loops/{name}/run", func(w http.ResponseWriter, r *http.Request) {
+		var req runRequest
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxLoopFile)).Decode(&req); err != nil {
+			reply(w, store.Job{}, err)
+			return
+		}
+		j, err := d.Run(r.PathValue("name"), req.Spec)
+		reply(w, j, err)
+	})
+	mux.HandleFunc("GET /jobs/{id}", func(w http.ResponseWriter, r *http.Request) {
+		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil {
+			reply(w, daemon.JobLog{}, fmt.Errorf("job id %q: %w", r.PathValue("id"), store.ErrNotFound))
+			return
+		}
+		log, err := d.Job(id)
+		reply(w, log, err)
+	})
 	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 	return srv.Serve(ln)
+}
+
+type runRequest struct {
+	Spec string `json:"spec"`
 }
 
 type response[T any] struct {
@@ -67,9 +91,9 @@ func reply[T any](w http.ResponseWriter, data T, err error) {
 
 func statusOf(err error) int {
 	switch {
-	case errors.Is(err, daemon.ErrUnknownLoop):
+	case errors.Is(err, daemon.ErrUnknownLoop), errors.Is(err, store.ErrNotFound):
 		return http.StatusNotFound
-	case errors.Is(err, daemon.ErrLoopExists):
+	case errors.Is(err, daemon.ErrLoopExists), errors.Is(err, daemon.ErrBusy):
 		return http.StatusConflict
 	default:
 		return http.StatusBadRequest
@@ -113,6 +137,23 @@ func (c *Client) Pause(ctx context.Context, name string) error {
 
 func (c *Client) Resume(ctx context.Context, name string) error {
 	return call[struct{}](ctx, c, http.MethodPost, "/loops/"+url.PathEscape(name)+"/resume", nil, nil)
+}
+
+// Run starts a Job of the named Loop; spec is an absolute path or empty.
+func (c *Client) Run(ctx context.Context, name, spec string) (store.Job, error) {
+	body, err := json.Marshal(runRequest{Spec: spec})
+	if err != nil {
+		return store.Job{}, err
+	}
+	var j store.Job
+	err = call(ctx, c, http.MethodPost, "/loops/"+url.PathEscape(name)+"/run", body, &j)
+	return j, err
+}
+
+func (c *Client) Job(ctx context.Context, id int64) (daemon.JobLog, error) {
+	var log daemon.JobLog
+	err := call(ctx, c, http.MethodGet, "/jobs/"+strconv.FormatInt(id, 10), nil, &log)
+	return log, err
 }
 
 func call[T any](ctx context.Context, c *Client, method, path string, body []byte, out *T) error {
