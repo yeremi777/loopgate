@@ -62,13 +62,13 @@ func run(args []string) error {
 			return err
 		}
 		w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-		_, _ = fmt.Fprintln(w, "NAME\tSTATE")
+		_, _ = fmt.Fprintln(w, "NAME\tSTATE\tTRIGGER\tCHECKOUT")
 		for _, l := range loops {
 			state := "active"
 			if l.Paused {
 				state = "paused"
 			}
-			_, _ = fmt.Fprintf(w, "%s\t%s\n", l.Name, state)
+			_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", l.Name, state, l.Trigger, l.Checkout)
 		}
 		return w.Flush()
 	case cmd == "add" && len(rest) == 1:

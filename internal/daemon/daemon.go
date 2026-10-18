@@ -17,8 +17,10 @@ import (
 )
 
 type LoopStatus struct {
-	Name   string `json:"name"`
-	Paused bool   `json:"paused"`
+	Name     string `json:"name"`
+	Paused   bool   `json:"paused"`
+	Trigger  string `json:"trigger"`
+	Checkout string `json:"checkout"`
 }
 
 var (
@@ -128,10 +130,17 @@ func (d *Daemon) List() ([]LoopStatus, error) {
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, LoopStatus{Name: name, Paused: paused})
+		out = append(out, LoopStatus{Name: name, Paused: paused, Trigger: triggerName(d.loops[name].Trigger), Checkout: d.loops[name].Checkout})
 	}
 	slices.SortFunc(out, func(a, b LoopStatus) int { return strings.Compare(a.Name, b.Name) })
 	return out, nil
+}
+
+func triggerName(t config.Trigger) string {
+	if gh, ok := t.(config.GitHub); ok {
+		return "github " + gh.Repo
+	}
+	return "timer"
 }
 
 func (d *Daemon) path(name string) string { return filepath.Join(d.dir, name+".yaml") }

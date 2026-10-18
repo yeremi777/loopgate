@@ -38,7 +38,10 @@ func TestAddedLoopsSurviveRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []LoopStatus{{Name: "docs", Paused: true}, {Name: "fix", Paused: false}}
+	want := []LoopStatus{
+		{Name: "docs", Paused: true, Trigger: "github me/app", Checkout: "/src/app"},
+		{Name: "fix", Paused: false, Trigger: "github me/app", Checkout: "/src/app"},
+	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %+v, want %+v", got, want)
 	}
@@ -82,7 +85,7 @@ func TestRemovedLoopIsGoneAfterRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, _ := d.List()
-	if want := []LoopStatus{{Name: "fix", Paused: false}}; !reflect.DeepEqual(got, want) {
+	if want := []LoopStatus{{Name: "fix", Trigger: "github me/app", Checkout: "/src/app"}}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("re-added loop: got %+v, want %+v", got, want)
 	}
 }

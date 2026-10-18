@@ -37,14 +37,14 @@ func TestCommandsReachDaemon(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := []daemon.LoopStatus{{Name: "fix", Paused: true}}; !reflect.DeepEqual(got, want) {
+	if want := []daemon.LoopStatus{{Name: "fix", Paused: true, Trigger: "github me/app", Checkout: "/src/app"}}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("after pause: got %+v, want %+v", got, want)
 	}
 	if err := c.Resume(ctx, "fix"); err != nil {
 		t.Fatal(err)
 	}
 	got, _ = c.List(ctx)
-	if want := []daemon.LoopStatus{{Name: "fix", Paused: false}}; !reflect.DeepEqual(got, want) {
+	if want := []daemon.LoopStatus{{Name: "fix", Trigger: "github me/app", Checkout: "/src/app"}}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("after resume: got %+v, want %+v", got, want)
 	}
 	if err := c.Remove(ctx, "fix"); err != nil {

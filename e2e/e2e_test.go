@@ -154,7 +154,7 @@ func (e env) startLoopd() *exec.Cmd {
 
 func hasRow(out, name, state string) bool {
 	for _, line := range strings.Split(out, "\n") {
-		if f := strings.Fields(line); len(f) == 2 && f[0] == name && f[1] == state {
+		if f := strings.Fields(line); len(f) >= 2 && f[0] == name && f[1] == state {
 			return true
 		}
 	}
