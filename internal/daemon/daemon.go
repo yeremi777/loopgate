@@ -2,7 +2,6 @@
 package daemon
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -121,6 +120,3 @@ func (d *Daemon) List() ([]LoopStatus, error) {
 }
 
 func (d *Daemon) path(name string) string { return filepath.Join(d.dir, name+".yaml") }
-
-// CheckGH fails unless the gh binary reports a logged-in user.
-func CheckGH(ctx context.Context, gh string) error { return errors.New("not implemented") }
