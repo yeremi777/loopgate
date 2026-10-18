@@ -81,3 +81,64 @@ func open(t *testing.T, path string) *Store {
 	t.Cleanup(func() { _ = st.Close() })
 	return st
 }
+
+func TestJobDetailsSurviveReopen(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.db")
+	st := open(t, path)
+	job, err := st.CreateJob("fix")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.StartJob(job.ID, "spec docs/specs/x.md", "loop/fix-1", "/jobs/1/worktree"); err != nil {
+		t.Fatal(err)
+	}
+	end := Finish{State: Done, Summary: "added Double", PRURL: "https://github.com/me/app/pull/7", CostUSD: 1.25}
+	if err := st.FinishJob(job.ID, end); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := open(t, path).Job(job.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := Job{
+		ID: job.ID, Loop: "fix", State: Done, Work: "spec docs/specs/x.md",
+		Branch: "loop/fix-1", Worktree: "/jobs/1/worktree",
+		Summary: "added Double", PRURL: "https://github.com/me/app/pull/7", CostUSD: 1.25,
+	}
+	if got != want {
+		t.Fatalf("got %+v\nwant %+v", got, want)
+	}
+}
+
+func TestInterruptFailsJobsLeftRunning(t *testing.T) {
+	st := open(t, filepath.Join(t.TempDir(), "state.db"))
+	running, _ := st.CreateJob("fix")
+	if err := st.StartJob(running.ID, "task x", "loop/fix-1", "/wt"); err != nil {
+		t.Fatal(err)
+	}
+	queued, _ := st.CreateJob("fix")
+	blocked, _ := st.CreateJob("fix")
+	if err := st.FinishJob(blocked.ID, Finish{State: Blocked, Question: "which db?"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := st.InterruptRunning("loopd restarted"); err != nil {
+		t.Fatal(err)
+	}
+	for id, want := range map[int64]JobState{running.ID: Failed, queued.ID: Failed, blocked.ID: Blocked} {
+		job, err := st.Job(id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if job.State != want {
+			t.Fatalf("job %d: state %s, want %s", id, job.State, want)
+		}
+		if want == Failed && job.Error != "loopd restarted" {
+			t.Fatalf("job %d: error %q", id, job.Error)
+		}
+	}
+}

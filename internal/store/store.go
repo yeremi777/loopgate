@@ -22,9 +22,27 @@ const (
 )
 
 type Job struct {
-	ID    int64
-	Loop  string
-	State JobState
+	ID       int64
+	Loop     string
+	State    JobState
+	Work     string
+	Branch   string
+	Worktree string
+	Question string
+	Summary  string
+	PRURL    string
+	CostUSD  float64
+	Error    string
+}
+
+// Finish is how a Job ended.
+type Finish struct {
+	State    JobState
+	Question string
+	Summary  string
+	PRURL    string
+	CostUSD  float64
+	Error    string
 }
 
 var ErrNotFound = errors.New("not found")
@@ -37,9 +55,17 @@ CREATE TABLE IF NOT EXISTS loops (
 	paused INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS jobs (
-	id    INTEGER PRIMARY KEY AUTOINCREMENT,
-	loop  TEXT NOT NULL,
-	state TEXT NOT NULL
+	id       INTEGER PRIMARY KEY AUTOINCREMENT,
+	loop     TEXT NOT NULL,
+	state    TEXT NOT NULL,
+	work     TEXT NOT NULL DEFAULT '',
+	branch   TEXT NOT NULL DEFAULT '',
+	worktree TEXT NOT NULL DEFAULT '',
+	question TEXT NOT NULL DEFAULT '',
+	summary  TEXT NOT NULL DEFAULT '',
+	pr_url   TEXT NOT NULL DEFAULT '',
+	cost_usd REAL NOT NULL DEFAULT 0,
+	error    TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS issues (
 	loop   TEXT NOT NULL,
@@ -90,7 +116,28 @@ func (s *Store) CreateJob(loop string) (Job, error) {
 }
 
 func (s *Store) SetJobState(id int64, state JobState) error {
-	res, err := s.db.Exec(`UPDATE jobs SET state = ? WHERE id = ?`, state, id)
+	return s.updateJob(id, `UPDATE jobs SET state = ? WHERE id = ?`, state, id)
+}
+
+// StartJob marks a Job running in its worktree.
+func (s *Store) StartJob(id int64, work, branch, worktree string) error {
+	return s.updateJob(id, `UPDATE jobs SET state = ?, work = ?, branch = ?, worktree = ? WHERE id = ?`,
+		Running, work, branch, worktree, id)
+}
+
+func (s *Store) FinishJob(id int64, f Finish) error {
+	return s.updateJob(id, `UPDATE jobs SET state = ?, question = ?, summary = ?, pr_url = ?, cost_usd = ?, error = ? WHERE id = ?`,
+		f.State, f.Question, f.Summary, f.PRURL, f.CostUSD, f.Error, id)
+}
+
+// InterruptRunning fails every queued or running Job, which a dead loopd left behind.
+func (s *Store) InterruptRunning(reason string) error {
+	_, err := s.db.Exec(`UPDATE jobs SET state = ?, error = ? WHERE state IN (?, ?)`, Failed, reason, Queued, Running)
+	return err
+}
+
+func (s *Store) updateJob(id int64, query string, args ...any) error {
+	res, err := s.db.Exec(query, args...)
 	if err != nil {
 		return err
 	}
@@ -102,7 +149,8 @@ func (s *Store) SetJobState(id int64, state JobState) error {
 
 func (s *Store) Job(id int64) (Job, error) {
 	job := Job{ID: id}
-	err := s.db.QueryRow(`SELECT loop, state FROM jobs WHERE id = ?`, id).Scan(&job.Loop, &job.State)
+	err := s.db.QueryRow(`SELECT loop, state, work, branch, worktree, question, summary, pr_url, cost_usd, error FROM jobs WHERE id = ?`, id).
+		Scan(&job.Loop, &job.State, &job.Work, &job.Branch, &job.Worktree, &job.Question, &job.Summary, &job.PRURL, &job.CostUSD, &job.Error)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Job{}, fmt.Errorf("job %d: %w", id, ErrNotFound)
 	}
