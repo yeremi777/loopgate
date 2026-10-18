@@ -19,7 +19,7 @@ A local macOS service (`loopd`) and CLI (`loopctl`) that run Claude Code with th
 - AC-2: A Loop file has exactly one trigger: `github` (`repo`, `label`, `every`) or `timer` (`every` or `cron`); a timer Loop has exactly one of `task` or `spec`.
 - AC-3: A second `loopd` on the same `~/.loopd` exits non-zero and names the running pid; a lock left by a dead pid is taken over.
 - AC-4: Loops, Jobs, Job states, and handled issue numbers survive a `loopd` restart.
-- AC-5: `loopctl list | add <file> | remove <name> | pause | resume | stop <name> | run <name> [--spec <path>] | logs <job> | takeover <job> | handback <job> | requeue <name> <issue> | focus github <owner/repo> --label <label>` reach `loopd` over `~/.loopd/loopd.sock`; with `loopd` down, `loopctl` exits non-zero with `loopd not running`.
+- AC-5: `loopctl list | add <file> | remove <name> | pause <name> | resume <name> | stop <name> | run <name> [--spec <path>] | logs <job> | takeover <job> | handback <job> | requeue <name> <issue>` reach `loopd` over `~/.loopd/loopd.sock`; with `loopd` down, `loopctl` exits non-zero with `loopd not running`.
 - AC-6: `loopd` refuses to start, with a message that names `gh auth login`, when `gh auth status` fails.
 
 ### Runner
