@@ -14,7 +14,7 @@ A local macOS service (`loopd`) and CLI (`loopctl`) that run Claude Code with th
 ## Acceptance criteria
 
 ### Config, store, IPC
-- AC-1: A Loop file that lacks `verify`, `bounds.max_iterations`, or `bounds.timeout`, or that has an unknown field, fails to load with an error that names the field.
+- AC-1: A Loop file that lacks `name`, `checkout`, `verify`, `bounds.max_iterations`, or `bounds.timeout`, or that has an unknown field, fails to load with an error that names the field; `checkout` is the path of the user's own clone that the Loop's worktrees come from.
 - AC-2: A Loop file has exactly one trigger: `github` (`repo`, `label`, `every`) or `timer` (`every` or `cron`); a timer Loop has exactly one of `task` or `spec`.
 - AC-3: A second `loopd` on the same `~/.loopd` exits non-zero and names the running pid; a lock left by a dead pid is taken over.
 - AC-4: Loops, Jobs, Job states, and handled issue numbers survive a `loopd` restart.

@@ -1,0 +1,9 @@
+.env
+.env.*
+*.db
+*.db-*
+.loopd/
+*.local.yaml
+.claude/settings.local.json
+/loopd
+/loopctl
