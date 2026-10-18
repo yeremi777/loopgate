@@ -1,0 +1,10 @@
+# Builds every open issue labeled `agent` in owner/app and stops at a draft PR.
+name: fix-issues
+checkout: ~/code/app
+trigger:
+  github: { repo: owner/app, label: agent, every: 10m }
+verify: go test ./... && golangci-lint run
+bounds: { max_iterations: 5, timeout: 30m }
+protected: [.golangci.yml]
+tests: ["**/*_test.go"]
+network: [proxy.golang.org, sum.golang.org]

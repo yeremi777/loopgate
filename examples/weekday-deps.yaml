@@ -1,0 +1,9 @@
+# Bumps dependencies every weekday morning and stops at a draft PR.
+name: weekday-deps
+checkout: ~/code/app
+trigger:
+  timer: { cron: "0 9 * * 1-5" }
+task: Update the Go module dependencies to their latest minor versions and keep the tests green.
+verify: go test ./...
+bounds: { max_iterations: 3, timeout: 20m }
+network: [proxy.golang.org, sum.golang.org]

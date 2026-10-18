@@ -171,3 +171,19 @@ func swap(old, new string) func(string) string {
 		return strings.Replace(s, old, new, 1)
 	}
 }
+
+func TestExamplesParse(t *testing.T) {
+	paths, err := filepath.Glob("../../examples/*.yaml")
+	if err != nil || len(paths) == 0 {
+		t.Fatalf("no examples: %v", err)
+	}
+	for _, p := range paths {
+		data, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Parse(data); err != nil {
+			t.Errorf("%s: %v", p, err)
+		}
+	}
+}
