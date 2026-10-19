@@ -38,7 +38,7 @@ A local macOS service (`loopd`) and CLI (`loopctl`) that run Claude Code with th
 - AC-13: After a failed Verify gate or a `rubric` revision, the next `implement` session is new and its prompt carries the progress log: each earlier iteration's verify output or findings, also kept in `~/.loopd/jobs/<id>/progress.md`.
 - AC-14: A Job whose `max_iterations` `implement` runs all end without a passing Verify gate and `rubric` review, or that exceeds `timeout`, ends as `exhausted` with no PR.
 - AC-15: A stage that reports `blocked` ends the Job as Blocked with its question stored, and no later stage runs.
-- AC-16: After every stage, a change since the Job's base commit to a path matching the default or the Loop's `protected` globs, committed or in the working tree, ignored files included except those under a directory named `node_modules` or `.venv`, makes the Job Blocked before the next stage.
+- AC-16: After every stage, a change since the Job's base commit to a path matching the default or the Loop's `protected` globs, committed or in the working tree, ignored files included except those under a directory named `node_modules` or `.venv` outside `.claude/` and `.github/`, makes the Job Blocked before the next stage.
 - AC-17: The PR report lists each file that matches the Loop's `tests` globs and that the diff deleted or changed.
 - AC-34: After the Verify gate passes, a `rubric` defect-pass stage reviews the branch diff on every Job; a `revise` report sends its findings to the next `implement` run, and a `rubric` stage that changes the tree fails the Job.
 

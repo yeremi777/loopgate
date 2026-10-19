@@ -133,6 +133,8 @@ func TestTouchedSkipsIgnoredFilesInDependencyDirsOnly(t *testing.T) {
 		".venv/lib/python3.13/site-packages/pkg/CLAUDE.md",
 		"node_modules_x/CLAUDE.md",
 		"src/CLAUDE.md",
+		".claude/commands/node_modules/rubric.md",
+		".github/node_modules/x",
 	} {
 		write(t, filepath.Join(branch, f), "rules")
 	}
@@ -140,7 +142,7 @@ func TestTouchedSkipsIgnoredFilesInDependencyDirsOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := []string{"node_modules_x/CLAUDE.md", "src/CLAUDE.md", "vendor/node_modules/kept/CLAUDE.md"}; !reflect.DeepEqual(got, want) {
+	if want := []string{".claude/commands/node_modules/rubric.md", ".github/node_modules/x", "node_modules_x/CLAUDE.md", "src/CLAUDE.md", "vendor/node_modules/kept/CLAUDE.md"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %q, want %q", got, want)
 	}
 }

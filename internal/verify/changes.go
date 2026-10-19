@@ -89,7 +89,11 @@ func Touched(ctx context.Context, dir, base string, globs []string) ([]string, e
 
 // inDependencyDir reports whether file sits under a directory that a package
 // manager fills, whose files are the installed dependencies, not the Job's work.
+// Claude Code and GitHub configuration never holds dependencies.
 func inDependencyDir(file string) bool {
+	if strings.HasPrefix(file, ".claude/") || strings.HasPrefix(file, ".github/") {
+		return false
+	}
 	dirs := strings.Split(file, "/")
 	return slices.ContainsFunc(dirs[:len(dirs)-1], func(d string) bool { return d == "node_modules" || d == ".venv" })
 }
