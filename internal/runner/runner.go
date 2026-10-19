@@ -33,16 +33,18 @@ type Result struct {
 // Runner starts claude with Environ filtered to the allowlist. Cache is the
 // one directory outside the worktree that a stage may write: build caches.
 type Runner struct {
-	Claude  string
-	Environ []string
-	Cache   string
+	Claude   string
+	Environ  []string
+	Cache    string
+	DenyRead []string
 }
 
 type Stage struct {
 	Dir           string
 	Prompt        string
-	Timeout time.Duration
-	Network []string
+	Timeout   time.Duration
+	Network   []string
+	DenyWrite []string
 }
 
 const resultSchema = `{"type":"object","properties":{` +
@@ -66,7 +68,7 @@ func (r Runner) Run(ctx context.Context, s Stage) (Result, error) {
 	if r.Cache == "" {
 		return Result{}, errors.New("runner needs a cache directory")
 	}
-	settings, err := settingsJSON(s.Network)
+	settings, err := settingsJSON(s.Network, s.DenyWrite, r.DenyRead)
 	if err != nil {
 		return Result{}, err
 	}
@@ -81,7 +83,7 @@ func (r Runner) Run(ctx context.Context, s Stage) (Result, error) {
 		"--setting-sources", "user",
 		"--strict-mcp-config",
 	)
-	cmd.Env = append(cmd.Env, "GOCACHE="+filepath.Join(r.Cache, "go-build"))
+	cmd.Env = r.childEnv()
 	cmd.Stdin = strings.NewReader(s.Prompt)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
@@ -125,7 +127,7 @@ func parseResult(data []byte) (Result, error) {
 // opens only the network domains given, and denies gh, push and merge:
 // loopd alone ships work. The flags beside it keep the worktree's own
 // .claude settings and every MCP server out of the stage.
-func settingsJSON(network []string) (string, error) {
+func settingsJSON(network, denyWrite, denyRead []string) (string, error) {
 	var settings struct {
 		Sandbox struct {
 			Enabled                  bool `json:"enabled"`
@@ -134,6 +136,10 @@ func settingsJSON(network []string) (string, error) {
 			Network                  struct {
 				AllowedDomains []string `json:"allowedDomains"`
 			} `json:"network"`
+			Filesystem struct {
+				DenyWrite []string `json:"denyWrite"`
+				DenyRead  []string `json:"denyRead"`
+			} `json:"filesystem"`
 		} `json:"sandbox"`
 		Permissions struct {
 			Deny []string `json:"deny"`
@@ -142,9 +148,29 @@ func settingsJSON(network []string) (string, error) {
 	settings.Sandbox.Enabled = true
 	settings.Sandbox.AutoAllowBashIfSandboxed = true
 	settings.Sandbox.Network.AllowedDomains = append([]string{}, network...)
+	settings.Sandbox.Filesystem.DenyWrite = append([]string{}, denyWrite...)
+	settings.Sandbox.Filesystem.DenyRead = append([]string{}, denyRead...)
 	settings.Permissions.Deny = []string{"Bash(gh:*)", "Bash(git push:*)", "Bash(git merge:*)"}
 	data, err := json.Marshal(settings)
 	return string(data), err
+}
+
+// childEnv is the allowlisted env plus the build caches under Cache, the one
+// place outside the worktree that stages and the verify command may write.
+func (r Runner) childEnv() []string {
+	return append(filterEnv(r.Environ),
+		"GOCACHE="+filepath.Join(r.Cache, "go-build"),
+		"GOMODCACHE="+filepath.Join(r.Cache, "gomod"))
+}
+
+// tempDir is the TMPDIR of env, where the verify command may write.
+func tempDir(env []string) string {
+	for _, kv := range env {
+		if dir, ok := strings.CutPrefix(kv, "TMPDIR="); ok && dir != "" {
+			return dir
+		}
+	}
+	return "/tmp"
 }
 
 // command builds a child with the allowlisted env that runGroup runs in its own process group.
@@ -168,6 +194,11 @@ func runGroup(ctx context.Context, cmd *exec.Cmd) error {
 	_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return fmt.Errorf("stopped: %w", ctxErr)
+	}
+	// The command exited 0 but a leftover process held its output open; the
+	// group kill above ended that process, and the result stands.
+	if errors.Is(err, exec.ErrWaitDelay) {
+		return nil
 	}
 	return err
 }

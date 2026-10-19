@@ -421,7 +421,7 @@ func newJob(t *testing.T, maxIterations int) Job {
 	}
 }
 
-func shell() runner.Runner { return runner.Runner{Environ: os.Environ()} }
+func shell() runner.Runner { return runner.Runner{Environ: os.Environ(), Cache: os.TempDir()} }
 
 func git(t *testing.T, dir string, args ...string) string {
 	t.Helper()

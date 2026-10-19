@@ -54,7 +54,7 @@ func TestGateRefusesUncommittedWorkWithoutRunningCommand(t *testing.T) {
 	}
 }
 
-func shell() runner.Runner { return runner.Runner{Environ: os.Environ()} }
+func shell() runner.Runner { return runner.Runner{Environ: os.Environ(), Cache: os.TempDir()} }
 
 func newRepo(t *testing.T) string {
 	t.Helper()

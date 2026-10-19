@@ -142,7 +142,7 @@ func newRunEnv(t *testing.T) *runEnv {
 	t.Cleanup(func() { _ = st.Close() })
 	r := &runEnv{st: st, checkout: checkout, stages: &scriptedStages{gate: make(chan struct{})},
 		issues: &fakeIssues{comments: map[int][]string{}, labels: map[int]string{}}}
-	shell := runner.Runner{Environ: os.Environ()}
+	shell := runner.Runner{Environ: os.Environ(), Cache: os.TempDir()}
 	d, err := New(home, st, Deps{
 		Pipeline: job.Pipeline{Stages: r.stages, Shell: shell, Publisher: fakePublisher{}},
 		Issues:   r.issues,

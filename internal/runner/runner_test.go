@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
@@ -20,7 +22,9 @@ func TestRunPassesSafetyFlagsAndPromptInWorktree(t *testing.T) {
 	fake := newFake(t, `printf '%s\n' "$@" > "$REC/args"; pwd -P > "$REC/cwd"; cat > "$REC/stdin"; echo '`+doneJSON+`'`)
 	dir := realDir(t)
 
-	res, err := fake.runner().Run(context.Background(), Stage{Dir: dir, Prompt: "/implement docs/specs/x.md", Timeout: time.Minute, Network: []string{"proxy.golang.org"}})
+	r := fake.runner()
+	r.DenyRead = []string{"/home/me/.ssh"}
+	res, err := r.Run(context.Background(), Stage{Dir: dir, Prompt: "/implement docs/specs/x.md", Timeout: time.Minute, Network: []string{"proxy.golang.org"}, DenyWrite: []string{"/repo/.git/config", "/repo/.git/hooks"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,6 +81,10 @@ func TestRunPassesSafetyFlagsAndPromptInWorktree(t *testing.T) {
 			Network                  struct {
 				AllowedDomains []string `json:"allowedDomains"`
 			} `json:"network"`
+			Filesystem struct {
+				DenyWrite []string `json:"denyWrite"`
+				DenyRead  []string `json:"denyRead"`
+			} `json:"filesystem"`
 		} `json:"sandbox"`
 		Permissions struct {
 			Deny []string `json:"deny"`
@@ -93,6 +101,12 @@ func TestRunPassesSafetyFlagsAndPromptInWorktree(t *testing.T) {
 	}
 	if got := settings.Sandbox.Network.AllowedDomains; !slices.Equal(got, []string{"proxy.golang.org"}) {
 		t.Fatalf("allowed domains %q", got)
+	}
+	if got := settings.Sandbox.Filesystem.DenyWrite; !slices.Equal(got, []string{"/repo/.git/config", "/repo/.git/hooks"}) {
+		t.Fatalf("deny write %q", got)
+	}
+	if got := settings.Sandbox.Filesystem.DenyRead; !slices.Equal(got, []string{"/home/me/.ssh"}) {
+		t.Fatalf("deny read %q", got)
 	}
 	for _, rule := range []string{"Bash(gh:*)", "Bash(git push:*)", "Bash(git merge:*)"} {
 		if !slices.Contains(settings.Permissions.Deny, rule) {
@@ -159,6 +173,9 @@ func TestRunKeepsOnlyAllowlistedEnv(t *testing.T) {
 		t.Fatal(err)
 	}
 	env := strings.Split(fake.read("env"), "\n")
+	if want := "GOMODCACHE=" + r.Cache + "/gomod"; !slices.Contains(env, want) {
+		t.Fatalf("child env lacks %s", want)
+	}
 	for _, want := range []string{"HOME=/home/me", "SSH_AUTH_SOCK=/tmp/agent", "TMPDIR=/tmp/me/", "GOCACHE=" + r.Cache + "/go-build"} {
 		if !slices.Contains(env, want) {
 			t.Fatalf("child env lacks %s: %q", want, env)
@@ -289,7 +306,7 @@ func realDir(t *testing.T) string {
 }
 
 func TestShellReportsExitCodeAndOutput(t *testing.T) {
-	r := Runner{Environ: []string{"PATH=" + os.Getenv("PATH"), "GITHUB_TOKEN=secret"}}
+	r := Runner{Environ: []string{"PATH=" + os.Getenv("PATH"), "GITHUB_TOKEN=secret"}, Cache: t.TempDir()}
 	dir := realDir(t)
 	res, err := r.Shell(context.Background(), dir, `pwd -P; env | grep -c secret; echo boom >&2; exit 3`, time.Minute)
 	if err != nil {
@@ -301,11 +318,59 @@ func TestShellReportsExitCodeAndOutput(t *testing.T) {
 }
 
 func TestShellTimeoutKillsWholeProcessGroup(t *testing.T) {
-	rec := t.TempDir()
-	r := Runner{Environ: []string{"PATH=" + os.Getenv("PATH")}}
-	_, err := r.Shell(context.Background(), t.TempDir(), `sleep 300 & echo $! > `+rec+`/grandchild; wait`, 3*time.Second)
+	r := Runner{Environ: []string{"PATH=" + os.Getenv("PATH")}, Cache: t.TempDir()}
+	dir := t.TempDir()
+	_, err := r.Shell(context.Background(), dir, `sleep 300 & echo $! > grandchild; wait`, 3*time.Second)
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("want DeadlineExceeded, got %v", err)
 	}
-	fake{t: t, rec: rec}.assertDead("grandchild")
+	fake{t: t, rec: dir}.assertDead("grandchild")
+}
+
+func TestShellSandboxConfinesTheVerifyCommand(t *testing.T) {
+	dir, cache, secret := realDir(t), realDir(t), realDir(t)
+	if err := os.WriteFile(filepath.Join(secret, "key"), []byte("hush"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(realDir(t), "outside")
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = ln.Close() }()
+	go func() { _ = http.Serve(ln, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(204) })) }()
+
+	r := Runner{Environ: []string{"PATH=" + os.Getenv("PATH"), "SSH_AUTH_SOCK=/tmp/agent", "TMPDIR=" + realDir(t)}, Cache: cache, DenyRead: []string{secret}}
+	script := strings.Join([]string{
+		"echo in > inside && echo inside-ok",
+		"echo c > " + cache + "/c && echo cache-ok",
+		"echo out > " + outside + " && echo OUTSIDE-WRITTEN",
+		"cat " + secret + "/key && echo SECRET-READ",
+		"curl -s -o /dev/null -w 'local-%{http_code}\\n' http://" + ln.Addr().String() + "/",
+		"curl -s -m 5 -o /dev/null -w 'remote-%{http_code}\\n' https://example.com/",
+		"env | grep -c SSH_AUTH_SOCK",
+		"echo $GOCACHE $GOMODCACHE",
+	}, "; ")
+	res, err := r.Shell(context.Background(), dir, script, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"inside-ok", "cache-ok", "local-204", "remote-000", "\n0\n", cache + "/go-build " + cache + "/gomod"} {
+		if !strings.Contains(res.Output, want) {
+			t.Fatalf("output lacks %q:\n%s", want, res.Output)
+		}
+	}
+	for _, bad := range []string{"OUTSIDE-WRITTEN", "SECRET-READ", "hush"} {
+		if strings.Contains(res.Output, bad) {
+			t.Fatalf("sandbox let through %q:\n%s", bad, res.Output)
+		}
+	}
+}
+
+func TestShellPassesWhenABackgroundProcessOutlivesASuccessfulCommand(t *testing.T) {
+	r := Runner{Environ: []string{"PATH=" + os.Getenv("PATH")}, Cache: t.TempDir()}
+	res, err := r.Shell(context.Background(), t.TempDir(), "sleep 30 & echo done", time.Minute)
+	if err != nil || res.ExitCode != 0 || res.Output != "done\n" {
+		t.Fatalf("got %+v, %v; want a pass", res, err)
+	}
 }
