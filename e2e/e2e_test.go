@@ -208,6 +208,7 @@ func hasRow(out, name, state string) bool {
 func TestInstallStartsTheAgentAndInstallsTheSkillThenUninstallUndoesIt(t *testing.T) {
 	e := newEnv(t, "exit 0")
 	home := t.TempDir()
+	stageSkills(t, home)
 	calls := fakeLaunchd(t, e)
 	gone := filepath.Join(t.TempDir(), "gone")
 	run := func(args ...string) string {
@@ -268,8 +269,10 @@ func TestInstallStartsTheAgentAndInstallsTheSkillThenUninstallUndoesIt(t *testin
 func TestInstallFailsWithLoopdsErrorWhenLoopdCannotStart(t *testing.T) {
 	e := newEnv(t, "exit 1")
 	fakeLaunchd(t, e)
+	home := t.TempDir()
+	stageSkills(t, home)
 	cmd := e.cmd("loopctl", "install")
-	cmd.Env = append(cmd.Env, "HOME="+t.TempDir())
+	cmd.Env = append(cmd.Env, "HOME="+home)
 	start := time.Now()
 	out, err := cmd.CombinedOutput()
 	if err == nil || !strings.Contains(string(out), "gh auth login") {
@@ -277,6 +280,49 @@ func TestInstallFailsWithLoopdsErrorWhenLoopdCannotStart(t *testing.T) {
 	}
 	if took := time.Since(start); took > 10*time.Second {
 		t.Fatalf("install took %s to see loopd's error", took)
+	}
+}
+
+func TestInstallRefusesWithoutTheStageSkillsAndChangesNothing(t *testing.T) {
+	e := newEnv(t, "exit 0")
+	calls := fakeLaunchd(t, e)
+	home := t.TempDir()
+	stageSkills(t, home)
+	if err := os.Remove(filepath.Join(home, ".claude/skills/rubric")); err != nil {
+		t.Fatal(err)
+	}
+	cmd := e.cmd("loopctl", "install")
+	cmd.Env = append(cmd.Env, "HOME="+home)
+	out, err := cmd.CombinedOutput()
+	if err == nil || !strings.Contains(string(out), "missing stage skills in ~/.claude/skills: rubric; run `npx skills add pwguler/skills -g -a claude-code`") {
+		t.Fatalf("err %v, output %q; want failure naming rubric and how to install it", err, out)
+	}
+	for _, untouched := range []string{calls, filepath.Join(home, "Library"), filepath.Join(home, ".claude/skills/loopgate")} {
+		if _, err := os.Stat(untouched); !os.IsNotExist(err) {
+			t.Fatalf("%s exists after a refused install", untouched)
+		}
+	}
+}
+
+// stageSkills installs the stage skills under home as npx skills does: each
+// ~/.claude/skills entry links to its copy in ~/.agents/skills.
+func stageSkills(t *testing.T, home string) {
+	t.Helper()
+	for _, name := range []string{"drill", "implement", "rubric", "land", "tldr"} {
+		src := filepath.Join(home, ".agents/skills", name)
+		if err := os.MkdirAll(src, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(src, "SKILL.md"), []byte("---\nname: "+name+"\n---\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		link := filepath.Join(home, ".claude/skills", name)
+		if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(filepath.Join("../../.agents/skills", name), link); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 
