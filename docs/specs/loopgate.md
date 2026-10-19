@@ -65,7 +65,7 @@ A local macOS service (`loopd`) and CLI (`loopctl`) that run Claude Code with th
 - AC-28: A `manual` or Blocked Job does not hold its Loop's slot or the global running cap.
 
 ### Service and harness
-- AC-29: `loopctl install` writes `~/Library/LaunchAgents/<label>.plist` that passes `plutil -lint` and has `RunAtLoad` true, with a `PATH` that is the installing shell's `PATH` with each link to a link replaced by its target and each relative or missing entry dropped; it starts the agent with `launchctl bootstrap`, replacing a loaded copy, installs the loopgate skill into `~/.claude/skills/loopgate`, prints where `claude`, `gh`, `git`, `node` and `go` resolve on that `PATH`, and exits non-zero when `loopd` does not answer on its socket, with the error `loopd` logged when it logged one; `loopctl uninstall` stops the agent and removes the plist and the skill.
+- AC-29: `loopctl install` writes `~/Library/LaunchAgents/<label>.plist` that passes `plutil -lint` and has `RunAtLoad` true, with a `PATH` that is the installing shell's `PATH` with each link to a link replaced by its target and each relative or missing entry dropped; it starts the agent with `launchctl bootstrap`, replacing a loaded copy only after launchd has stopped it, installs the loopgate skill into `~/.claude/skills/loopgate`, prints where `claude`, `gh`, `git`, `node` and `go` resolve on that `PATH`, and exits non-zero when `loopd` does not answer on its socket, with the error `loopd` logged when it logged one; `loopctl uninstall` stops the agent and removes the plist and the skill.
 - AC-30: The binaries carry a Claude Code skill, installed by `loopctl install`, that drives `loopctl` for list, run with a Spec, logs, Takeover, and Handback; `rubric` judges it.
 
 ### Public repo

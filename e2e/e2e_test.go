@@ -253,9 +253,16 @@ func TestInstallStartsTheAgentAndInstallsTheSkillThenUninstallUndoesIt(t *testin
 	if body := readFile(t, skill); !strings.Contains(body, "name: loopgate") {
 		t.Fatalf("skill not installed: %q", body)
 	}
+	if out := run("install"); !strings.Contains(out, "loopd answers") {
+		t.Fatalf("install over a loopd that stops slowly: %q", out)
+	}
 	uid := strconv.Itoa(os.Getuid())
-	if got := readFile(t, calls); got != "bootout gui/"+uid+"/loopgate.loopd\nbootstrap gui/"+uid+" "+plist+"\n" {
-		t.Fatalf("launchctl calls %q", got)
+	agent := "gui/" + uid + "/loopgate.loopd"
+	bootstrap := "bootstrap gui/" + uid + " " + plist + "\n"
+	got := readFile(t, calls)
+	if !strings.HasPrefix(got, "bootout "+agent+"\nprint "+agent+"\n"+bootstrap+"bootout "+agent+"\nprint "+agent+"\n") ||
+		!strings.HasSuffix(got, "print "+agent+"\n"+bootstrap) || strings.Count(got, "print "+agent) < 3 {
+		t.Fatalf("install did not wait for the old loopd to stop before bootstrap; launchctl calls %q", got)
 	}
 
 	run("uninstall")
@@ -328,7 +335,9 @@ func stageSkills(t *testing.T, home string) {
 
 // fakeLaunchd puts a launchctl on e's PATH that records its calls, starts the
 // plist's program with the plist's env and log as launchd does on bootstrap,
-// and stops it on bootout. It also adds a claude for loopd to find.
+// and stops it a second after bootout returns, as launchd does with a loopd
+// that is still ending its job; until then print finds the agent and
+// bootstrap fails as launchd's does. It also adds a claude for loopd to find.
 func fakeLaunchd(t *testing.T, e env) (calls string) {
 	t.Helper()
 	dir := t.TempDir()
@@ -338,8 +347,10 @@ func fakeLaunchd(t *testing.T, e env) (calls string) {
 	writeExec(t, filepath.Join(fakes, "launchctl"), `#!/bin/sh
 echo "$*" >> `+calls+`
 case "$1" in
-bootout) [ -f `+pid+` ] && kill $(cat `+pid+`) && rm `+pid+`; exit 3;;
+bootout) [ -f `+pid+` ] || exit 3; (sleep 1; kill $(cat `+pid+`); rm `+pid+`) > /dev/null 2>&1 & exit 0;;
+print) [ -f `+pid+` ] || exit 113;;
 bootstrap)
+	[ -f `+pid+` ] && { echo "Bootstrap failed: 5: Input/output error"; exit 5; }
 	plist=$3
 	x() { plutil -extract "$1" raw "$plist"; }
 	LOOPD_HOME=$(x EnvironmentVariables.LOOPD_HOME) PATH=$(x EnvironmentVariables.PATH) "$(x ProgramArguments.0)" >> "$(x StandardErrorPath)" 2>&1 &
