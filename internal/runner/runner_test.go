@@ -108,7 +108,8 @@ func TestRunPassesSafetyFlagsAndPromptInWorktree(t *testing.T) {
 	if got := settings.Sandbox.Filesystem.DenyRead; !slices.Equal(got, []string{"/home/me/.ssh"}) {
 		t.Fatalf("deny read %q", got)
 	}
-	for _, rule := range []string{"Bash(gh:*)", "Bash(git push:*)", "Bash(git merge:*)"} {
+	for _, rule := range []string{"Bash(gh:*)", "Bash(git push:*)", "Bash(git merge:*)",
+		"Read(//home/me/.ssh/**)", "Edit(//repo/.git/config)", "Write(//repo/.git/hooks/**)"} {
 		if !slices.Contains(settings.Permissions.Deny, rule) {
 			t.Fatalf("deny rules %q lack %q", settings.Permissions.Deny, rule)
 		}
@@ -311,7 +312,7 @@ func realDir(t *testing.T) string {
 func TestShellReportsExitCodeAndOutput(t *testing.T) {
 	r := Runner{Environ: []string{"PATH=" + os.Getenv("PATH"), "GITHUB_TOKEN=secret"}, Cache: t.TempDir()}
 	dir := realDir(t)
-	res, err := r.Shell(context.Background(), dir, `pwd -P; env | grep -c secret; echo boom >&2; exit 3`, time.Minute)
+	res, err := r.Shell(context.Background(), dir, `pwd -P; env | grep -c secret; echo boom >&2; exit 3`, time.Minute, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -323,7 +324,7 @@ func TestShellReportsExitCodeAndOutput(t *testing.T) {
 func TestShellTimeoutKillsWholeProcessGroup(t *testing.T) {
 	r := Runner{Environ: []string{"PATH=" + os.Getenv("PATH")}, Cache: t.TempDir()}
 	dir := t.TempDir()
-	_, err := r.Shell(context.Background(), dir, `sleep 300 & echo $! > grandchild; wait`, 3*time.Second)
+	_, err := r.Shell(context.Background(), dir, `sleep 300 & echo $! > grandchild; wait`, 3*time.Second, nil)
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("want DeadlineExceeded, got %v", err)
 	}
@@ -354,7 +355,7 @@ func TestShellSandboxConfinesTheVerifyCommand(t *testing.T) {
 		"env | grep -c SSH_AUTH_SOCK",
 		"echo $GOCACHE $GOMODCACHE",
 	}, "; ")
-	res, err := r.Shell(context.Background(), dir, script, time.Minute)
+	res, err := r.Shell(context.Background(), dir, script, time.Minute, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -372,7 +373,7 @@ func TestShellSandboxConfinesTheVerifyCommand(t *testing.T) {
 
 func TestShellPassesWhenABackgroundProcessOutlivesASuccessfulCommand(t *testing.T) {
 	r := Runner{Environ: []string{"PATH=" + os.Getenv("PATH")}, Cache: t.TempDir()}
-	res, err := r.Shell(context.Background(), t.TempDir(), "sleep 30 & echo done", time.Minute)
+	res, err := r.Shell(context.Background(), t.TempDir(), "sleep 30 & echo done", time.Minute, nil)
 	if err != nil || res.ExitCode != 0 || res.Output != "done\n" {
 		t.Fatalf("got %+v, %v; want a pass", res, err)
 	}
@@ -384,5 +385,24 @@ func TestCredentialDirs(t *testing.T) {
 		if !slices.Contains(got, want) {
 			t.Fatalf("%q lacks %s", got, want)
 		}
+	}
+}
+
+func TestShellCannotRewriteTheWorktreesGitPointer(t *testing.T) {
+	dir := realDir(t)
+	pointer := filepath.Join(dir, ".git")
+	if err := os.WriteFile(pointer, []byte("gitdir: /repo/.git/worktrees/wt\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r := Runner{Environ: []string{"PATH=" + os.Getenv("PATH")}, Cache: t.TempDir()}
+	res, err := r.Shell(context.Background(), dir, "echo 'gitdir: /tmp/evil' > .git; echo other > ok.txt && echo inside-ok", time.Minute, []string{pointer})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := os.ReadFile(pointer); string(got) != "gitdir: /repo/.git/worktrees/wt\n" {
+		t.Fatalf("verify rewrote the .git pointer to %q", got)
+	}
+	if !strings.Contains(res.Output, "inside-ok") {
+		t.Fatalf("other worktree writes blocked too:\n%s", res.Output)
 	}
 }

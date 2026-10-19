@@ -161,7 +161,17 @@ func settingsJSON(network, denyWrite, denyRead []string) (string, error) {
 	settings.Sandbox.Network.AllowedDomains = append([]string{}, network...)
 	settings.Sandbox.Filesystem.DenyWrite = append([]string{}, denyWrite...)
 	settings.Sandbox.Filesystem.DenyRead = append([]string{}, denyRead...)
+	// The sandbox confines Bash; these rules hold the same lines for the Read,
+	// Edit and Write tools, which run outside it.
 	settings.Permissions.Deny = []string{"Bash(gh:*)", "Bash(git push:*)", "Bash(git merge:*)"}
+	for _, p := range denyRead {
+		settings.Permissions.Deny = append(settings.Permissions.Deny, "Read(/"+p+")", "Read(/"+p+"/**)")
+	}
+	for _, p := range denyWrite {
+		for _, tool := range []string{"Edit", "Write"} {
+			settings.Permissions.Deny = append(settings.Permissions.Deny, tool+"(/"+p+")", tool+"(/"+p+"/**)")
+		}
+	}
 	data, err := json.Marshal(settings)
 	return string(data), err
 }

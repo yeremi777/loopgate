@@ -14,7 +14,7 @@ import (
 
 func TestGatePassesCleanTreeWhoseCommandExitsZero(t *testing.T) {
 	repo := newRepo(t)
-	out, err := Gate(context.Background(), shell(), repo, "echo checked", time.Minute)
+	out, err := Gate(context.Background(), shell(), repo, "echo checked", time.Minute, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -25,7 +25,7 @@ func TestGatePassesCleanTreeWhoseCommandExitsZero(t *testing.T) {
 
 func TestGateFailsWhenCommandFails(t *testing.T) {
 	repo := newRepo(t)
-	out, err := Gate(context.Background(), shell(), repo, "echo 'FAIL TestX'; exit 1", time.Minute)
+	out, err := Gate(context.Background(), shell(), repo, "echo 'FAIL TestX'; exit 1", time.Minute, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,7 +40,7 @@ func TestGateRefusesUncommittedWorkWithoutRunningCommand(t *testing.T) {
 			repo := newRepo(t)
 			write(t, filepath.Join(repo, dirty), "uncommitted")
 			marker := filepath.Join(t.TempDir(), "ran")
-			out, err := Gate(context.Background(), shell(), repo, "touch "+marker, time.Minute)
+			out, err := Gate(context.Background(), shell(), repo, "touch "+marker, time.Minute, nil)
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -150,7 +150,7 @@ func (r *jobRun) iterate(ctx context.Context) (Outcome, error) {
 			return Outcome{}, errors.New("implement reported revise, which only rubric may report")
 		}
 
-		gate, err := verify.Gate(ctx, r.Shell, j.Worktree, j.Loop.Verify, remaining(ctx))
+		gate, err := verify.Gate(ctx, r.Shell, j.Worktree, j.Loop.Verify, remaining(ctx), r.guard)
 		if err != nil {
 			return Outcome{}, err
 		}
