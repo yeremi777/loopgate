@@ -12,6 +12,7 @@ import (
 	"strings"
 	"text/tabwriter"
 	"time"
+	"unicode"
 
 	"github.com/yeremi777/loopgate/internal/daemon"
 	"github.com/yeremi777/loopgate/internal/feed"
@@ -171,16 +172,13 @@ func run(args []string) error {
 		printLog(log)
 		fmt.Println()
 		width := termWidth()
-		if err := c.Follow(ctx, id, func(e feed.Event) {
-			fmt.Println(cut(e.Time.Local().Format("15:04:05")+" "+e.Stage+"  "+e.Text, width))
-		}); err != nil {
-			return err
-		}
-		end, err := c.Job(ctx, id)
+		end, err := c.Follow(ctx, id, func(e feed.Event) {
+			fmt.Println(cut(e.Time.Local().Format("15:04:05")+" "+e.Stage+"  "+printable(e.Text), width))
+		})
 		if err != nil {
 			return err
 		}
-		printEnd(end.Job)
+		printEnd(end)
 		return nil
 	default:
 		return errors.New(usage)
@@ -367,16 +365,35 @@ func printLog(log daemon.JobLog) {
 	}
 }
 
-// printEnd prints how a followed Job ended: its PR, question, error or summary.
+// printEnd prints how a followed Job ended: its PR, question, error, or the
+// first line of its summary.
 func printEnd(j store.Job) {
+	summary, _, _ := strings.Cut(j.Summary, "\n")
 	line := fmt.Sprintf("job %d %s", j.ID, j.State)
-	for _, detail := range []string{j.PRURL, j.Question, j.Error, j.Summary} {
+	for _, detail := range []string{j.PRURL, j.Question, j.Error, summary} {
 		if detail != "" {
 			line += ": " + detail
 			break
 		}
 	}
-	fmt.Println(line)
+	for l := range strings.Lines(line) {
+		fmt.Println(printable(strings.TrimSuffix(l, "\n")))
+	}
+}
+
+// printable replaces each control and bidi control character in s, which a
+// model or a repository wrote, so it cannot move the cursor, reorder the
+// line, or send the terminal a command; a tab becomes a space.
+func printable(s string) string {
+	return strings.Map(func(r rune) rune {
+		switch {
+		case r == '\t':
+			return ' '
+		case unicode.IsControl(r), unicode.Is(unicode.Bidi_Control, r):
+			return '�'
+		}
+		return r
+	}, s)
 }
 
 // termWidth is stdout's terminal width, or 0 when stdout is not a terminal.

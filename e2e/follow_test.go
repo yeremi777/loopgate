@@ -23,6 +23,7 @@ case "$prompt" in
 /implement*)
 	say '{"type":"tool_use","name":"Write","input":{"file_path":"ok.txt"}}'
 	say '{"type":"text","text":"'"$long"'"}'
+	say '{"type":"text","text":"\u001b]52;c;cHduZWQ=\u0007\u001b[2Jcleared\u202ereversed"}'
 	sleep STAGE_SLEEP
 	echo ok > ok.txt && git add ok.txt && git -c user.name=t -c user.email=t@example.com commit -q -m ok && result "added ok";;
 /rubric*) say '{"type":"tool_use","name":"Bash","input":{"command":"git diff main"}}'; result "clean";;
@@ -49,6 +50,7 @@ func TestLogsFollowPrintsTheJobLiveInOrderAndExitsWhenItShips(t *testing.T) {
 		"implement 1  start",
 		"implement 1  Write ok.txt",
 		"implement 1  " + strings.TrimSpace(long),
+		"implement 1  �]52;c;cHduZWQ=��[2Jcleared�reversed",
 		"implement 1  done $0.10",
 		"verify 1  verify: test -f ok.txt",
 		"verify 1  pass: verify command exited 0",
@@ -66,6 +68,9 @@ func TestLogsFollowPrintsTheJobLiveInOrderAndExitsWhenItShips(t *testing.T) {
 	}
 	if strings.Join(events, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("events:\n%s\nwant:\n%s\nfull output:\n%s", strings.Join(events, "\n"), strings.Join(want, "\n"), out)
+	}
+	if strings.ContainsAny(out, "\x1b\x07\u202e") {
+		t.Fatalf("logs -f passed the model's control characters to the terminal:\n%q", out)
 	}
 	if !strings.HasPrefix(out, "job:") || !strings.HasSuffix(out, "job "+id+" done: https://github.com/me/app/pull/9\n") {
 		t.Fatalf("logs -f does not open with the snapshot and end with the outcome:\n%s", out)
@@ -91,6 +96,12 @@ func TestLogsFollowPrintsTheJobLiveInOrderAndExitsWhenItShips(t *testing.T) {
 }
 
 func TestLogsFollowSaysLoopdStoppedWhenLoopdGoesAway(t *testing.T) {
+	for name, sig := range map[string]syscall.Signal{"killed": syscall.SIGKILL, "stopped": syscall.SIGTERM} {
+		t.Run(name, func(t *testing.T) { followUntilLoopdGets(t, sig) })
+	}
+}
+
+func followUntilLoopdGets(t *testing.T, sig syscall.Signal) {
 	e, id := startStreamJob(t, "10")
 	outFile := filepath.Join(t.TempDir(), "out")
 	out, err := os.Create(outFile)
@@ -108,7 +119,7 @@ func TestLogsFollowSaysLoopdStoppedWhenLoopdGoesAway(t *testing.T) {
 			t.Fatalf("logs -f never showed the stage:\n%s", readFile(t, outFile))
 		}
 	}
-	if err := e.loopd.Process.Signal(syscall.SIGKILL); err != nil {
+	if err := e.loopd.Process.Signal(sig); err != nil {
 		t.Fatal(err)
 	}
 	err = follow.Wait()

@@ -53,6 +53,7 @@ var (
 	ErrNotManual      = errors.New("only a taken-over job can be handed back")
 	ErrNothingRunning = errors.New("the loop has no running job")
 	ErrStarting       = errors.New("the job is still starting; try again")
+	ErrStopped        = errors.New("loopd stopped")
 )
 
 // running is the Job in the slot. id, cancel and feed are zero while its
@@ -183,9 +184,12 @@ const followPoll = 200 * time.Millisecond
 
 // Follow sends the running Job's events to send until its outcome is
 // stored, waiting first while the Job starts; for a Job that is not queued
-// or running it returns at once.
+// or running it returns at once. It fails with ErrStopped when loopd stops.
 func (d *Daemon) Follow(ctx context.Context, id int64, send func(feed.Event) error) error {
 	for {
+		if d.ctx.Err() != nil {
+			return ErrStopped
+		}
 		var f *feed.Feed
 		d.mu.Lock()
 		if d.current != nil && d.current.id == id {
@@ -193,7 +197,13 @@ func (d *Daemon) Follow(ctx context.Context, id int64, send func(feed.Event) err
 		}
 		d.mu.Unlock()
 		if f != nil {
-			return f.Follow(ctx, send)
+			if err := f.Follow(ctx, send); err != nil {
+				return err
+			}
+			if d.ctx.Err() != nil {
+				return ErrStopped
+			}
+			return nil
 		}
 		j, err := d.st.Job(id)
 		if err != nil {

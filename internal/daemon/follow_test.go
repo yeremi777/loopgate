@@ -18,13 +18,17 @@ func TestFollowStreamsTheRunningJobAndEndsOnceItsOutcomeIsStored(t *testing.T) {
 		t.Fatal(err)
 	}
 	var got []string
+	attached := make(chan struct{})
 	followed := make(chan error)
 	go func() {
 		followed <- r.d.Follow(context.Background(), started.ID, func(e feed.Event) error {
-			got = append(got, e.Stage+" | "+e.Text)
+			if got = append(got, e.Stage+" | "+e.Text); len(got) == 1 {
+				close(attached)
+			}
 			return nil
 		})
 	}()
+	<-attached
 	r.release()
 	if err := <-followed; err != nil {
 		t.Fatal(err)
@@ -36,6 +40,30 @@ func TestFollowStreamsTheRunningJobAndEndsOnceItsOutcomeIsStored(t *testing.T) {
 		if !slices.Contains(got, want) {
 			t.Fatalf("events %q lack %q", got, want)
 		}
+	}
+}
+
+func TestFollowWhileLoopdStopsSaysLoopdStopped(t *testing.T) {
+	r := newRunEnv(t)
+	started, err := r.d.Run("deps", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	attached := make(chan struct{})
+	followed := make(chan error)
+	go func() {
+		sent := 0
+		followed <- r.d.Follow(context.Background(), started.ID, func(feed.Event) error {
+			if sent++; sent == 1 {
+				close(attached)
+			}
+			return nil
+		})
+	}()
+	<-attached
+	r.d.Close()
+	if err := <-followed; !errors.Is(err, ErrStopped) || err.Error() != "loopd stopped" {
+		t.Fatalf("follow while loopd stops: %v, want loopd stopped", err)
 	}
 }
 

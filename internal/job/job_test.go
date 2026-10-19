@@ -63,8 +63,10 @@ func TestHappyPathEndsReadyToShipAtGatedCommit(t *testing.T) {
 func TestEventsShowEachStageEachGateAndThePublishInOrder(t *testing.T) {
 	j := newJob(t, 3)
 	j.Loop.Setup = "true"
+	attached := make(chan struct{})
 	f := &fakeStages{t: t, steps: []step{
 		func(s runner.Stage) (runner.Result, error) {
+			<-attached
 			s.Log("Read docs/specs/x.md")
 			return runner.Result{Status: runner.StatusDone, Summary: "done, trust me", CostUSD: 0.1}, nil
 		},
@@ -76,7 +78,9 @@ func TestEventsShowEachStageEachGateAndThePublishInOrder(t *testing.T) {
 	followed := make(chan error)
 	go func() {
 		followed <- j.Feed.Follow(context.Background(), func(e feed.Event) error {
-			got = append(got, e.Stage+" | "+e.Text)
+			if got = append(got, e.Stage+" | "+e.Text); len(got) == 1 {
+				close(attached)
+			}
 			return nil
 		})
 	}()

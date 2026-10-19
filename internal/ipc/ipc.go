@@ -20,10 +20,7 @@ import (
 	"github.com/yeremi777/loopgate/internal/store"
 )
 
-var (
-	ErrNotRunning = errors.New("loopd not running")
-	ErrStopped    = errors.New("loopd stopped")
-)
+var ErrNotRunning = errors.New("loopd not running")
 
 const maxLoopFile = 1 << 20
 
@@ -85,7 +82,12 @@ func Serve(ln net.Listener, d *daemon.Daemon) error {
 				return rc.Flush()
 			})
 		}
-		end := followLine{End: true}
+		var end followLine
+		if err == nil {
+			var log daemon.JobLog
+			log, err = d.Job(id)
+			end.Job = &log.Job
+		}
 		if err != nil {
 			end = followLine{Error: err.Error()}
 		}
@@ -121,11 +123,11 @@ type runRequest struct {
 	Spec string `json:"spec"`
 }
 
-// followLine is one line of a followed Job's stream: an event, or its end
-// with the error that ended it.
+// followLine is one line of a followed Job's stream: an event, the Job as
+// it ended, or the error that ended the stream.
 type followLine struct {
 	Event *feed.Event `json:"event,omitempty"`
-	End   bool        `json:"end,omitempty"`
+	Job   *store.Job  `json:"job,omitempty"`
 	Error string      `json:"error,omitempty"`
 }
 
@@ -233,27 +235,31 @@ func (c *Client) Handback(ctx context.Context, id int64) (store.Job, error) {
 	return j, err
 }
 
-// Follow shows each event of the running Job as it happens and returns once
-// the Job's outcome is stored; it fails with ErrStopped when loopd goes away.
-func (c *Client) Follow(ctx context.Context, id int64, show func(feed.Event)) error {
+// Follow shows each event of the running Job as it happens and returns the
+// Job once its outcome is stored; it fails with daemon.ErrStopped when loopd
+// goes away.
+func (c *Client) Follow(ctx context.Context, id int64, show func(feed.Event)) (store.Job, error) {
 	res, err := send(ctx, c.untimed, http.MethodGet, "/jobs/"+strconv.FormatInt(id, 10)+"/events", nil)
 	if err != nil {
-		return err
+		return store.Job{}, err
 	}
 	defer func() { _ = res.Body.Close() }()
+	if res.StatusCode != http.StatusOK {
+		return store.Job{}, fmt.Errorf("loopd answered %s to follow; it may be older than loopctl, so run loopctl install", res.Status)
+	}
 	dec := json.NewDecoder(res.Body)
 	for {
 		var line followLine
 		if err := dec.Decode(&line); err != nil {
-			return ErrStopped
+			return store.Job{}, daemon.ErrStopped
 		}
 		switch {
 		case line.Event != nil:
 			show(*line.Event)
-		case line.Error != "":
-			return errors.New(line.Error)
+		case line.Job != nil:
+			return *line.Job, nil
 		default:
-			return nil
+			return store.Job{}, errors.New(line.Error)
 		}
 	}
 }
