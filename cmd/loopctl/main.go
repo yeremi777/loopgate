@@ -93,7 +93,7 @@ func run(args []string) error {
 		if err != nil {
 			return err
 		}
-		fmt.Printf("trial gate: running the setup and verify commands on origin's default branch of %s, for up to %s\n", loop.Checkout, loop.Bounds.Timeout)
+		fmt.Printf("checking %s, then running the trial gate on origin's default branch for up to %s\n", loop.Checkout, loop.Bounds.Timeout)
 		name, err := c.Add(ctx, data)
 		if err != nil {
 			return err
