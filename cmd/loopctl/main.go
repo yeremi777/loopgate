@@ -14,9 +14,12 @@ import (
 	"time"
 
 	"github.com/yeremi777/loopgate/internal/daemon"
+	"github.com/yeremi777/loopgate/internal/feed"
 	"github.com/yeremi777/loopgate/internal/ipc"
 	"github.com/yeremi777/loopgate/internal/service"
+	"github.com/yeremi777/loopgate/internal/store"
 	"github.com/yeremi777/loopgate/skills"
+	"golang.org/x/sys/unix"
 )
 
 const usage = `loopctl controls loopd, which runs Claude Code on loops and stops at a draft PR.
@@ -30,6 +33,7 @@ usage:
   loopctl run <name> [--spec <path>]   start a job now on --spec, or a timer loop's own task or spec
   loopctl stop <name>                  end the loop's running job; the loop stays
   loopctl logs <job>                   show a job's state, branch, PR, cost and progress
+  loopctl logs -f <job>                then follow the running job live until it ends; Ctrl-C leaves it running
   loopctl takeover <job>               take a job, stopping it if it runs, and hand its worktree to you
   loopctl handback <job>               give a taken-over job back to its loop
   loopctl requeue <name> <issue>       let a github loop run an issue again
@@ -154,6 +158,29 @@ func run(args []string) error {
 			return err
 		}
 		printLog(log)
+		return nil
+	case cmd == "logs" && len(rest) == 2 && rest[0] == "-f":
+		id, err := jobID(rest[1])
+		if err != nil {
+			return err
+		}
+		log, err := c.Job(ctx, id)
+		if err != nil {
+			return err
+		}
+		printLog(log)
+		fmt.Println()
+		width := termWidth()
+		if err := c.Follow(ctx, id, func(e feed.Event) {
+			fmt.Println(cut(e.Time.Local().Format("15:04:05")+" "+e.Stage+"  "+e.Text, width))
+		}); err != nil {
+			return err
+		}
+		end, err := c.Job(ctx, id)
+		if err != nil {
+			return err
+		}
+		printEnd(end.Job)
 		return nil
 	default:
 		return errors.New(usage)
@@ -338,4 +365,34 @@ func printLog(log daemon.JobLog) {
 	if log.Progress != "" {
 		fmt.Printf("\nprogress:\n%s", log.Progress)
 	}
+}
+
+// printEnd prints how a followed Job ended: its PR, question, error or summary.
+func printEnd(j store.Job) {
+	line := fmt.Sprintf("job %d %s", j.ID, j.State)
+	for _, detail := range []string{j.PRURL, j.Question, j.Error, j.Summary} {
+		if detail != "" {
+			line += ": " + detail
+			break
+		}
+	}
+	fmt.Println(line)
+}
+
+// termWidth is stdout's terminal width, or 0 when stdout is not a terminal.
+func termWidth() int {
+	ws, err := unix.IoctlGetWinsize(int(os.Stdout.Fd()), unix.TIOCGWINSZ)
+	if err != nil {
+		return 0
+	}
+	return int(ws.Col)
+}
+
+// cut shortens line to width characters, ending it in "…"; width 0 keeps it whole.
+func cut(line string, width int) string {
+	r := []rune(line)
+	if width <= 0 || len(r) <= width {
+		return line
+	}
+	return string(r[:width-1]) + "…"
 }

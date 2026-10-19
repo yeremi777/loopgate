@@ -16,10 +16,14 @@ import (
 	"time"
 
 	"github.com/yeremi777/loopgate/internal/daemon"
+	"github.com/yeremi777/loopgate/internal/feed"
 	"github.com/yeremi777/loopgate/internal/store"
 )
 
-var ErrNotRunning = errors.New("loopd not running")
+var (
+	ErrNotRunning = errors.New("loopd not running")
+	ErrStopped    = errors.New("loopd stopped")
+)
 
 const maxLoopFile = 1 << 20
 
@@ -66,6 +70,27 @@ func Serve(ln net.Listener, d *daemon.Daemon) error {
 		log, err := d.Job(id)
 		reply(w, log, err)
 	})
+	mux.HandleFunc("GET /jobs/{id}/events", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		enc := json.NewEncoder(w)
+		rc := http.NewResponseController(w)
+		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil {
+			err = fmt.Errorf("job id %q: %w", r.PathValue("id"), store.ErrNotFound)
+		} else {
+			err = d.Follow(r.Context(), id, func(e feed.Event) error {
+				if err := enc.Encode(followLine{Event: &e}); err != nil {
+					return err
+				}
+				return rc.Flush()
+			})
+		}
+		end := followLine{End: true}
+		if err != nil {
+			end = followLine{Error: err.Error()}
+		}
+		_ = enc.Encode(end)
+	})
 	mux.HandleFunc("POST /loops/{name}/requeue/{issue}", func(w http.ResponseWriter, r *http.Request) {
 		n, err := strconv.Atoi(r.PathValue("issue"))
 		if err != nil {
@@ -96,6 +121,14 @@ type runRequest struct {
 	Spec string `json:"spec"`
 }
 
+// followLine is one line of a followed Job's stream: an event, or its end
+// with the error that ended it.
+type followLine struct {
+	Event *feed.Event `json:"event,omitempty"`
+	End   bool        `json:"end,omitempty"`
+	Error string      `json:"error,omitempty"`
+}
+
 type response[T any] struct {
 	Data  T      `json:"data"`
 	Error string `json:"error,omitempty"`
@@ -123,9 +156,9 @@ func statusOf(err error) int {
 	}
 }
 
-// Client calls loopd. add waits on trial instead of http, because loopd
-// bounds the Trial gate by the Loop's own timeout.
-type Client struct{ http, trial *http.Client }
+// Client calls loopd. add and follow wait on untimed instead of http,
+// because loopd bounds the Trial gate and a Job by the Loop's own timeout.
+type Client struct{ http, untimed *http.Client }
 
 func NewClient(socket string) *Client {
 	dialer := net.Dialer{Timeout: 2 * time.Second}
@@ -135,7 +168,7 @@ func NewClient(socket string) *Client {
 		},
 	}
 	// run fetches origin and adds a worktree before it answers.
-	return &Client{http: &http.Client{Timeout: 5 * time.Minute, Transport: transport}, trial: &http.Client{Transport: transport}}
+	return &Client{http: &http.Client{Timeout: 5 * time.Minute, Transport: transport}, untimed: &http.Client{Transport: transport}}
 }
 
 func (c *Client) List(ctx context.Context) ([]daemon.LoopStatus, error) {
@@ -147,7 +180,7 @@ func (c *Client) List(ctx context.Context) ([]daemon.LoopStatus, error) {
 // Add registers a Loop file once its Trial gate passes and returns the Loop's name.
 func (c *Client) Add(ctx context.Context, data []byte) (string, error) {
 	var name string
-	err := call(ctx, c.trial, http.MethodPost, "/loops", data, &name)
+	err := call(ctx, c.untimed, http.MethodPost, "/loops", data, &name)
 	return name, err
 }
 
@@ -200,15 +233,33 @@ func (c *Client) Handback(ctx context.Context, id int64) (store.Job, error) {
 	return j, err
 }
 
-func call[T any](ctx context.Context, client *http.Client, method, path string, body []byte, out *T) error {
-	req, err := http.NewRequestWithContext(ctx, method, "http://loopd"+path, bytes.NewReader(body))
+// Follow shows each event of the running Job as it happens and returns once
+// the Job's outcome is stored; it fails with ErrStopped when loopd goes away.
+func (c *Client) Follow(ctx context.Context, id int64, show func(feed.Event)) error {
+	res, err := send(ctx, c.untimed, http.MethodGet, "/jobs/"+strconv.FormatInt(id, 10)+"/events", nil)
 	if err != nil {
 		return err
 	}
-	res, err := client.Do(req)
-	if errors.Is(err, syscall.ENOENT) || errors.Is(err, syscall.ECONNREFUSED) {
-		return ErrNotRunning
+	defer func() { _ = res.Body.Close() }()
+	dec := json.NewDecoder(res.Body)
+	for {
+		var line followLine
+		if err := dec.Decode(&line); err != nil {
+			return ErrStopped
+		}
+		switch {
+		case line.Event != nil:
+			show(*line.Event)
+		case line.Error != "":
+			return errors.New(line.Error)
+		default:
+			return nil
+		}
 	}
+}
+
+func call[T any](ctx context.Context, client *http.Client, method, path string, body []byte, out *T) error {
+	res, err := send(ctx, client, method, path, body)
 	if err != nil {
 		return err
 	}
@@ -224,4 +275,16 @@ func call[T any](ctx context.Context, client *http.Client, method, path string, 
 		*out = resp.Data
 	}
 	return nil
+}
+
+func send(ctx context.Context, client *http.Client, method, path string, body []byte) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, method, "http://loopd"+path, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	res, err := client.Do(req)
+	if errors.Is(err, syscall.ENOENT) || errors.Is(err, syscall.ECONNREFUSED) {
+		return nil, ErrNotRunning
+	}
+	return res, err
 }
