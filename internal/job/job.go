@@ -160,6 +160,14 @@ func (r *jobRun) iterate(ctx context.Context) (Outcome, error) {
 			}
 			continue
 		}
+		// The setup and verify commands run code too, so they face the same check as a stage.
+		question, err := r.protectedQuestion(ctx)
+		if err != nil {
+			return Outcome{}, err
+		}
+		if question != "" {
+			return Outcome{State: store.Blocked, Question: question, Summary: res.Summary}, nil
+		}
 
 		changes, err := verify.Changes(ctx, j.Worktree, j.Base)
 		if err != nil {
@@ -236,19 +244,24 @@ func (r *jobRun) stage(ctx context.Context, prompt string) (runner.Result, error
 	if err != nil {
 		return res, err
 	}
-	hits, err := verify.Touched(ctx, r.job.Worktree, r.job.Base, r.job.Loop.Protected)
+	question, err := r.protectedQuestion(ctx)
 	if err != nil {
 		return runner.Result{}, err
 	}
-	if hits != nil {
-		return runner.Result{
-			Status:   runner.StatusBlocked,
-			Question: "The change touches protected paths: " + strings.Join(hits, ", ") + ". Should these change?",
-			Summary:  res.Summary,
-			CostUSD:  res.CostUSD,
-		}, nil
+	if question != "" {
+		return runner.Result{Status: runner.StatusBlocked, Question: question, Summary: res.Summary, CostUSD: res.CostUSD}, nil
 	}
 	return res, nil
+}
+
+// protectedQuestion asks whether the protected paths changed since the Job's
+// base should change, and is empty when none did.
+func (r *jobRun) protectedQuestion(ctx context.Context) (string, error) {
+	hits, err := verify.Touched(ctx, r.job.Worktree, r.job.Base, r.job.Loop.Protected)
+	if err != nil || hits == nil {
+		return "", err
+	}
+	return "The change touches protected paths: " + strings.Join(hits, ", ") + ". Should these change?", nil
 }
 
 // unchanged fails when a reviewer moved HEAD or left edits, since reviewers never edit.
