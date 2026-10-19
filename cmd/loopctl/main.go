@@ -8,11 +8,13 @@ import (
 	"os"
 	"path/filepath"
 	"runtime/debug"
+	"slices"
 	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/yeremi777/loopgate/internal/daemon"
 	"github.com/yeremi777/loopgate/internal/feed"
@@ -26,7 +28,7 @@ import (
 const usage = `loopctl controls loopd, which runs Claude Code on loops and stops at a draft PR.
 
 usage:
-  loopctl list                         show each loop, then the job id of each job in progress and of the 5 newest ended
+  loopctl list                         show each loop with the job id of each of its jobs in progress and of the 5 newest ended
   loopctl add <loop.yaml>              register a loop file
   loopctl remove <loop>                unregister a loop
   loopctl pause <loop>                 stop a loop's timer or issue polling
@@ -82,32 +84,9 @@ func run(args []string) error {
 		if err != nil {
 			return err
 		}
-		w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-		_, _ = fmt.Fprintln(w, "LOOP\tSTATE\tTRIGGER\tCHECKOUT")
-		for _, l := range loops {
-			state := "active"
-			if l.Paused {
-				state = "paused"
-			}
-			_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", l.Name, state, l.Trigger, l.Checkout)
-		}
-		if err := w.Flush(); err != nil {
-			return err
-		}
-		if len(jobs) == 0 {
-			return nil
-		}
-		fmt.Println()
-		w = tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-		_, _ = fmt.Fprintln(w, "JOB\tLOOP\tSTATE\tWORK\tPR / QUESTION")
-		for _, j := range jobs {
-			outcome := j.PRURL
-			if j.State == store.Blocked {
-				outcome = j.Question
-			}
-			_, _ = fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\n", j.ID, j.Loop, j.State, cell(j.Work), cell(outcome))
-		}
-		return w.Flush()
+		_, notTerminal := unix.IoctlGetWinsize(int(os.Stdout.Fd()), unix.TIOCGWINSZ)
+		printList(loops, jobs, notTerminal == nil && os.Getenv("NO_COLOR") == "")
+		return nil
 	case cmd == "add" && len(rest) == 1:
 		data, err := os.ReadFile(rest[0])
 		if err != nil {
@@ -399,6 +378,137 @@ func printEnd(j store.Job) {
 	for l := range strings.Lines(line) {
 		fmt.Println(printable(strings.TrimSuffix(l, "\n")))
 	}
+}
+
+// listBlock is one Loop of loopctl list with its Jobs, newest first.
+type listBlock struct {
+	name, state, trigger, checkout string
+	jobs                           []store.Job
+}
+
+// printList prints each Loop, sorted by name, as a block with its Jobs; a
+// Job whose Loop was removed gets a block of its own. color paints names,
+// headers and states without changing any column's width.
+func printList(loops []daemon.LoopStatus, jobs []store.Job, color bool) {
+	var blocks []*listBlock
+	byName := map[string]*listBlock{}
+	for _, l := range loops {
+		b := &listBlock{name: l.Name, state: "active", trigger: l.Trigger, checkout: home(l.Checkout)}
+		if l.Paused {
+			b.state = "paused"
+		}
+		blocks = append(blocks, b)
+		byName[l.Name] = b
+	}
+	for _, j := range jobs {
+		b, ok := byName[j.Loop]
+		if !ok {
+			b = &listBlock{name: j.Loop, state: "removed"}
+			blocks = append(blocks, b)
+			byName[j.Loop] = b
+		}
+		b.jobs = append(b.jobs, j)
+	}
+	if len(blocks) == 0 {
+		fmt.Println("no loops; add one with loopctl add <loop.yaml>")
+		return
+	}
+	slices.SortFunc(blocks, func(a, b *listBlock) int { return strings.Compare(a.name, b.name) })
+	nameWidth := 0
+	for _, b := range blocks {
+		nameWidth = max(nameWidth, utf8.RuneCountInString(b.name))
+	}
+	paint := func(code, s string) string {
+		if !color || s == "" {
+			return s
+		}
+		return "\x1b[" + code + "m" + s + "\x1b[0m"
+	}
+	for i, b := range blocks {
+		if i > 0 {
+			fmt.Println()
+		}
+		line := paint("1", b.name) + strings.Repeat(" ", nameWidth-utf8.RuneCountInString(b.name)) + "  " + paint(stateColor[b.state], b.state)
+		if b.trigger != "" {
+			line += "  " + b.trigger
+		}
+		fmt.Println(line)
+		if b.checkout != "" {
+			fmt.Println("  checkout: " + b.checkout)
+		}
+		if len(b.jobs) == 0 {
+			fmt.Println("  no jobs")
+			continue
+		}
+		rows := [][]string{{"JOB", "STATE", "WORK", "RESULT"}}
+		for _, j := range b.jobs {
+			rows = append(rows, []string{strconv.FormatInt(j.ID, 10), string(j.State), cell(j.Work), cell(result(j))})
+		}
+		widths := make([]int, len(rows[0]))
+		for _, row := range rows {
+			for c, text := range row {
+				widths[c] = max(widths[c], utf8.RuneCountInString(text))
+			}
+		}
+		for r, row := range rows {
+			line := " "
+			for c, text := range row {
+				switch {
+				case r == 0:
+					text = paint("2", text)
+				case c == 1:
+					text = paint(stateColor[row[1]], text)
+				}
+				line += " " + text
+				if c < len(row)-1 {
+					line += strings.Repeat(" ", widths[c]-utf8.RuneCountInString(row[c])+1)
+				}
+			}
+			fmt.Println(strings.TrimRight(line, " "))
+		}
+	}
+}
+
+// stateColor is the terminal color of each Loop and Job state.
+var stateColor = map[string]string{
+	"active": "32", "done": "32",
+	"paused": "36", "queued": "36", "running": "36",
+	"blocked": "33", "manual": "33",
+	"failed": "31", "exhausted": "31", "removed": "31",
+}
+
+// result is what a Job's row says about how it stands: its PR, question,
+// error or summary.
+func result(j store.Job) string {
+	switch j.State {
+	case store.Done:
+		return j.PRURL
+	case store.Blocked:
+		return j.Question
+	case store.Failed:
+		return j.Error
+	case store.Exhausted:
+		return j.Summary
+	case store.Manual:
+		return "taken over"
+	}
+	return ""
+}
+
+// home writes path with the user's home as ~.
+func home(path string) string {
+	user, err := os.UserHomeDir()
+	if err != nil {
+		return path
+	}
+	user = filepath.Clean(user)
+	if path == user {
+		return "~"
+	}
+	if rel, ok := strings.CutPrefix(path, user+"/"); ok {
+		return "~/" + rel
+	}
+	return path
 }
 
 // cell is the first line of s as one table cell of at most 60 characters.

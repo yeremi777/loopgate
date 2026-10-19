@@ -81,7 +81,7 @@ From a clone, run `go install ./cmd/...` and `loopctl install` from its root ins
 
 `loopctl install` starts `loopd` now and at every login with launchd, restarts it after a crash, and adds the loopgate skill to `~/.claude/skills/loopgate`. It first checks for the stage skills in `~/.claude/skills`: a job whose skill is missing runs anyway, without the skill and without an error, so install names the missing ones and stops. It prints where it found `claude`, `gh`, `git`, `node` and `go`, then waits until `loopd` answers; when `loopd` cannot start, as when `gh` is not logged in, install fails with the error `loopd` logged. Fix the cause and run it again. Run it again after an upgrade; it replaces the loaded copy. `loopctl uninstall` stops `loopd` and removes the agent and the skill; your loops and jobs in `~/.loopd` stay.
 
-**3. Check it:** `loopctl version` prints the installed version, and `loopctl list` prints a table with only its header row. If it later says `loopd not running`, read `~/.loopd/loopd.log`.
+**3. Check it:** `loopctl version` prints the installed version, and `loopctl list` prints `no loops; add one with loopctl add <loop.yaml>`. If it later says `loopd not running`, read `~/.loopd/loopd.log`.
 
 To upgrade, run the same `go install …@latest` and `loopctl install` again.
 
@@ -142,7 +142,7 @@ A timer loop replaces `github` with `timer: { every: 6h }` or `timer: { cron: "0
 | Hand a settled spec to a loop | `loopctl run <loop> --spec docs/specs/<slug>.md`, from the checkout's root |
 | Build issues while you are away | Label them with the loop's label. Each issue runs once. |
 | Run an issue again | `loopctl requeue <loop> <issue>`, where `<issue>` is the GitHub issue number; an issue job's work in `loopctl list` shows it. |
-| Find a loop or job id | `loopctl list`: each loop, then the job id of each job in progress (queued, running, blocked, manual) and of the 5 newest that ended, with the PR link or blocking question. |
+| Find a loop or job id | `loopctl list`: each loop with its state, trigger and checkout, and under it the job id of each of its jobs in progress (queued, running, blocked, manual) and of the 5 newest that ended, with the PR link, question, error or summary. |
 | See a job | `loopctl logs <job>`: state, branch, PR, cost, progress |
 | Watch a job live | `loopctl logs -f <job>`: each stage and verify gate as it starts and ends, one line per tool call and Claude message, then the outcome. Ctrl-C leaves the job running. The live lines last only while the job runs. |
 | Take a job back | `loopctl takeover <job>`, then work in the worktree it prints |
