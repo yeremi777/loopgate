@@ -143,6 +143,7 @@ A timer loop replaces `github` with `timer: { every: 6h }` or `timer: { cron: "0
 | Build issues while you are away | Label them with the loop's label. Each issue runs once. |
 | Run an issue again | `loopctl requeue <loop> <issue>` |
 | See a job | `loopctl logs <job>`: state, branch, PR, cost, progress |
+| Watch a job live | `loopctl logs -f <job>`: each stage and Verify gate as it starts and ends, one line per tool call and message, then the outcome. Ctrl-C leaves the job running. The live lines last only while the job runs |
 | Take a job back | `loopctl takeover <job>`, then work in the worktree it prints |
 | Give it back | Commit, then `loopctl handback <job>` |
 | End the running job | `loopctl stop <loop>` (the loop keeps its trigger) |

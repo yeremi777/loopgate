@@ -26,9 +26,10 @@
 - `go vet ./...`
 - `go test -race ./...`
 - `golangci-lint run`
-- `go test ./internal/runner/ -run TestStage` (AC-1, AC-2 tool and text lines)
+- `go test ./internal/runner/ -run 'TestStage|TestRunRejectsBadResults'` (AC-1, AC-2 tool and text lines)
 - `go test ./internal/job/ -run TestEvents` (AC-2 boundaries and gate lines)
-- `go test ./internal/daemon/ -run TestFollow` (AC-3, AC-5, AC-6, AC-7)
-- `go test ./e2e/ -run TestLogsFollow` (AC-4, AC-5, AC-8)
+- `go test ./internal/feed/` (AC-3, AC-7 viewer fell behind)
+- `go test ./internal/daemon/ -run TestFollow` (AC-5, AC-6)
+- `go test ./e2e/ -run TestLogsFollow` (AC-4, AC-5, AC-7 loopd stopped, AC-8)
 - `grep -n 'logs -f' README.md docs/specs/loopgate.md` (AC-9)
 - Demo: with a Loop added, `loopctl run <loop> --spec <path>` and then `loopctl logs -f <job>` print the stages and tool lines live and exit at the draft PR.
