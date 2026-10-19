@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/yeremi777/loopgate/internal/config"
+	"github.com/yeremi777/loopgate/internal/feed"
 	"github.com/yeremi777/loopgate/internal/runner"
 	"github.com/yeremi777/loopgate/internal/store"
 	"github.com/yeremi777/loopgate/internal/verify"
@@ -38,6 +39,8 @@ type Job struct {
 	Base string
 	// Issue is the GitHub issue number the Job answers, or 0.
 	Issue int
+	// Feed gets the Job's live events.
+	Feed *feed.Feed
 }
 
 // Stager runs one Claude Code stage; runner.Runner is the real one.
@@ -77,6 +80,9 @@ type Outcome struct {
 // maxLogOutput bounds each verify output kept in the progress log, so the
 // implement prompt stays small across iterations.
 const maxLogOutput = 4000
+
+// gateTail is how many lines of a failed gate's output its live view shows.
+const gateTail = 20
 
 // Run implements, gates, and reviews until rubric passes a gated tree, then
 // lands it offline and publishes the draft PR. It stops early when a stage is
@@ -121,7 +127,7 @@ func (r *jobRun) iterate(ctx context.Context) (Outcome, error) {
 	j := r.job
 	r.work = j.Work
 	if issue, ok := j.Work.(Issue); ok {
-		res, err := r.stage(ctx, drillPrompt(issue))
+		res, err := r.stage(ctx, "drill", drillPrompt(issue))
 		if err != nil {
 			return Outcome{}, err
 		}
@@ -139,7 +145,7 @@ func (r *jobRun) iterate(ctx context.Context) (Outcome, error) {
 		}
 	}
 	for i := 1; i <= j.Loop.Bounds.MaxIterations; i++ {
-		res, err := r.stage(ctx, implementPrompt(r.work, r.progress.text))
+		res, err := r.stage(ctx, fmt.Sprintf("implement %d", i), implementPrompt(r.work, r.progress.text))
 		if err != nil {
 			return Outcome{}, err
 		}
@@ -150,7 +156,7 @@ func (r *jobRun) iterate(ctx context.Context) (Outcome, error) {
 			return Outcome{}, errors.New("implement reported revise, which only rubric may report")
 		}
 
-		gate, err := verify.Gate(ctx, r.Shell, j.Worktree, j.Loop, remaining(ctx), r.guard)
+		gate, err := r.gate(ctx, i)
 		if err != nil {
 			return Outcome{}, err
 		}
@@ -174,7 +180,7 @@ func (r *jobRun) iterate(ctx context.Context) (Outcome, error) {
 			return Outcome{}, err
 		}
 
-		review, err := r.stage(ctx, rubricPrompt(j.Base))
+		review, err := r.stage(ctx, fmt.Sprintf("rubric %d", i), rubricPrompt(j.Base))
 		if err != nil {
 			return Outcome{}, err
 		}
@@ -204,7 +210,7 @@ func (r *jobRun) iterate(ctx context.Context) (Outcome, error) {
 // and publishes the branch as a draft PR.
 func (r *jobRun) ship(ctx context.Context, out Outcome) (Outcome, error) {
 	j := r.job
-	land, err := r.stage(ctx, landPrompt(r.work))
+	land, err := r.stage(ctx, "land", landPrompt(r.work))
 	if err != nil {
 		return Outcome{}, err
 	}
@@ -226,19 +232,36 @@ func (r *jobRun) ship(ctx context.Context, out Outcome) (Outcome, error) {
 	if err != nil {
 		return Outcome{}, fmt.Errorf("publish: %w", err)
 	}
+	j.Feed.Bound("publish", "draft PR "+url)
 	out.PRURL = url
 	return out, nil
 }
 
-// stage runs one stage, then blocks the Job when the stage left a protected
-// path changed, before any later stage can load it.
-func (r *jobRun) stage(ctx context.Context, prompt string) (runner.Result, error) {
+// stage runs one stage between its start and end events.
+func (r *jobRun) stage(ctx context.Context, name, prompt string) (runner.Result, error) {
+	r.job.Feed.Bound(name, "start")
+	res, err := r.runStage(ctx, name, prompt)
+	switch {
+	case err != nil:
+		r.job.Feed.Bound(name, "failed: "+err.Error())
+	case res.Status == runner.StatusBlocked:
+		r.job.Feed.Bound(name, fmt.Sprintf("blocked $%.2f: %s", res.CostUSD, res.Question))
+	default:
+		r.job.Feed.Bound(name, fmt.Sprintf("%s $%.2f", res.Status, res.CostUSD))
+	}
+	return res, err
+}
+
+// runStage runs one stage, then blocks the Job when the stage left a
+// protected path changed, before any later stage can load it.
+func (r *jobRun) runStage(ctx context.Context, name, prompt string) (runner.Result, error) {
 	res, err := r.Stages.Run(ctx, runner.Stage{
 		Dir:       r.job.Worktree,
 		Prompt:    prompt,
 		Timeout:   remaining(ctx),
 		Network:   r.job.Loop.Network,
 		DenyWrite: r.guard,
+		Log:       func(line string) { r.job.Feed.Line(name, line) },
 	})
 	r.cost += res.CostUSD
 	if err != nil {
@@ -252,6 +275,26 @@ func (r *jobRun) stage(ctx context.Context, prompt string) (runner.Result, error
 		return runner.Result{Status: runner.StatusBlocked, Question: question, Summary: res.Summary, CostUSD: res.CostUSD}, nil
 	}
 	return res, nil
+}
+
+// gate runs the Verify gate of iteration i, reporting each command as it
+// starts, its result, and on failure the tail of its output.
+func (r *jobRun) gate(ctx context.Context, i int) (verify.Outcome, error) {
+	name := fmt.Sprintf("verify %d", i)
+	gate, err := verify.Gate(ctx, r.Shell, r.job.Worktree, r.job.Loop, remaining(ctx), r.guard, func(step string) { r.job.Feed.Bound(name, step) })
+	switch {
+	case err != nil:
+		r.job.Feed.Bound(name, "failed: "+err.Error())
+	case gate.Passed:
+		r.job.Feed.Bound(name, "pass: verify command exited 0")
+	default:
+		lines := strings.Split(strings.TrimSpace(gate.Output), "\n")
+		r.job.Feed.Bound(name, "fail: "+strings.TrimSuffix(lines[0], ":"))
+		for _, line := range lines[max(1, len(lines)-gateTail):] {
+			r.job.Feed.Line(name, "│ "+line)
+		}
+	}
+	return gate, err
 }
 
 // protectedQuestion asks whether the protected paths changed since the Job's

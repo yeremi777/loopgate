@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/yeremi777/loopgate/internal/daemon"
+	"github.com/yeremi777/loopgate/internal/feed"
 	"github.com/yeremi777/loopgate/internal/gittest"
 	"github.com/yeremi777/loopgate/internal/job"
 	"github.com/yeremi777/loopgate/internal/runner"
@@ -102,6 +104,20 @@ func TestNotRunning(t *testing.T) {
 	}
 	if _, err := NewClient(stale).List(context.Background()); !errors.Is(err, ErrNotRunning) {
 		t.Fatalf("stale socket: want ErrNotRunning, got %v", err)
+	}
+}
+
+func TestFollowNamesTheStatusOfALoopdThatCannotFollow(t *testing.T) {
+	sock := filepath.Join(shortTempDir(t), "loopd.sock")
+	ln, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	go func() { _ = http.Serve(ln, http.NotFoundHandler()) }()
+	_, err = NewClient(sock).Follow(context.Background(), 1, func(feed.Event) {})
+	if err == nil || !strings.Contains(err.Error(), "404") || !strings.Contains(err.Error(), "loopctl install") {
+		t.Fatalf("follow against a loopd without the events route: %v", err)
 	}
 }
 

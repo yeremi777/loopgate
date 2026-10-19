@@ -16,7 +16,7 @@ import (
 
 func TestGatePassesCleanTreeWhoseCommandExitsZero(t *testing.T) {
 	repo := newRepo(t)
-	out, err := Gate(context.Background(), shell(), repo, config.Loop{Verify: "echo checked"}, time.Minute, nil)
+	out, err := Gate(context.Background(), shell(), repo, config.Loop{Verify: "echo checked"}, time.Minute, nil, func(string) {})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -27,7 +27,7 @@ func TestGatePassesCleanTreeWhoseCommandExitsZero(t *testing.T) {
 
 func TestGateFailsWhenCommandFails(t *testing.T) {
 	repo := newRepo(t)
-	out, err := Gate(context.Background(), shell(), repo, config.Loop{Verify: "echo 'FAIL TestX'; exit 1"}, time.Minute, nil)
+	out, err := Gate(context.Background(), shell(), repo, config.Loop{Verify: "echo 'FAIL TestX'; exit 1"}, time.Minute, nil, func(string) {})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -37,7 +37,7 @@ func TestGateFailsWhenCommandFails(t *testing.T) {
 }
 
 func TestGateNamesTheExitCodeOfASilentVerifyCommand(t *testing.T) {
-	out, err := Gate(context.Background(), shell(), newRepo(t), config.Loop{Verify: "exit 3"}, time.Minute, nil)
+	out, err := Gate(context.Background(), shell(), newRepo(t), config.Loop{Verify: "exit 3"}, time.Minute, nil, func(string) {})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +52,7 @@ func TestGateRefusesUncommittedWorkWithoutRunningCommand(t *testing.T) {
 			repo := newRepo(t)
 			write(t, filepath.Join(repo, dirty), "uncommitted")
 			setupMarker, marker := filepath.Join(t.TempDir(), "setup-ran"), filepath.Join(t.TempDir(), "ran")
-			out, err := Gate(context.Background(), shell(), repo, config.Loop{Setup: "touch " + setupMarker, Verify: "touch " + marker}, time.Minute, nil)
+			out, err := Gate(context.Background(), shell(), repo, config.Loop{Setup: "touch " + setupMarker, Verify: "touch " + marker}, time.Minute, nil, func(string) {})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -74,7 +74,7 @@ func TestGateRunsSetupBeforeTheVerifyCommand(t *testing.T) {
 	git(t, repo, "add", ".gitignore")
 	git(t, repo, "commit", "-q", "-m", "ignore deps")
 	loop := config.Loop{Setup: "mkdir -p node_modules && echo installed", Verify: "test -d node_modules && echo checked"}
-	out, err := Gate(context.Background(), shell(), repo, loop, time.Minute, nil)
+	out, err := Gate(context.Background(), shell(), repo, loop, time.Minute, nil, func(string) {})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +87,7 @@ func TestGateLetsSetupReachTheLoopsNetwork(t *testing.T) {
 	repo := newRepo(t)
 	// The proxy answers 200 when it reaches example.com and 502 when this machine is offline.
 	loop := config.Loop{Setup: "curl -s -m 5 -o /dev/null -w 'connect-%{http_connect}\\n' https://example.com/; exit 1", Verify: "true", Network: []string{"example.com"}}
-	out, err := Gate(context.Background(), shell(), repo, loop, time.Minute, nil)
+	out, err := Gate(context.Background(), shell(), repo, loop, time.Minute, nil, func(string) {})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +106,7 @@ func TestGateFailsOnSetupThatFailsOrChangesTheTree(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			repo := newRepo(t)
 			marker := filepath.Join(t.TempDir(), "ran")
-			out, err := Gate(context.Background(), shell(), repo, config.Loop{Setup: c.setup, Verify: "touch " + marker}, time.Minute, nil)
+			out, err := Gate(context.Background(), shell(), repo, config.Loop{Setup: c.setup, Verify: "touch " + marker}, time.Minute, nil, func(string) {})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -125,7 +125,7 @@ func TestGateFailsOnSetupThatFailsOrChangesTheTree(t *testing.T) {
 func TestGateNamesRefusedHostsWhenVerifyFailsAfterSetup(t *testing.T) {
 	repo := newRepo(t)
 	loop := config.Loop{Setup: "curl -s -m 5 https://example.com/ || true", Verify: "echo 'module not found'; exit 1"}
-	out, err := Gate(context.Background(), shell(), repo, loop, time.Minute, nil)
+	out, err := Gate(context.Background(), shell(), repo, loop, time.Minute, nil, func(string) {})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,7 +140,7 @@ func TestGateNamesRefusedHostsWhenACommandTimesOut(t *testing.T) {
 		"verify": {Setup: "curl -s -m 5 https://example.com/ || true", Verify: "sleep 60"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			_, err := Gate(context.Background(), shell(), newRepo(t), loop, 3*time.Second, nil)
+			_, err := Gate(context.Background(), shell(), newRepo(t), loop, 3*time.Second, nil, func(string) {})
 			if !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "example.com") || strings.Contains(err.Error(), "\n") {
 				t.Fatalf("got %q, want a one-line deadline error naming example.com", err)
 			}

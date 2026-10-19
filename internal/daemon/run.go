@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/yeremi777/loopgate/internal/config"
+	"github.com/yeremi777/loopgate/internal/feed"
 	"github.com/yeremi777/loopgate/internal/job"
 	"github.com/yeremi777/loopgate/internal/runner"
 	"github.com/yeremi777/loopgate/internal/store"
@@ -52,13 +53,16 @@ var (
 	ErrNotManual      = errors.New("only a taken-over job can be handed back")
 	ErrNothingRunning = errors.New("the loop has no running job")
 	ErrStarting       = errors.New("the job is still starting; try again")
+	ErrStopped        = errors.New("loopd stopped")
 )
 
-// running is the Job in the slot. id and cancel are zero while its worktree is set up.
+// running is the Job in the slot. id, cancel and feed are zero while its
+// worktree is set up.
 type running struct {
 	id        int64
 	loop      string
 	cancel    context.CancelFunc
+	feed      *feed.Feed
 	done      chan struct{}
 	takenOver bool
 	stopped   bool
@@ -175,6 +179,47 @@ func (d *Daemon) Stop(name string) error {
 	return nil
 }
 
+// followPoll is how often Follow looks again for a Job that is starting.
+const followPoll = 200 * time.Millisecond
+
+// Follow sends the running Job's events to send until its outcome is
+// stored, waiting first while the Job starts; for a Job that is not queued
+// or running it returns at once. It fails with ErrStopped when loopd stops.
+func (d *Daemon) Follow(ctx context.Context, id int64, send func(feed.Event) error) error {
+	for {
+		if d.ctx.Err() != nil {
+			return ErrStopped
+		}
+		var f *feed.Feed
+		d.mu.Lock()
+		if d.current != nil && d.current.id == id {
+			f = d.current.feed
+		}
+		d.mu.Unlock()
+		if f != nil {
+			if err := f.Follow(ctx, send); err != nil {
+				return err
+			}
+			if d.ctx.Err() != nil {
+				return ErrStopped
+			}
+			return nil
+		}
+		j, err := d.st.Job(id)
+		if err != nil {
+			return err
+		}
+		if j.State != store.Queued && j.State != store.Running {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(followPoll):
+		}
+	}
+}
+
 // claim takes the running slot for loop. The caller holds d.mu.
 func (d *Daemon) claim(loop string) (*running, error) {
 	if d.current != nil {
@@ -195,8 +240,9 @@ func (d *Daemon) release(cur *running) {
 
 func (d *Daemon) launch(cur *running, j job.Job) (store.Job, error) {
 	ctx, cancel := context.WithCancel(d.ctx)
+	j.Feed = feed.New()
 	d.mu.Lock()
-	cur.id, cur.cancel = j.ID, cancel
+	cur.id, cur.cancel, cur.feed = j.ID, cancel, j.Feed
 	d.mu.Unlock()
 	d.jobs.Add(1)
 	go d.finish(ctx, cur, j)
@@ -287,6 +333,7 @@ func (d *Daemon) finish(ctx context.Context, cur *running, j job.Job) {
 	takenOver := cur.takenOver
 	d.current = nil
 	d.mu.Unlock()
+	cur.feed.Close()
 	close(cur.done)
 
 	if !takenOver {

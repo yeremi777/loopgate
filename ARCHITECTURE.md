@@ -8,6 +8,7 @@ loopgate is a local macOS service, `loopd`, and its CLI, `loopctl`. It runs Clau
 - **store**: keeps Loop, Job and claimed-issue state in SQLite, so it survives restarts.
 - **daemon**: owns the registered Loops and the single running slot: admits a Loop through `loopctl add` only after its checkout checks and Trial gate pass, starts, stops, takes over and hands back Jobs, fires timers, and polls issues.
 - **job**: carries one Job through drill, implement, the Verify gate, rubric and land, within the Loop's bounds.
+- **feed**: holds the running Job's live events in memory for `loopctl logs -f`: earlier stages as their start and end, the current stage in full.
 - **verify**: decides whether a tree may ship: the Verify gate with its Setup command, protected paths, test changes, and the after-land check.
 - **runner**: spawns every Claude Code stage and the Setup and verify commands, sandboxed and each in its own process group, runs `loopd`'s own git, and creates Job and Trial gate worktrees.
 - **github**: loopd's only path to GitHub, through the user's `gh` login: push, draft PR, issue list, comment, label.
@@ -27,4 +28,5 @@ loopgate is a local macOS service, `loopd`, and its CLI, `loopctl`. It runs Clau
 - A protected path changed by any stage or Verify gate blocks the Job before the next stage starts.
 - After the gate, only unprotected Markdown may change before the push.
 - One Job holds the running slot at a time; a manual or Blocked Job holds none.
+- A viewer only reads: following a Job never stops, pauses or slows it, and its live events end with the Job.
 - Issue text reaches a model only as fenced, untrusted data.

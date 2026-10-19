@@ -42,13 +42,13 @@ func TestRunPassesSafetyFlagsAndPromptInWorktree(t *testing.T) {
 	for _, pair := range [][2]string{
 		{"--permission-mode", "auto"},
 		{"--permission-prompts", "none"},
-		{"--output-format", "json"},
+		{"--output-format", "stream-json"},
 	} {
 		if flagValue(args, pair[0]) != pair[1] {
 			t.Fatalf("want %s %s in %q", pair[0], pair[1], args)
 		}
 	}
-	for _, flag := range []string{"-p", "--strict-mcp-config"} {
+	for _, flag := range []string{"-p", "--verbose", "--strict-mcp-config"} {
 		if !slices.Contains(args, flag) {
 			t.Fatalf("want %s in %q", flag, args)
 		}
@@ -117,7 +117,7 @@ func TestRunPassesSafetyFlagsAndPromptInWorktree(t *testing.T) {
 }
 
 func TestRunReportsBlockedQuestion(t *testing.T) {
-	fake := newFake(t, `cat >/dev/null; echo '{"is_error":false,"structured_output":{"status":"blocked","question":"which db?","summary":"stopped"}}'`)
+	fake := newFake(t, `cat >/dev/null; echo '{"type":"result","is_error":false,"structured_output":{"status":"blocked","question":"which db?","summary":"stopped"}}'`)
 	res, err := fake.runner().Run(context.Background(), Stage{Dir: t.TempDir(), Prompt: "p", Timeout: time.Minute})
 	if err != nil {
 		t.Fatal(err)
@@ -128,7 +128,7 @@ func TestRunReportsBlockedQuestion(t *testing.T) {
 }
 
 func TestRunReportsRevision(t *testing.T) {
-	fake := newFake(t, `cat >/dev/null; echo '{"is_error":false,"structured_output":{"status":"revise","summary":"nil map write in store.go:40"}}'`)
+	fake := newFake(t, `cat >/dev/null; echo '{"type":"result","is_error":false,"structured_output":{"status":"revise","summary":"nil map write in store.go:40"}}'`)
 	res, err := fake.runner().Run(context.Background(), Stage{Dir: t.TempDir(), Prompt: "p", Timeout: time.Minute})
 	if err != nil {
 		t.Fatal(err)
@@ -138,14 +138,45 @@ func TestRunReportsRevision(t *testing.T) {
 	}
 }
 
+func TestStageLogsToolCallsAndTextAndReadsTheFinalResultLine(t *testing.T) {
+	lines := []string{
+		`{"type":"system","subtype":"init"}`,
+		`{"type":"assistant","parent_tool_use_id":null,"message":{"content":[{"type":"thinking","thinking":"hm"},{"type":"text","text":"\nI will fix the tail.\nThen test."}]}}`,
+		`{"type":"assistant","parent_tool_use_id":null,"message":{"content":[{"type":"tool_use","name":"Read","input":{"file_path":"/w/job.go","limit":40}}]}}`,
+		`{"type":"user","message":{"content":[{"type":"tool_result","content":"package job"}]}}`,
+		`{"type":"assistant","parent_tool_use_id":"toolu_1","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"go test ./...\necho done","description":"run tests"}}]}}`,
+		`{"type":"assistant","parent_tool_use_id":null,"message":{"content":[{"type":"tool_use","name":"TodoWrite","input":{"todos":[]}}]}}`,
+		`{"type":"assistant","parent_tool_use_id":null,"message":{"content":[{"type":"tool_use","name":"Skill","input":{"skill":"rubric","args":"x"}}]}}`,
+		`{"type":"assistant","parent_tool_use_id":null,"message":{"content":[{"type":"tool_use","name":"StructuredOutput","input":{"status":"done","summary":"fixed it"}}]}}`,
+		doneJSON,
+	}
+	out := filepath.Join(t.TempDir(), "out.jsonl")
+	if err := os.WriteFile(out, []byte(strings.Join(lines, "\n")), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fake := newFake(t, "cat >/dev/null; cat "+out)
+	var logged []string
+	res, err := fake.runner().Run(context.Background(), Stage{Dir: t.TempDir(), Prompt: "p", Timeout: time.Minute, Log: func(line string) { logged = append(logged, line) }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := (Result{Status: StatusDone, Summary: "fixed it", CostUSD: 0.25}); res != want {
+		t.Fatalf("got %+v, want %+v", res, want)
+	}
+	if want := []string{"I will fix the tail.", "Read /w/job.go", "  Bash go test ./...", "TodoWrite", "Skill rubric"}; !slices.Equal(logged, want) {
+		t.Fatalf("logged %q, want %q", logged, want)
+	}
+}
+
 func TestRunRejectsBadResults(t *testing.T) {
 	cases := map[string]string{
-		"is_error":          `echo '{"is_error":true,"subtype":"error_max_turns","structured_output":{"status":"done","summary":"x"}}'`,
-		"no structured":     `echo '{"is_error":false,"result":"done"}'`,
-		"unknown status":    `echo '{"is_error":false,"structured_output":{"status":"maybe","summary":"x"}}'`,
+		"is_error":          `echo '{"type":"result","is_error":true,"subtype":"error_max_turns","structured_output":{"status":"done","summary":"x"}}'`,
+		"no structured":     `echo '{"type":"result","is_error":false,"result":"done"}'`,
+		"unknown status":    `echo '{"type":"result","is_error":false,"structured_output":{"status":"maybe","summary":"x"}}'`,
 		"not json":          `echo 'oops'`,
+		"no result line":    `echo '{"type":"assistant","message":{"content":[{"type":"text","text":"done"}]}}'`,
 		"non-zero exit":     `echo '` + doneJSON + `'; exit 3`,
-		"blocked, no quest": `echo '{"is_error":false,"structured_output":{"status":"blocked","summary":"x"}}'`,
+		"blocked, no quest": `echo '{"type":"result","is_error":false,"structured_output":{"status":"blocked","summary":"x"}}'`,
 	}
 	for name, body := range cases {
 		t.Run(name, func(t *testing.T) {

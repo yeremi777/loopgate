@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/yeremi777/loopgate/internal/config"
+	"github.com/yeremi777/loopgate/internal/feed"
 	"github.com/yeremi777/loopgate/internal/runner"
 	"github.com/yeremi777/loopgate/internal/store"
 	"github.com/yeremi777/loopgate/internal/verify"
@@ -56,6 +57,80 @@ func TestHappyPathEndsReadyToShipAtGatedCommit(t *testing.T) {
 	}
 	if !slices.Contains(first.DenyWrite, filepath.Join(j.Worktree, ".git", "hooks")) {
 		t.Fatalf("stage may write git hooks: deny %q", first.DenyWrite)
+	}
+}
+
+func TestEventsShowEachStageEachGateAndThePublishInOrder(t *testing.T) {
+	j := newJob(t, 3)
+	j.Loop.Setup = "true"
+	attached := make(chan struct{})
+	f := &fakeStages{t: t, steps: []step{
+		func(s runner.Stage) (runner.Result, error) {
+			<-attached
+			s.Log("Read docs/specs/x.md")
+			return runner.Result{Status: runner.StatusDone, Summary: "done, trust me", CostUSD: 0.1}, nil
+		},
+		commits(j, "ok.txt"),
+		reports(runner.StatusDone, "clean"),
+		lands("t\n\nb"),
+	}}
+	var got []string
+	followed := make(chan error)
+	go func() {
+		followed <- j.Feed.Follow(context.Background(), func(e feed.Event) error {
+			if got = append(got, e.Stage+" | "+e.Text); len(got) == 1 {
+				close(attached)
+			}
+			return nil
+		})
+	}()
+	out := Pipeline{Stages: f, Shell: shell(), Publisher: &fakePublisher{url: "https://github.com/me/app/pull/7"}}.Run(context.Background(), j)
+	j.Feed.Close()
+	if err := <-followed; err != nil {
+		t.Fatal(err)
+	}
+	if out.State != store.Done {
+		t.Fatalf("got %+v, want done", out)
+	}
+	want := []string{
+		"implement 1 | start",
+		"implement 1 | Read docs/specs/x.md",
+		"implement 1 | done $0.10",
+		"verify 1 | setup: true",
+		"verify 1 | verify: " + j.Loop.Verify,
+		"verify 1 | fail: verify command exited 1",
+		"verify 1 | │ missing ok.txt",
+		"implement 2 | start",
+		"implement 2 | done $0.10",
+		"verify 2 | setup: true",
+		"verify 2 | verify: " + j.Loop.Verify,
+		"verify 2 | pass: verify command exited 0",
+		"rubric 2 | start",
+		"rubric 2 | done $0.10",
+		"land | start",
+		"land | done $0.10",
+		"publish | draft PR https://github.com/me/app/pull/7",
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("events:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+}
+
+func TestEventsEndABlockedStageWithItsQuestion(t *testing.T) {
+	j := newJob(t, 3)
+	f := &fakeStages{t: t, steps: []step{
+		func(runner.Stage) (runner.Result, error) {
+			return runner.Result{Status: runner.StatusBlocked, Question: "which db?", Summary: "stopped", CostUSD: 0.2}, nil
+		},
+	}}
+	Pipeline{Stages: f, Shell: shell()}.Run(context.Background(), j)
+	j.Feed.Close()
+	var got []string
+	if err := j.Feed.Follow(context.Background(), func(e feed.Event) error { got = append(got, e.Stage+" | "+e.Text); return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"implement 1 | start", "implement 1 | blocked $0.20: which db?"}; !slices.Equal(got, want) {
+		t.Fatalf("events %q, want %q", got, want)
 	}
 }
 
@@ -442,6 +517,7 @@ func newJob(t *testing.T, maxIterations int) Job {
 		Branch:        "loop/x-1",
 		DefaultBranch: "main",
 		Base:          git(t, wt, "rev-parse", "HEAD"),
+		Feed:          feed.New(),
 	}
 }
 

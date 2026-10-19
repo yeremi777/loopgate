@@ -13,7 +13,7 @@ import (
 const fakeClaude = "#!/bin/sh\n" + fakeClaudeBody
 
 const fakeClaudeBody = `prompt=$(cat)
-result() { printf '{"is_error":false,"total_cost_usd":0.1,"structured_output":{"status":"done","summary":"%s"}}\n' "$1"; }
+result() { printf '{"type":"result","is_error":false,"total_cost_usd":0.1,"structured_output":{"status":"done","summary":"%s"}}\n' "$1"; }
 case "$prompt" in
 /implement*) echo ok > ok.txt && git add ok.txt && git -c user.name=t -c user.email=t@example.com commit -q -m ok && result "added ok";;
 /rubric*) result "clean";;

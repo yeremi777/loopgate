@@ -51,11 +51,14 @@ func CredentialDirs(home string) []string {
 }
 
 type Stage struct {
-	Dir           string
-	Prompt        string
+	Dir       string
+	Prompt    string
 	Timeout   time.Duration
 	Network   []string
 	DenyWrite []string
+	// Log, when set, gets one line per tool call and per assistant text
+	// message as the stage makes them; a subagent's lines are indented.
+	Log func(line string)
 }
 
 const resultSchema = `{"type":"object","properties":{` +
@@ -85,7 +88,8 @@ func (r Runner) Run(ctx context.Context, s Stage) (Result, error) {
 	}
 	cmd := r.command(ctx, s.Dir, r.Claude,
 		"-p",
-		"--output-format", "json",
+		"--output-format", "stream-json",
+		"--verbose",
 		"--permission-mode", "auto",
 		"--permission-prompts", "none",
 		"--json-schema", resultSchema,
@@ -96,12 +100,100 @@ func (r Runner) Run(ctx context.Context, s Stage) (Result, error) {
 	)
 	cmd.Env = r.childEnv()
 	cmd.Stdin = strings.NewReader(s.Prompt)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	stream := &streamJSON{log: s.Log}
+	var stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = stream, &stderr
 	if err := runGroup(ctx, cmd); err != nil {
 		return Result{}, fmt.Errorf("claude: %w: %s", err, tail(stderr.String()))
 	}
-	return parseResult(stdout.Bytes())
+	stream.line(stream.buf)
+	if stream.result == nil {
+		return Result{}, fmt.Errorf("claude output has no result line: %s", tail(string(stream.last)))
+	}
+	return parseResult(stream.result)
+}
+
+// streamJSON reads claude's stream-json output one line at a time: it logs
+// each tool call and text message, and keeps the final result line.
+type streamJSON struct {
+	log    func(string)
+	buf    []byte
+	last   []byte
+	result []byte
+}
+
+func (s *streamJSON) Write(p []byte) (int, error) {
+	s.buf = append(s.buf, p...)
+	for {
+		i := bytes.IndexByte(s.buf, '\n')
+		if i < 0 {
+			return len(p), nil
+		}
+		s.line(s.buf[:i])
+		s.buf = append(s.buf[:0], s.buf[i+1:]...)
+	}
+}
+
+func (s *streamJSON) line(data []byte) {
+	if len(bytes.TrimSpace(data)) == 0 {
+		return
+	}
+	s.last = append(s.last[:0], data...)
+	var ev struct {
+		Type    string  `json:"type"`
+		Parent  *string `json:"parent_tool_use_id"`
+		Message struct {
+			Content []struct {
+				Type  string         `json:"type"`
+				Text  string         `json:"text"`
+				Name  string         `json:"name"`
+				Input map[string]any `json:"input"`
+			} `json:"content"`
+		} `json:"message"`
+	}
+	if err := json.Unmarshal(data, &ev); err != nil {
+		return
+	}
+	switch ev.Type {
+	case "result":
+		s.result = bytes.Clone(data)
+	case "assistant":
+		if s.log == nil {
+			return
+		}
+		indent := ""
+		if ev.Parent != nil {
+			indent = "  "
+		}
+		for _, c := range ev.Message.Content {
+			switch {
+			case c.Type == "text" && firstLine(c.Text) != "":
+				s.log(indent + firstLine(c.Text))
+			case c.Type == "tool_use" && c.Name != "StructuredOutput":
+				s.log(indent + strings.TrimSpace(c.Name+" "+toolArg(c.Input)))
+			}
+		}
+	}
+}
+
+// toolArg is the input that says most about a tool call: the file, command,
+// pattern, path, URL, skill or description it names.
+func toolArg(input map[string]any) string {
+	for _, key := range []string{"file_path", "command", "pattern", "path", "url", "skill", "description"} {
+		if v, ok := input[key].(string); ok && firstLine(v) != "" {
+			return firstLine(v)
+		}
+	}
+	return ""
+}
+
+func firstLine(s string) string {
+	for line := range strings.Lines(s) {
+		if line = strings.TrimSpace(line); line != "" {
+			return line
+		}
+	}
+	return ""
 }
 
 func parseResult(data []byte) (Result, error) {
