@@ -101,3 +101,20 @@ func Load(plist string) error {
 func Unload() {
 	_ = exec.Command("launchctl", "bootout", "gui/"+strconv.Itoa(os.Getuid())+"/"+Label).Run()
 }
+
+// ResolvePath returns path with each entry resolved through symlinks, so a
+// version manager's per-shell link does not vanish under loopd, and with
+// each relative or missing entry dropped. A version picked through a link is
+// pinned until the next install.
+func ResolvePath(path string) string {
+	var out []string
+	for _, dir := range filepath.SplitList(path) {
+		if !filepath.IsAbs(dir) {
+			continue
+		}
+		if real, err := filepath.EvalSymlinks(dir); err == nil {
+			out = append(out, real)
+		}
+	}
+	return strings.Join(out, string(filepath.ListSeparator))
+}

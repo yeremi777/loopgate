@@ -212,10 +212,11 @@ func TestInstallStartsTheAgentAndInstallsTheSkillThenUninstallUndoesIt(t *testin
 	calls := filepath.Join(t.TempDir(), "launchctl")
 	fakes := strings.SplitN(e.path, ":", 2)[0]
 	writeExec(t, filepath.Join(fakes, "launchctl"), "#!/bin/sh\necho \"$*\" >> "+calls+"\n[ \"$1\" = bootout ] && exit 3\nexit 0\n")
+	gone := filepath.Join(t.TempDir(), "gone")
 	run := func(args ...string) string {
 		t.Helper()
 		cmd := e.cmd("loopctl", args...)
-		cmd.Env = append(cmd.Env, "HOME="+home)
+		cmd.Env = append(cmd.Env, "HOME="+home, "PATH="+gone+":"+e.path)
 		out, err := cmd.CombinedOutput()
 		if err != nil {
 			t.Fatalf("loopctl %v: %v: %s", args, err, out)
@@ -238,6 +239,13 @@ func TestInstallStartsTheAgentAndInstallsTheSkillThenUninstallUndoesIt(t *testin
 	}
 	if got := strings.TrimSpace(string(args)); got != want {
 		t.Fatalf("agent runs %q, want the loopd next to loopctl", got)
+	}
+	path, err := exec.Command("plutil", "-extract", "EnvironmentVariables.PATH", "raw", plist).Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(path), gone) {
+		t.Fatalf("agent PATH keeps the missing %s: %s", gone, path)
 	}
 	skill := filepath.Join(home, ".claude/skills/loopgate/SKILL.md")
 	if body := readFile(t, skill); !strings.Contains(body, "name: loopgate") {

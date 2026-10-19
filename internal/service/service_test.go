@@ -2,9 +2,11 @@ package service
 
 import (
 	"encoding/json"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -69,5 +71,27 @@ func TestInstallRefusesRelativeOrMissingParts(t *testing.T) {
 		if _, err := Install(t.TempDir(), cfg); err == nil {
 			t.Fatalf("config %+v accepted", cfg)
 		}
+	}
+}
+
+func TestResolvePathFollowsSymlinksAndDropsWhatLaunchdCannotUse(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	real := filepath.Join(root, "node-v20", "bin")
+	plain := filepath.Join(root, "plain")
+	for _, dir := range []string{real, plain} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	shell := filepath.Join(root, "multishell")
+	if err := os.Symlink(filepath.Join(root, "node-v20"), shell); err != nil {
+		t.Fatal(err)
+	}
+	path := strings.Join([]string{filepath.Join(shell, "bin"), filepath.Join(root, "gone"), "", ".", "bin", plain}, ":")
+	if got, want := ResolvePath(path), real+":"+plain; got != want {
+		t.Fatalf("got %q, want %q", got, want)
 	}
 }

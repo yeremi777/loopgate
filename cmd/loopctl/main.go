@@ -202,7 +202,7 @@ func install(home string) error {
 	if err := os.MkdirAll(home, 0o700); err != nil {
 		return err
 	}
-	plist, err := service.Install(agentsDir(user), service.Config{Loopd: loopd, Home: home, Path: os.Getenv("PATH")})
+	plist, err := service.Install(agentsDir(user), service.Config{Loopd: loopd, Home: home, Path: service.ResolvePath(os.Getenv("PATH"))})
 	if err != nil {
 		return err
 	}
