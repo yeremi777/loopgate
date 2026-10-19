@@ -42,7 +42,7 @@ func (d *Daemon) trial(ctx context.Context, loop config.Loop) (err error) {
 	if err != nil {
 		return err
 	}
-	gate, err := verify.Gate(ctx, d.deps.Pipeline.Shell, wt, loop, loop.Bounds.Timeout, guard)
+	gate, err := verify.Gate(ctx, d.deps.Pipeline.Shell, wt, loop, loop.Bounds.Timeout, guard, func(string) {})
 	switch {
 	case errors.Is(ctx.Err(), context.DeadlineExceeded):
 		return fmt.Errorf("trial gate on origin/%s ran past the loop's timeout of %s; loop %s not added: %w", made.DefaultBranch, loop.Bounds.Timeout, loop.Name, err)

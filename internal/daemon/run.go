@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/yeremi777/loopgate/internal/config"
+	"github.com/yeremi777/loopgate/internal/feed"
 	"github.com/yeremi777/loopgate/internal/job"
 	"github.com/yeremi777/loopgate/internal/runner"
 	"github.com/yeremi777/loopgate/internal/store"
@@ -54,11 +55,13 @@ var (
 	ErrStarting       = errors.New("the job is still starting; try again")
 )
 
-// running is the Job in the slot. id and cancel are zero while its worktree is set up.
+// running is the Job in the slot. id, cancel and feed are zero while its
+// worktree is set up.
 type running struct {
 	id        int64
 	loop      string
 	cancel    context.CancelFunc
+	feed      *feed.Feed
 	done      chan struct{}
 	takenOver bool
 	stopped   bool
@@ -195,8 +198,9 @@ func (d *Daemon) release(cur *running) {
 
 func (d *Daemon) launch(cur *running, j job.Job) (store.Job, error) {
 	ctx, cancel := context.WithCancel(d.ctx)
+	j.Feed = feed.New()
 	d.mu.Lock()
-	cur.id, cur.cancel = j.ID, cancel
+	cur.id, cur.cancel, cur.feed = j.ID, cancel, j.Feed
 	d.mu.Unlock()
 	d.jobs.Add(1)
 	go d.finish(ctx, cur, j)
@@ -287,6 +291,7 @@ func (d *Daemon) finish(ctx context.Context, cur *running, j job.Job) {
 	takenOver := cur.takenOver
 	d.current = nil
 	d.mu.Unlock()
+	cur.feed.Close()
 	close(cur.done)
 
 	if !takenOver {

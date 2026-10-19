@@ -22,8 +22,8 @@ type Outcome struct {
 // Gate runs the Loop's setup command, when set, then its verify command in
 // dir, and passes only a clean, committed tree that setup leaves unchanged and
 // whose commands both exit 0. Neither command may write guard, the repository
-// files that loopd's own git trusts.
-func Gate(ctx context.Context, r runner.Runner, dir string, loop config.Loop, timeout time.Duration, guard []string) (Outcome, error) {
+// files that loopd's own git trusts. started gets each command as it starts.
+func Gate(ctx context.Context, r runner.Runner, dir string, loop config.Loop, timeout time.Duration, guard []string, started func(step string)) (Outcome, error) {
 	status, err := runner.Git(ctx, 30*time.Second, dir, "status", "--porcelain")
 	if err != nil {
 		return Outcome{}, err
@@ -37,6 +37,7 @@ func Gate(ctx context.Context, r runner.Runner, dir string, loop config.Loop, ti
 	}
 	var refused string
 	if loop.Setup != "" {
+		started("setup: " + loop.Setup)
 		setup, hosts, err := r.Setup(ctx, dir, loop.Setup, timeout, guard, loop.Network)
 		if hosts != nil {
 			refused = "loopgate refused hosts outside the loop's network list: " + strings.Join(hosts, ", ")
@@ -55,6 +56,7 @@ func Gate(ctx context.Context, r runner.Runner, dir string, loop config.Loop, ti
 			return Outcome{Output: "setup command changed files that are tracked or not ignored:\n" + status + "\nsetup command output:\n" + setup.Output + block(refused)}, nil
 		}
 	}
+	started("verify: " + loop.Verify)
 	res, err := r.Shell(ctx, dir, loop.Verify, timeout, guard)
 	if err != nil {
 		return Outcome{}, fmt.Errorf("verify command: %w%s", err, inline(refused))
