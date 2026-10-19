@@ -84,7 +84,7 @@ func run(args []string) error {
 		if err != nil {
 			return err
 		}
-		_, notTerminal := unix.IoctlGetTermios(int(os.Stdout.Fd()), unix.TIOCGETA)
+		_, notTerminal := unix.IoctlGetWinsize(int(os.Stdout.Fd()), unix.TIOCGWINSZ)
 		printList(loops, jobs, notTerminal == nil && os.Getenv("NO_COLOR") == "")
 		return nil
 	case cmd == "add" && len(rest) == 1:
@@ -434,7 +434,7 @@ func printList(loops []daemon.LoopStatus, jobs []store.Job, color bool) {
 		}
 		fmt.Println(line)
 		if b.checkout != "" {
-			fmt.Println("  checkout  " + b.checkout)
+			fmt.Println("  checkout: " + b.checkout)
 		}
 		if len(b.jobs) == 0 {
 			fmt.Println("  no jobs")
@@ -500,6 +500,10 @@ func home(path string) string {
 	user, err := os.UserHomeDir()
 	if err != nil {
 		return path
+	}
+	user = filepath.Clean(user)
+	if path == user {
+		return "~"
 	}
 	if rel, ok := strings.CutPrefix(path, user+"/"); ok {
 		return "~/" + rel

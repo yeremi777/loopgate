@@ -12,14 +12,19 @@ import (
 	"time"
 )
 
-// askClaude ships a task like fakeClaude, but blocks a task that starts with
-// "ask" on a long question of two lines that carries an escape sequence, and
-// reports an error for a task that starts with "boom".
+// askClaude ships a task like fakeClaude, except by the task's first word:
+// "ask" blocks on a long question of two lines that carries an escape
+// sequence, "hand" blocks on a short one, "boom" reports an error, "tire"
+// reports done without committing, and "slow" takes 5 seconds first.
 const askClaude = `#!/bin/sh
 prompt=$(cat)
+r() { printf '{"type":"result","is_error":false,"total_cost_usd":0.1,"structured_output":%s}\n' "$1"; }
 case "$prompt" in
-/implement\ ask*) printf '%s\n' '{"type":"result","is_error":false,"total_cost_usd":0.1,"structured_output":{"status":"blocked","question":"\u001b[2Jwhich database should the new cache use, postgres in production or sqlite on each machine?\nsecond line","summary":"stopped"}}'; exit 0;;
+/implement\ ask*) r '{"status":"blocked","question":"\u001b[2Jwhich database should the new cache use, postgres in production or sqlite on each machine?\nsecond line","summary":"stopped"}'; exit 0;;
+/implement\ hand*) r '{"status":"blocked","question":"hand it over?","summary":"stopped"}'; exit 0;;
 /implement\ boom*) printf '%s\n' '{"type":"result","is_error":true,"subtype":"error_max_turns"}'; exit 0;;
+/implement\ tire*) r '{"status":"done","summary":"trust me"}'; exit 0;;
+/implement\ slow*) sleep 5;;
 esac
 printf '%s' "$prompt" | {
 ` + fakeClaudeBody + `}
@@ -67,9 +72,9 @@ func TestListShowsEachLoopWithItsJobsAndColorsOnlyATerminal(t *testing.T) {
 	gitIn(t, checkout, "commit", "-q", "--allow-empty", "-m", "base")
 	gitIn(t, checkout, "push", "-q", "origin", "HEAD:main")
 	gitIn(t, checkout, "remote", "set-head", "origin", "main")
-	for name, task := range map[string]string{"deps": "add ok.txt", "ask": "ask which db", "boom": "boom"} {
+	for name, task := range map[string]string{"add": "add ok.txt", "ask": "ask which db", "hand": "hand", "boom": "boom", "tire": "tire", "slow": "slow", "idle": "add ok.txt"} {
 		file := filepath.Join(root, name+".yaml")
-		loop := "name: " + name + "\ncheckout: " + checkout + "\ntrigger:\n  timer: { every: 1h }\ntask: " + task + "\nverify: test -f ok.txt\nbounds: { max_iterations: 2, timeout: 1m }\n"
+		loop := "name: " + name + "\ncheckout: " + checkout + "\ntrigger:\n  timer: { every: 1h }\ntask: " + task + "\nverify: test -f ok.txt\nbounds: { max_iterations: 1, timeout: 1m }\n"
 		if err := os.WriteFile(file, []byte(loop), 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -77,7 +82,7 @@ func TestListShowsEachLoopWithItsJobsAndColorsOnlyATerminal(t *testing.T) {
 	}
 	e.startLoopd()
 
-	for _, run := range [][2]string{{"deps", "done"}, {"ask", "blocked"}, {"boom", "failed"}} {
+	for _, run := range [][2]string{{"add", "done"}, {"ask", "blocked"}, {"hand", "blocked"}, {"boom", "failed"}, {"tire", "exhausted"}} {
 		loop, state := run[0], run[1]
 		id := regexp.MustCompile(`job (\d+) running`).FindStringSubmatch(e.mustLoopctl("run", loop))[1]
 		for deadline := time.Now().Add(30 * time.Second); field(e.mustLoopctl("logs", id), "state") != state; time.Sleep(100 * time.Millisecond) {
@@ -86,28 +91,49 @@ func TestListShowsEachLoopWithItsJobsAndColorsOnlyATerminal(t *testing.T) {
 			}
 		}
 	}
-	e.mustLoopctl("remove", "deps")
+	e.mustLoopctl("takeover", "3")
+	e.mustLoopctl("remove", "add")
+	e.mustLoopctl("run", "slow")
 
 	list := e.cmd("loopctl", "list")
-	list.Env = append(list.Env, "HOME="+root)
+	list.Env = append(list.Env, "HOME="+root+"/")
 	plain, err := list.CombinedOutput()
 	if err != nil {
 		t.Fatalf("list: %v\n%s", err, plain)
 	}
 	want := strings.Join([]string{
+		"add   removed",
+		"  JOB  STATE  WORK             RESULT",
+		"  1    done   task add ok.txt  https://github.com/me/app/pull/9",
+		"",
 		"ask   active  timer",
-		"  checkout  ~/checkout",
+		"  checkout: ~/checkout",
 		"  JOB  STATE    WORK               RESULT",
 		"  2    blocked  task ask which db  �[2Jwhich database should the new cache use, postgres in pr…",
 		"",
 		"boom  active  timer",
-		"  checkout  ~/checkout",
+		"  checkout: ~/checkout",
 		"  JOB  STATE   WORK       RESULT",
-		"  3    failed  task boom  claude reported error: error_max_turns",
+		"  4    failed  task boom  claude reported error: error_max_turns",
 		"",
-		"deps  removed",
-		"  JOB  STATE  WORK             RESULT",
-		"  1    done   task add ok.txt  https://github.com/me/app/pull/9",
+		"hand  active  timer",
+		"  checkout: ~/checkout",
+		"  JOB  STATE   WORK       RESULT",
+		"  3    manual  task hand  taken over",
+		"",
+		"idle  active  timer",
+		"  checkout: ~/checkout",
+		"  no jobs",
+		"",
+		"slow  active  timer",
+		"  checkout: ~/checkout",
+		"  JOB  STATE    WORK       RESULT",
+		"  6    running  task slow",
+		"",
+		"tire  active  timer",
+		"  checkout: ~/checkout",
+		"  JOB  STATE      WORK       RESULT",
+		"  5    exhausted  task tire  1 implement runs did not pass the checks",
 		"",
 	}, "\n")
 	if string(plain) != want {
@@ -126,7 +152,7 @@ func TestListShowsEachLoopWithItsJobsAndColorsOnlyATerminal(t *testing.T) {
 		return strings.TrimPrefix(strings.ReplaceAll(string(out), "\r\n", "\n"), "^D\b\b")
 	}
 	colored := onTerminal()
-	for _, code := range []string{"\x1b[1mask", "\x1b[33mblocked", "\x1b[31mfailed", "\x1b[31mremoved", "\x1b[32mdone", "\x1b[32mactive", "\x1b[2mJOB"} {
+	for _, code := range []string{"\x1b[1mask", "\x1b[33mblocked", "\x1b[31mfailed", "\x1b[31mremoved", "\x1b[32mdone", "\x1b[32mactive", "\x1b[36mrunning", "\x1b[33mmanual", "\x1b[31mexhausted", "\x1b[2mJOB"} {
 		if !strings.Contains(colored, code) {
 			t.Fatalf("list on a terminal lacks %q:\n%q", code, colored)
 		}
