@@ -60,7 +60,7 @@ func Gate(ctx context.Context, r runner.Runner, dir string, loop config.Loop, ti
 		return Outcome{}, fmt.Errorf("verify command: %w%s", err, inline(refused))
 	}
 	if res.ExitCode != 0 {
-		return Outcome{Head: head, Output: res.Output + block(refused)}, nil
+		return Outcome{Head: head, Output: fmt.Sprintf("verify command exited %d:\n%s%s", res.ExitCode, res.Output, block(refused))}, nil
 	}
 	return Outcome{Passed: true, Head: head, Output: res.Output}, nil
 }

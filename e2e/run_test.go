@@ -50,8 +50,8 @@ printf '%s\n' "$@" > `+rec+`/notify
 	if err := os.WriteFile(file, []byte(loop), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	e.load(file)
 	e.startLoopd()
-	e.mustLoopctl("add", file)
 
 	out := e.mustLoopctl("run", "deps")
 	m := regexp.MustCompile(`job (\d+) running on (loop/deps-\S+)`).FindStringSubmatch(out)
@@ -159,8 +159,8 @@ func TestTimerLoopFiresWithoutRun(t *testing.T) {
 	if err := os.WriteFile(file, []byte(loop), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	e.load(file)
 	e.startLoopd()
-	e.mustLoopctl("add", file)
 	for deadline := time.Now().Add(40 * time.Second); time.Now().Before(deadline); time.Sleep(250 * time.Millisecond) {
 		if out, code := e.loopctl("logs", "1"); code == 0 && field(out, "state") == "done" {
 			return

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/yeremi777/loopgate/internal/config"
+	"github.com/yeremi777/loopgate/internal/runner"
 	"github.com/yeremi777/loopgate/internal/store"
 )
 
@@ -41,6 +42,9 @@ type Daemon struct {
 	current *running
 	// next holds each timer Loop's next fire, set when Tick first sees it.
 	next map[string]time.Time
+	// fetching keeps a Job start and a Trial gate from fetching origin into
+	// one checkout at once, which fails on git's ref locks.
+	fetching sync.Mutex
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -69,13 +73,32 @@ func New(home string, st *store.Store, deps Deps) (*Daemon, error) {
 		}
 		loops[loop.Name] = loop
 	}
+	// A trial's worktree outlives only a loopd that was killed during it.
+	if err := os.RemoveAll(filepath.Join(home, "trials")); err != nil {
+		return nil, err
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Daemon{home: home, dir: dir, st: st, loops: loops, deps: deps, next: map[string]time.Time{}, ctx: ctx, cancel: cancel}, nil
 }
 
-func (d *Daemon) Add(data []byte) (config.Loop, error) {
+// Add registers a Loop once its checkout checks and Trial gate pass. Ending
+// ctx, as when loopctl goes away, stops the Trial gate and adds nothing.
+func (d *Daemon) Add(ctx context.Context, data []byte) (config.Loop, error) {
 	loop, err := config.Parse(data)
 	if err != nil {
+		return config.Loop{}, err
+	}
+	if err := d.exists(loop.Name); err != nil {
+		return config.Loop{}, err
+	}
+	if err := d.admit(); err != nil {
+		return config.Loop{}, err
+	}
+	defer d.jobs.Done()
+	if err := checkCheckout(ctx, loop); err != nil {
+		return config.Loop{}, err
+	}
+	if err := d.trial(ctx, loop); err != nil {
 		return config.Loop{}, err
 	}
 	d.mu.Lock()
@@ -95,6 +118,34 @@ func (d *Daemon) Add(data []byte) (config.Loop, error) {
 	}
 	d.loops[loop.Name] = loop
 	return loop, nil
+}
+
+// exists fails with ErrLoopExists when name is taken, before a slow check
+// that Add would otherwise waste; Add checks again under the lock.
+func (d *Daemon) exists(name string) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if _, ok := d.loops[name]; ok {
+		return fmt.Errorf("%s: %w", name, ErrLoopExists)
+	}
+	return nil
+}
+
+// admit counts an Add in the work that Close waits for, unless Close began.
+func (d *Daemon) admit() error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if err := d.ctx.Err(); err != nil {
+		return fmt.Errorf("loopd is stopping: %w", err)
+	}
+	d.jobs.Add(1)
+	return nil
+}
+
+func (d *Daemon) createWorktree(ctx context.Context, w runner.Worktree) (runner.Created, error) {
+	d.fetching.Lock()
+	defer d.fetching.Unlock()
+	return runner.CreateWorktree(ctx, w)
 }
 
 func (d *Daemon) Remove(name string) error {

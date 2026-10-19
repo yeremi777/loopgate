@@ -222,7 +222,7 @@ func (d *Daemon) start(loop config.Loop, work job.Work) (job.Job, error) {
 	if s, ok := work.(job.Spec); ok {
 		wt.Spec = s.Path
 	}
-	made, err := runner.CreateWorktree(d.ctx, wt)
+	made, err := d.createWorktree(d.ctx, wt)
 	if err != nil {
 		return job.Job{}, d.fail(created.ID, err)
 	}
@@ -364,7 +364,9 @@ func (d *Daemon) jobDir(id int64) string {
 
 // Close stops the running Job and waits until its outcome is stored.
 func (d *Daemon) Close() {
+	d.mu.Lock()
 	d.cancel()
+	d.mu.Unlock()
 	d.jobs.Wait()
 }
 

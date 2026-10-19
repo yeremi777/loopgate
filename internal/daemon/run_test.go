@@ -4,13 +4,13 @@ import (
 	"context"
 	"errors"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/yeremi777/loopgate/internal/gittest"
 	"github.com/yeremi777/loopgate/internal/job"
 	"github.com/yeremi777/loopgate/internal/runner"
 	"github.com/yeremi777/loopgate/internal/store"
@@ -123,18 +123,8 @@ type runEnv struct {
 
 func newRunEnv(t *testing.T) *runEnv {
 	t.Helper()
-	root := t.TempDir()
-	origin := filepath.Join(root, "origin.git")
-	gitRun(t, root, "init", "-q", "--bare", "-b", "main", origin)
-	seed := filepath.Join(root, "seed")
-	gitRun(t, root, "clone", "-q", origin, seed)
-	gitRun(t, seed, "checkout", "-q", "-b", "main")
-	gitRun(t, seed, "commit", "-q", "--allow-empty", "-m", "base")
-	gitRun(t, seed, "push", "-q", "origin", "main")
-	checkout := filepath.Join(root, "checkout")
-	gitRun(t, root, "clone", "-q", origin, checkout)
-
-	home := filepath.Join(root, "home")
+	checkout := gittest.Checkout(t, "https://github.com/me/app.git")
+	home := filepath.Join(t.TempDir(), "home")
 	st, err := store.Open(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -142,6 +132,14 @@ func newRunEnv(t *testing.T) *runEnv {
 	t.Cleanup(func() { _ = st.Close() })
 	r := &runEnv{st: st, checkout: checkout, stages: &scriptedStages{gate: make(chan struct{})},
 		issues: &fakeIssues{comments: map[int][]string{}, labels: map[int]string{}}}
+	// The deps verify command fails on main until a Job adds ok.txt, so these
+	// Loops are loaded as files, which loopd reads at start without a trial gate.
+	for name, loop := range map[string]string{
+		"deps":   "name: deps\ncheckout: " + checkout + "\ntrigger:\n  timer: { every: 1h }\ntask: bump go dependencies\nverify: test -f ok.txt || { echo missing ok.txt; exit 1; }\nbounds: { max_iterations: 3, timeout: 1m }\n",
+		"issues": "name: issues\ncheckout: " + checkout + "\ntrigger:\n  github: { repo: me/app, label: agent, every: 10m }\nverify: true\nbounds: { max_iterations: 3, timeout: 1m }\n",
+	} {
+		writeFile(filepath.Join(home, "loops", name+".yaml"), loop)
+	}
 	shell := runner.Runner{Environ: os.Environ(), Cache: os.TempDir()}
 	d, err := New(home, st, Deps{
 		Pipeline: job.Pipeline{Stages: r.stages, Shell: shell, Publisher: fakePublisher{}},
@@ -157,14 +155,6 @@ func newRunEnv(t *testing.T) *runEnv {
 	}
 	t.Cleanup(d.Close)
 	r.d = d
-	for _, loop := range []string{
-		"name: deps\ncheckout: " + checkout + "\ntrigger:\n  timer: { every: 1h }\ntask: bump go dependencies\nverify: test -f ok.txt || { echo missing ok.txt; exit 1; }\nbounds: { max_iterations: 3, timeout: 1m }\n",
-		"name: issues\ncheckout: " + checkout + "\ntrigger:\n  github: { repo: me/app, label: agent, every: 10m }\nverify: true\nbounds: { max_iterations: 3, timeout: 1m }\n",
-	} {
-		if _, err := d.Add([]byte(loop)); err != nil {
-			t.Fatal(err)
-		}
-	}
 	return r
 }
 
@@ -197,8 +187,8 @@ type scriptedStages struct {
 	gate       chan struct{}
 	failFirst  bool
 	blockFirst bool
-	mu        sync.Mutex
-	prompts   []string
+	mu         sync.Mutex
+	prompts    []string
 }
 
 func (s *scriptedStages) Run(ctx context.Context, st runner.Stage) (runner.Result, error) {
@@ -248,15 +238,6 @@ type fakePublisher struct{}
 
 func (fakePublisher) Publish(context.Context, string, string, string, job.PR) (string, error) {
 	return "https://github.com/me/app/pull/1", nil
-}
-
-func gitRun(t *testing.T, dir string, args ...string) {
-	t.Helper()
-	cmd := exec.Command("git", append([]string{"-c", "user.name=t", "-c", "user.email=t@example.com"}, args...)...)
-	cmd.Dir = dir
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("git %v: %v: %s", args, err, out)
-	}
 }
 
 func writeFile(path, content string) {

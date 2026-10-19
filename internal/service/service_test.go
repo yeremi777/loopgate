@@ -2,9 +2,11 @@ package service
 
 import (
 	"encoding/json"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -69,5 +71,49 @@ func TestInstallRefusesRelativeOrMissingParts(t *testing.T) {
 		if _, err := Install(t.TempDir(), cfg); err == nil {
 			t.Fatalf("config %+v accepted", cfg)
 		}
+	}
+}
+
+func TestResolvePathCollapsesOneHopOfALinkToALinkAndDropsWhatLaunchdCannotUse(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	version := filepath.Join(root, "node-versions", "v20")
+	plain := filepath.Join(root, "plain")
+	for _, dir := range []string{filepath.Join(version, "bin"), plain} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	alias := filepath.Join(root, "aliases-default")
+	shell := filepath.Join(root, "multishell")
+	opt := filepath.Join(root, "opt-node")
+	generation := filepath.Join(root, "profile-57-link")
+	profile := filepath.Join(root, "profile")
+	nix := filepath.Join(root, "nix-profile")
+	for link, target := range map[string]string{
+		alias:      version,
+		shell:      alias,
+		opt:        "node-versions/v20",
+		generation: version,
+		profile:    "profile-57-link",
+		nix:        "profile",
+	} {
+		if err := os.Symlink(target, link); err != nil {
+			t.Fatal(err)
+		}
+	}
+	path := strings.Join([]string{
+		filepath.Join(shell, "bin"),
+		filepath.Join(opt, "bin"),
+		filepath.Join(nix, "bin"),
+		filepath.Join(root, "gone"),
+		"", ".", "bin",
+		plain,
+	}, ":")
+	want := strings.Join([]string{filepath.Join(alias, "bin"), filepath.Join(opt, "bin"), filepath.Join(profile, "bin"), plain}, ":")
+	if got := ResolvePath(path); got != want {
+		t.Fatalf("got %q, want %q", got, want)
 	}
 }

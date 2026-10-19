@@ -79,9 +79,9 @@ loopctl install
 
 From a clone, run `go install ./cmd/...` and `loopctl install` from its root instead.
 
-`loopctl install` starts `loopd` now and at every login with launchd, restarts it after a crash, and adds the loopgate skill to `~/.claude/skills/loopgate`. Run it again after an upgrade; it replaces the loaded copy. `loopctl uninstall` stops `loopd` and removes the agent and the skill; your loops and jobs in `~/.loopd` stay.
+`loopctl install` starts `loopd` now and at every login with launchd, restarts it after a crash, and adds the loopgate skill to `~/.claude/skills/loopgate`. It prints where it found `claude`, `gh`, `git`, `node` and `go`, then waits until `loopd` answers; when `loopd` cannot start, as when `gh` is not logged in, install fails with the error `loopd` logged. Fix the cause and run it again. Run it again after an upgrade; it replaces the loaded copy. `loopctl uninstall` stops `loopd` and removes the agent and the skill; your loops and jobs in `~/.loopd` stay.
 
-**3. Check it:** `loopctl version` prints the installed version, and `loopctl list` prints a table with only its header row. If it says `loopd not running`, read `~/.loopd/loopd.log`.
+**3. Check it:** `loopctl version` prints the installed version, and `loopctl list` prints a table with only its header row. If it later says `loopd not running`, read `~/.loopd/loopd.log`.
 
 To upgrade, run the same `go install …@latest` and `loopctl install` again.
 
@@ -91,7 +91,7 @@ To remove loopgate, run `loopctl uninstall`, then delete the binaries with `rm "
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `PATH` | your shell's | `loopctl install` hands it to `loopd`, which finds `claude`, `gh` and `git` through it. After you move any of them, run `loopctl install` again. |
+| `PATH` | your shell's | `loopctl install` hands it to `loopd` with each missing or relative entry dropped, and each link to a link replaced by its target, so fnm's per-shell directory becomes its stable `aliases/default` and follows `fnm default`; run install from a shell where `fnm use` has not switched versions. Homebrew's `opt` links stay as they are and follow upgrades. After you move `claude`, `gh` or `git`, run `loopctl install` again. |
 | `LOOPD_HOME` | `~/.loopd` | Where loops, jobs, worktrees, caches and the log live. Set it before `loopctl install`, and in every shell that runs `loopctl`. Keep it short: its socket path must stay under 104 bytes. |
 
 No `.env` file and no token are needed: Claude Code and `gh` keep their own logins in your keychain.
@@ -100,7 +100,10 @@ No `.env` file and no token are needed: Claude Code and `gh` keep their own logi
 
 ## Loops
 
-A loop is one YAML file. `loopctl add <file>` validates it and copies it to `~/.loopd/loops/`.
+A loop is one YAML file. `loopctl add <file>` validates it, checks the checkout, runs the loop's trial gate, and only then copies it to `~/.loopd/loops/`:
+
+- The `checkout` must be the top level of a clone with `origin/HEAD` set; `git -C <checkout> remote set-head origin --auto` sets it. A GitHub loop's `repo` must be the repo `origin` points at.
+- The trial gate runs the loop's `setup` and `verify` commands on a fresh worktree of `origin`'s default branch, sandboxed as in a job and within `bounds.timeout`. When it fails, add prints its output, and adds nothing; when it runs past the timeout, add says so. Both name each host outside `network` that setup tried to reach. Add each such host to `network`, or change `setup` so it does not reach it, and run `loopctl add` again. A loop whose verify command fails on the default branch would fail every job, so fix the branch first.
 
 ```yaml
 name: fix-issues                     # lowercase letters, digits, dashes

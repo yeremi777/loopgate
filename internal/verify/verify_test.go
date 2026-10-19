@@ -36,6 +36,16 @@ func TestGateFailsWhenCommandFails(t *testing.T) {
 	}
 }
 
+func TestGateNamesTheExitCodeOfASilentVerifyCommand(t *testing.T) {
+	out, err := Gate(context.Background(), shell(), newRepo(t), config.Loop{Verify: "exit 3"}, time.Minute, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Passed || !strings.Contains(out.Output, "verify command exited 3") {
+		t.Fatalf("got %+v, want failed naming exit 3", out)
+	}
+}
+
 func TestGateRefusesUncommittedWorkWithoutRunningCommand(t *testing.T) {
 	for name, dirty := range map[string]string{"modified": "README", "untracked": "new.go"} {
 		t.Run(name, func(t *testing.T) {

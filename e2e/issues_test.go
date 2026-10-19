@@ -37,8 +37,8 @@ esac
 	if err := os.WriteFile(file, []byte(loop), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	e.load(file)
 	e.startLoopd()
-	e.mustLoopctl("add", file)
 
 	comment := filepath.Join(rec, "comment.5")
 	for deadline := time.Now().Add(45 * time.Second); time.Now().Before(deadline); time.Sleep(250 * time.Millisecond) {

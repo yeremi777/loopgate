@@ -11,6 +11,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/yeremi777/loopgate/internal/gittest"
 )
 
 var bin string
@@ -31,14 +33,9 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-const fixLoop = `
-name: fix
-checkout: /src/app
-trigger:
-  github: { repo: me/app, label: agent, every: 10m }
-verify: go test ./...
-bounds: { max_iterations: 5, timeout: 20m }
-`
+func fixLoop(checkout string) string {
+	return "name: fix\ncheckout: " + checkout + "\ntrigger:\n  github: { repo: me/app, label: agent, every: 10m }\nverify: \"true\"\nbounds: { max_iterations: 5, timeout: 20m }\n"
+}
 
 func TestLoopctlWithoutLoopd(t *testing.T) {
 	env := newEnv(t, "exit 0")
@@ -62,7 +59,7 @@ func TestLoopdServesLoopctlAndKeepsStateAcrossRestart(t *testing.T) {
 	loopd := env.startLoopd()
 
 	file := filepath.Join(t.TempDir(), "fix.yaml")
-	if err := os.WriteFile(file, []byte(fixLoop), 0o600); err != nil {
+	if err := os.WriteFile(file, []byte(fixLoop(gittest.Checkout(t, "https://github.com/me/app.git"))), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	env.mustLoopctl("add", file)
@@ -85,6 +82,36 @@ func TestLoopdServesLoopctlAndKeepsStateAcrossRestart(t *testing.T) {
 	env.startLoopd()
 	if out := env.mustLoopctl("list"); !hasRow(out, "fix", "paused") {
 		t.Fatalf("list after restart: %q", out)
+	}
+}
+
+func TestAddRunsTheTrialGateAndRefusesARedOne(t *testing.T) {
+	env := newEnv(t, "exit 0")
+	env.startLoopd()
+	checkout := gittest.Checkout(t, "https://github.com/me/app.git")
+	write := func(verify string) string {
+		file := filepath.Join(t.TempDir(), "fix.yaml")
+		loop := strings.Replace(fixLoop(checkout), `verify: "true"`, "verify: "+verify, 1)
+		if err := os.WriteFile(file, []byte(loop), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return file
+	}
+
+	out, code := env.loopctl("add", write("echo main is red; exit 1"))
+	if code == 0 || !strings.Contains(out, "main is red") || !strings.Contains(out, "not added") {
+		t.Fatalf("red add: exit %d, output %q", code, out)
+	}
+	if out := env.mustLoopctl("list"); hasRow(out, "fix", "active") {
+		t.Fatalf("red loop listed: %q", out)
+	}
+
+	out = env.mustLoopctl("add", write("echo main is green"))
+	if !strings.Contains(out, "added fix") {
+		t.Fatalf("green add output %q", out)
+	}
+	if out := env.mustLoopctl("list"); !hasRow(out, "fix", "active") {
+		t.Fatalf("green loop not listed: %q", out)
 	}
 }
 
@@ -134,6 +161,23 @@ func (e env) mustLoopctl(args ...string) string {
 	return out
 }
 
+// load puts a Loop file where loopd reads it at start, for a Loop whose
+// verify command fails on main until a Job runs, which add would refuse.
+func (e env) load(file string) {
+	e.t.Helper()
+	data, err := os.ReadFile(file)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	name := strings.TrimSuffix(filepath.Base(file), ".yaml")
+	if err := os.MkdirAll(filepath.Join(e.home, "loops"), 0o700); err != nil {
+		e.t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(e.home, "loops", name+".yaml"), data, 0o600); err != nil {
+		e.t.Fatal(err)
+	}
+}
+
 func (e env) startLoopd() *exec.Cmd {
 	e.t.Helper()
 	cmd := e.cmd("loopd")
@@ -161,17 +205,15 @@ func hasRow(out, name, state string) bool {
 	return false
 }
 
-
 func TestInstallStartsTheAgentAndInstallsTheSkillThenUninstallUndoesIt(t *testing.T) {
 	e := newEnv(t, "exit 0")
 	home := t.TempDir()
-	calls := filepath.Join(t.TempDir(), "launchctl")
-	fakes := strings.SplitN(e.path, ":", 2)[0]
-	writeExec(t, filepath.Join(fakes, "launchctl"), "#!/bin/sh\necho \"$*\" >> "+calls+"\n[ \"$1\" = bootout ] && exit 3\nexit 0\n")
+	calls := fakeLaunchd(t, e)
+	gone := filepath.Join(t.TempDir(), "gone")
 	run := func(args ...string) string {
 		t.Helper()
 		cmd := e.cmd("loopctl", args...)
-		cmd.Env = append(cmd.Env, "HOME="+home)
+		cmd.Env = append(cmd.Env, "HOME="+home, "PATH="+gone+":"+e.path)
 		out, err := cmd.CombinedOutput()
 		if err != nil {
 			t.Fatalf("loopctl %v: %v: %s", args, err, out)
@@ -179,7 +221,11 @@ func TestInstallStartsTheAgentAndInstallsTheSkillThenUninstallUndoesIt(t *testin
 		return string(out)
 	}
 
-	run("install")
+	out := run("install")
+	fakes := strings.SplitN(e.path, ":", 2)[0]
+	if !strings.Contains(out, filepath.Join(fakes, "gh")) || !strings.Contains(out, "loopd answers") {
+		t.Fatalf("install output %q; want where gh resolved and that loopd answers", out)
+	}
 	plist := filepath.Join(home, "Library/LaunchAgents/loopgate.loopd.plist")
 	if lint, err := exec.Command("plutil", "-lint", plist).CombinedOutput(); err != nil {
 		t.Fatalf("plutil -lint: %v: %s", err, lint)
@@ -194,6 +240,13 @@ func TestInstallStartsTheAgentAndInstallsTheSkillThenUninstallUndoesIt(t *testin
 	}
 	if got := strings.TrimSpace(string(args)); got != want {
 		t.Fatalf("agent runs %q, want the loopd next to loopctl", got)
+	}
+	path, err := exec.Command("plutil", "-extract", "EnvironmentVariables.PATH", "raw", plist).Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(path), gone) {
+		t.Fatalf("agent PATH keeps the missing %s: %s", gone, path)
 	}
 	skill := filepath.Join(home, ".claude/skills/loopgate/SKILL.md")
 	if body := readFile(t, skill); !strings.Contains(body, "name: loopgate") {
@@ -210,6 +263,50 @@ func TestInstallStartsTheAgentAndInstallsTheSkillThenUninstallUndoesIt(t *testin
 			t.Fatalf("%s still there after uninstall", gone)
 		}
 	}
+}
+
+func TestInstallFailsWithLoopdsErrorWhenLoopdCannotStart(t *testing.T) {
+	e := newEnv(t, "exit 1")
+	fakeLaunchd(t, e)
+	cmd := e.cmd("loopctl", "install")
+	cmd.Env = append(cmd.Env, "HOME="+t.TempDir())
+	start := time.Now()
+	out, err := cmd.CombinedOutput()
+	if err == nil || !strings.Contains(string(out), "gh auth login") {
+		t.Fatalf("err %v, output %q; want failure naming gh auth login", err, out)
+	}
+	if took := time.Since(start); took > 10*time.Second {
+		t.Fatalf("install took %s to see loopd's error", took)
+	}
+}
+
+// fakeLaunchd puts a launchctl on e's PATH that records its calls, starts the
+// plist's program with the plist's env and log as launchd does on bootstrap,
+// and stops it on bootout. It also adds a claude for loopd to find.
+func fakeLaunchd(t *testing.T, e env) (calls string) {
+	t.Helper()
+	dir := t.TempDir()
+	calls, pid := filepath.Join(dir, "calls"), filepath.Join(dir, "pid")
+	fakes := strings.SplitN(e.path, ":", 2)[0]
+	writeExec(t, filepath.Join(fakes, "claude"), "#!/bin/sh\nexit 0\n")
+	writeExec(t, filepath.Join(fakes, "launchctl"), `#!/bin/sh
+echo "$*" >> `+calls+`
+case "$1" in
+bootout) [ -f `+pid+` ] && kill $(cat `+pid+`) && rm `+pid+`; exit 3;;
+bootstrap)
+	plist=$3
+	x() { plutil -extract "$1" raw "$plist"; }
+	LOOPD_HOME=$(x EnvironmentVariables.LOOPD_HOME) PATH=$(x EnvironmentVariables.PATH) "$(x ProgramArguments.0)" >> "$(x StandardErrorPath)" 2>&1 &
+	echo $! > `+pid+`;;
+esac
+exit 0
+`)
+	t.Cleanup(func() {
+		if data, err := os.ReadFile(pid); err == nil {
+			_ = exec.Command("kill", strings.TrimSpace(string(data))).Run()
+		}
+	})
+	return calls
 }
 
 func TestHelpExitsZeroAndExplainsStop(t *testing.T) {
