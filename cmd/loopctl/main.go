@@ -26,7 +26,7 @@ usage:
   loopctl run <name> [--spec <path>]   start a job now on --spec, or a timer loop's own task or spec
   loopctl stop <name>                  end the loop's running job; the loop stays
   loopctl logs <job>                   show a job's state, branch, PR, cost and progress
-  loopctl takeover <job>               stop a job and hand its worktree to you
+  loopctl takeover <job>               take a job, stopping it if it runs, and hand its worktree to you
   loopctl handback <job>               give a taken-over job back to its loop
   loopctl requeue <name> <issue>       let a github loop run an issue again
   loopctl install-service              start loopd at login with launchd`

@@ -1,8 +1,8 @@
 # loopgate
 
-loopgate runs Claude Code on your work while you are away, checks the result with your own verify command, and stops at a draft pull request. **It never merges, never force-pushes, and never pushes to your default branch. Every change waits for a human to review the draft PR.**
+loopgate runs Claude Code on your work while you are away, gates the result on your own verify command, and stops at a draft pull request. **It never merges, never force-pushes, and never pushes to your default branch. Every change waits for a human to review the draft PR.**
 
-It is the outer loop around a Claude Code harness you already have: your `CLAUDE.md`, skills and hooks run every stage. loopgate decides when a job starts, gives each job its own git worktree, gates each attempt, retries within bounds, and ships the draft PR. It runs locally on macOS.
+It is the outer loop around a Claude Code harness you already have: your `CLAUDE.md`, skills and hooks run every stage. loopgate decides when a job starts, gives each job its own git worktree, gates each implement run, retries within bounds, and ships the draft PR. It runs locally on macOS.
 
 ## How a job runs
 
@@ -19,7 +19,7 @@ trigger: a labeled GitHub issue | a timer | loopctl run --spec
   -> macOS notification, and a comment on the issue
 ```
 
-Pass or fail comes only from your verify command's exit code, never from the model's claim. Each stage is a fresh `claude -p` session; what earlier attempts learned reaches the next one through a progress log.
+Pass or fail comes only from your verify command's exit code, never from the model's claim. Each stage is a fresh `claude -p` session; what earlier implement runs learned reaches the next one through a progress log.
 
 ## Requirements
 
@@ -80,7 +80,7 @@ A timer loop replaces `github` with `timer: { every: 6h }` or `timer: { cron: "0
 
 One job runs at a time. A job ends `done` with a draft PR, `blocked` with a question, `exhausted` when its bounds run out, `failed`, or `manual` after a takeover. A job from an issue answers on the issue: the PR link, or the blocking question with the `needs-drill` label.
 
-The draft PR opens with loopgate's report: the commit that passed the gate and the review, the changed tests, the cost, and every Flag: a choice the agent made on its own, for you to accept or reject.
+The draft PR opens with loopgate's report: the commit that passed the gate and the review, the changed tests, the cost, drill's plan, and the final implement run's summary, which lists its Flags: choices the Job made on its own, for you to accept or reject.
 
 ### From a Claude Code session
 
@@ -102,20 +102,20 @@ Each stage is a fresh `claude -p` session that loads your user-level settings an
 | drill (issues) | `/drill` with the issue fenced as data | a committed `docs/specs/issue-<n>.md`, or a one-sentence plan as its summary |
 | implement | `/implement <spec path or plan>` | every change committed; a summary listing each Flag |
 | rubric | `/rubric defect pass, steps 1 to 3 only, on the diff … against commit <base>` | no edits; `revise` with the act-on findings, or `done` |
-| land | `/land PR, keep spec <path>` | Markdown-only commits; the PR title, a blank line and the body as its summary |
+| land | `/land PR`, or `/land PR, keep spec <path>` when the work is a spec | Markdown-only commits; the PR title, a blank line and the body as its summary |
 
 Summaries follow your `tldr` skill.
 
 ## Safety
 
 - No stage can reach GitHub. Stages run in Claude Code's sandbox with no unsandboxed escape, network limited to the loop's `network` list, no MCP servers, and deny rules on commands that start with `gh`, `git push` or `git merge`. `loopd` alone pushes, without force, and only opens draft PRs.
-- The verify command runs code the model wrote, so it runs under macOS Seatbelt: no network but localhost, no keychain and no SSH agent (so no GitHub credentials), and writes only to the worktree, `~/.loopd/cache` and `TMPDIR`. Go modules come from your own module cache first, then from the stages' downloads.
+- The verify command runs code the model wrote, so it runs under macOS Seatbelt: no network but localhost, no keychain and no SSH agent (so no GitHub credentials), and writes only to the worktree, `~/.loopd/cache` and `TMPDIR`. The verify command cannot write the worktree's `.git` pointer either. Go modules come from the stages' downloads first, then from your own module cache.
 - Stages and the verify command cannot read `~/.ssh`, `~/.aws`, `~/.config/gh`, `~/.gnupg`, `~/.netrc`, `~/.npmrc`, `~/.docker`, `~/.kube` or `~/Library/Keychains`. Stages cannot write the repository's git config, hooks or the worktree's `.git` pointer, and `loopd` runs its own git with hooks and fsmonitor off.
 - After every stage, a change to a protected path, committed or not, ignored files included, blocks the job before the next stage starts.
-- `land` may change unprotected Markdown only. Any other change after the gate, a rename, or a rewrite of the gated commit fails the job before anything is pushed.
+- `land` may change unprotected Markdown only. Any change after the gate to a file that is not Markdown (a rename counts as removing one path and adding another), or a rewrite of the gated commit, fails the job before anything is pushed.
 - Issue text reaches the model as fenced, untrusted data. It cannot change the verify command, bounds, protected paths, or stages.
 - Stages get an allowlisted environment; your other variables stay in `loopd`. Every stage and verify run is its own process group, which is killed on timeout, stop, or takeover.
-- A label starts an issue job, and adding a label takes triage access to the repo. A label that an issue template adds lives in `.github/`, which is protected.
+- A label starts an issue job. Adding a label takes triage access, but an issue template can add a label for anyone who opens an issue: do not give a loop a label that a template adds.
 
 ## License
 
