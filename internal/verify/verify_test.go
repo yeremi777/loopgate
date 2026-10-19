@@ -72,6 +72,18 @@ func TestGateRunsSetupBeforeTheVerifyCommand(t *testing.T) {
 	}
 }
 
+func TestGateLetsSetupReachTheLoopsNetwork(t *testing.T) {
+	repo := newRepo(t)
+	loop := config.Loop{Setup: "curl -s -m 5 -o /dev/null https://example.com/; exit 1", Verify: "true", Network: []string{"example.com"}}
+	out, err := Gate(context.Background(), shell(), repo, loop, time.Minute, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out.Output, "refused") {
+		t.Fatalf("setup was refused a network domain:\n%s", out.Output)
+	}
+}
+
 func TestGateFailsOnSetupThatFailsOrChangesTheTree(t *testing.T) {
 	cases := map[string]struct{ setup, want string }{
 		"exits non-zero":    {"echo 'npm error E404'; curl -s -m 5 https://example.com/; exit 1", "example.com"},
