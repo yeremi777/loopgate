@@ -225,16 +225,26 @@ func TestHelpExitsZeroAndExplainsStop(t *testing.T) {
 	}
 }
 
-func TestVersionNamesTheCommitItWasBuiltFrom(t *testing.T) {
+// Go stamps the tag on a tagged commit and a pseudo-version naming the
+// commit otherwise; loopctl prints whichever it got.
+func TestVersionPrintsTheVersionGoStamped(t *testing.T) {
 	e := newEnv(t, "exit 0")
-	head, err := exec.Command("git", "rev-parse", "--short=12", "HEAD").Output()
+	mod, err := exec.Command("go", "version", "-m", filepath.Join(bin, "loopctl")).Output()
 	if err != nil {
 		t.Fatal(err)
 	}
+	var stamped string
+	for _, line := range strings.Split(string(mod), "\n") {
+		if f := strings.Fields(line); len(f) >= 3 && f[0] == "mod" {
+			stamped = f[2]
+		}
+	}
+	if !strings.HasPrefix(stamped, "v") {
+		t.Fatalf("go stamped no version into loopctl:\n%s", mod)
+	}
 	for _, arg := range []string{"version", "--version"} {
-		out, code := e.loopctl(arg)
-		if code != 0 || !strings.HasPrefix(out, "loopgate v") || !strings.Contains(out, strings.TrimSpace(string(head))) {
-			t.Fatalf("loopctl %s: exit %d, %q; want a version naming commit %s", arg, code, out, head)
+		if out, code := e.loopctl(arg); code != 0 || out != "loopgate "+stamped+"\n" {
+			t.Fatalf("loopctl %s: exit %d, %q; want %q", arg, code, out, "loopgate "+stamped+"\n")
 		}
 	}
 }
