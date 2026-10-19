@@ -36,6 +36,15 @@ loopctl install-service
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/loopgate.loopd.plist
 ```
 
+From a clone, run the same steps from its root, and link the Claude Code skill:
+
+```sh
+go install ./cmd/...
+loopctl install-service
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/loopgate.loopd.plist
+ln -s "$PWD/skills/loopgate" ~/.claude/skills/loopgate
+```
+
 `install-service` writes a launchd agent that starts `loopd` at login with your current `PATH`, and restarts it after a crash. Its log is `~/.loopd/loopd.log`. After `PATH` changes, run it again, then `launchctl bootout gui/$(id -u)/loopgate.loopd` and bootstrap again. To remove it: bootout, then delete the plist.
 
 `loopd` only runs while your Mac is awake. A timer fire missed during sleep runs once on wake; further missed fires are dropped.
