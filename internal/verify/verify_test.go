@@ -2,6 +2,7 @@ package verify
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -87,8 +88,8 @@ func TestGateLetsSetupReachTheLoopsNetwork(t *testing.T) {
 func TestGateFailsOnSetupThatFailsOrChangesTheTree(t *testing.T) {
 	cases := map[string]struct{ setup, want string }{
 		"exits non-zero":    {"echo 'npm error E404'; curl -s -m 5 https://example.com/; exit 1", "example.com"},
-		"changes a tracked": {"echo v2 > README", "README"},
-		"leaves untracked":  {"echo x > package-lock.json", "package-lock.json"},
+		"changes a tracked": {"echo v2 > README; echo rewrote-readme", "rewrote-readme"},
+		"leaves untracked":  {"echo x > package-lock.json; curl -s -m 5 https://example.com/", "example.com"},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -105,6 +106,29 @@ func TestGateFailsOnSetupThatFailsOrChangesTheTree(t *testing.T) {
 				t.Fatal("verify command ran after a failed setup")
 			}
 		})
+	}
+}
+
+// A setup that swallows a refused download passes, but verify then fails
+// for want of it, and the output must say which host was refused.
+func TestGateNamesRefusedHostsWhenVerifyFailsAfterSetup(t *testing.T) {
+	repo := newRepo(t)
+	loop := config.Loop{Setup: "curl -s -m 5 https://example.com/ || true", Verify: "echo 'module not found'; exit 1"}
+	out, err := Gate(context.Background(), shell(), repo, loop, time.Minute, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Passed || !strings.Contains(out.Output, "module not found") || !strings.Contains(out.Output, "example.com") {
+		t.Fatalf("got %+v, want failed naming the verify error and example.com", out)
+	}
+}
+
+func TestGateNamesRefusedHostsWhenSetupTimesOut(t *testing.T) {
+	repo := newRepo(t)
+	loop := config.Loop{Setup: "curl -s -m 5 https://example.com/; sleep 60", Verify: "true"}
+	_, err := Gate(context.Background(), shell(), repo, loop, 3*time.Second, nil)
+	if !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "example.com") {
+		t.Fatalf("got %v, want a deadline error naming example.com", err)
 	}
 }
 

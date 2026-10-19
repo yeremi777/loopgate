@@ -29,23 +29,15 @@ func (r Runner) Shell(ctx context.Context, dir, script string, timeout time.Dura
 
 // Setup runs script as Shell does, because it runs code the model can change,
 // and gives it network only through a proxy that reaches the network domains.
-// The output ends with the hosts the proxy refused.
-func (r Runner) Setup(ctx context.Context, dir, script string, timeout time.Duration, denyWrite, network []string) (ShellResult, error) {
+// It returns the hosts the proxy refused, also when script could not finish.
+func (r Runner) Setup(ctx context.Context, dir, script string, timeout time.Duration, denyWrite, network []string) (ShellResult, []string, error) {
 	p, err := startProxy(network, (&net.Dialer{}).DialContext)
 	if err != nil {
-		return ShellResult{}, fmt.Errorf("setup proxy: %w", err)
+		return ShellResult{}, nil, fmt.Errorf("setup proxy: %w", err)
 	}
 	url := "http://" + p.addr()
 	res, err := r.sandboxed(ctx, dir, script, timeout, denyWrite, "HTTPS_PROXY="+url, "HTTP_PROXY="+url, "https_proxy="+url, "http_proxy="+url)
-	refused := p.close()
-	if err != nil || refused == nil {
-		return res, err
-	}
-	if res.Output != "" && !strings.HasSuffix(res.Output, "\n") {
-		res.Output += "\n"
-	}
-	res.Output += "loopgate refused hosts outside the loop's network list: " + strings.Join(refused, ", ") + "\n"
-	return res, nil
+	return res, p.close(), err
 }
 
 // sandboxed runs script under the Shell profile, with extraEnv added to the child's env.

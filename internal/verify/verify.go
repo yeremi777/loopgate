@@ -35,27 +35,34 @@ func Gate(ctx context.Context, r runner.Runner, dir string, loop config.Loop, ti
 	if err != nil {
 		return Outcome{}, err
 	}
+	var refused string
 	if loop.Setup != "" {
-		setup, err := r.Setup(ctx, dir, loop.Setup, timeout, guard, loop.Network)
+		setup, hosts, err := r.Setup(ctx, dir, loop.Setup, timeout, guard, loop.Network)
+		if hosts != nil {
+			refused = "\nloopgate refused hosts outside the loop's network list: " + strings.Join(hosts, ", ") + "\n"
+		}
 		if err != nil {
-			return Outcome{}, fmt.Errorf("setup command: %w", err)
+			return Outcome{}, fmt.Errorf("setup command: %w%s", err, strings.TrimRight(refused, "\n"))
 		}
 		if setup.ExitCode != 0 {
-			return Outcome{Output: fmt.Sprintf("setup command exited %d:\n%s", setup.ExitCode, setup.Output)}, nil
+			return Outcome{Output: fmt.Sprintf("setup command exited %d:\n%s%s", setup.ExitCode, setup.Output, refused)}, nil
 		}
 		status, err := runner.Git(ctx, 30*time.Second, dir, "status", "--porcelain")
 		if err != nil {
 			return Outcome{}, err
 		}
 		if status != "" {
-			return Outcome{Output: "setup command changed files that are tracked or not ignored:\n" + status}, nil
+			return Outcome{Output: "setup command changed files that are tracked or not ignored:\n" + status + "\nsetup command output:\n" + setup.Output + refused}, nil
 		}
 	}
 	res, err := r.Shell(ctx, dir, loop.Verify, timeout, guard)
 	if err != nil {
 		return Outcome{}, fmt.Errorf("verify command: %w", err)
 	}
-	return Outcome{Passed: res.ExitCode == 0, Head: head, Output: res.Output}, nil
+	if res.ExitCode != 0 {
+		return Outcome{Head: head, Output: res.Output + refused}, nil
+	}
+	return Outcome{Passed: true, Head: head, Output: res.Output}, nil
 }
 
 // ShipCheck passes only a clean tree whose HEAD descends from gated and

@@ -391,9 +391,12 @@ func TestSetupReachesTheNetworkOnlyThroughTheProxy(t *testing.T) {
 		"exit 4",
 	}, "; ")
 	for _, network := range [][]string{nil, {"registry.npmjs.org"}} {
-		res, err := r.Setup(context.Background(), dir, script, time.Minute, []string{guard}, network)
+		res, refused, err := r.Setup(context.Background(), dir, script, time.Minute, []string{guard}, network)
 		if err != nil {
 			t.Fatal(err)
+		}
+		if !slices.Equal(refused, []string{"example.com"}) {
+			t.Fatalf("network %q: refused %q, want example.com", network, refused)
 		}
 		if res.ExitCode != 4 {
 			t.Fatalf("network %q: exit %d, want 4:\n%s", network, res.ExitCode, res.Output)
@@ -407,9 +410,6 @@ func TestSetupReachesTheNetworkOnlyThroughTheProxy(t *testing.T) {
 			if strings.Contains(res.Output, bad) {
 				t.Fatalf("network %q: sandbox let through %q:\n%s", network, bad, res.Output)
 			}
-		}
-		if !strings.HasSuffix(res.Output, "loopgate refused hosts outside the loop's network list: example.com\n") {
-			t.Fatalf("network %q: output does not end naming the refused host:\n%s", network, res.Output)
 		}
 	}
 }
