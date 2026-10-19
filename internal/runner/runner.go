@@ -176,12 +176,17 @@ func settingsJSON(network, denyWrite, denyRead []string) (string, error) {
 	return string(data), err
 }
 
-// childEnv is the allowlisted env plus the build caches under Cache, the one
-// place outside the worktree that stages and the verify command may write.
+// childEnv is the allowlisted env plus the build and package caches under
+// Cache, the one place outside the worktree that stages and the verify
+// command may write.
 func (r Runner) childEnv() []string {
 	env := append(filterEnv(r.Environ),
 		"GOCACHE="+filepath.Join(r.Cache, "go-build"),
-		"GOMODCACHE="+filepath.Join(r.Cache, "gomod"))
+		"GOMODCACHE="+filepath.Join(r.Cache, "gomod"),
+		"npm_config_cache="+filepath.Join(r.Cache, "npm"),
+		"npm_config_store_dir="+filepath.Join(r.Cache, "pnpm-store"),
+		"UV_CACHE_DIR="+filepath.Join(r.Cache, "uv"),
+		"PIP_CACHE_DIR="+filepath.Join(r.Cache, "pip"))
 	if r.GoProxy != "" {
 		env = append(env, "GOPROXY="+r.GoProxy)
 	}

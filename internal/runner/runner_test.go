@@ -180,7 +180,11 @@ func TestRunKeepsOnlyAllowlistedEnv(t *testing.T) {
 			t.Fatalf("child env lacks %s", want)
 		}
 	}
-	for _, want := range []string{"HOME=/home/me", "SSH_AUTH_SOCK=/tmp/agent", "TMPDIR=/tmp/me/", "GOCACHE=" + r.Cache + "/go-build"} {
+	for _, want := range []string{
+		"HOME=/home/me", "SSH_AUTH_SOCK=/tmp/agent", "TMPDIR=/tmp/me/", "GOCACHE=" + r.Cache + "/go-build",
+		"npm_config_cache=" + r.Cache + "/npm", "npm_config_store_dir=" + r.Cache + "/pnpm-store",
+		"UV_CACHE_DIR=" + r.Cache + "/uv", "PIP_CACHE_DIR=" + r.Cache + "/pip",
+	} {
 		if !slices.Contains(env, want) {
 			t.Fatalf("child env lacks %s: %q", want, env)
 		}
