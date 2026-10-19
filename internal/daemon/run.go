@@ -178,6 +178,38 @@ func (d *Daemon) Stop(name string) error {
 	return nil
 }
 
+// followPoll is how often Follow looks again for a Job that is starting.
+const followPoll = 200 * time.Millisecond
+
+// Follow sends the running Job's events to send until its outcome is
+// stored, waiting first while the Job starts; for a Job that is not queued
+// or running it returns at once.
+func (d *Daemon) Follow(ctx context.Context, id int64, send func(feed.Event) error) error {
+	for {
+		var f *feed.Feed
+		d.mu.Lock()
+		if d.current != nil && d.current.id == id {
+			f = d.current.feed
+		}
+		d.mu.Unlock()
+		if f != nil {
+			return f.Follow(ctx, send)
+		}
+		j, err := d.st.Job(id)
+		if err != nil {
+			return err
+		}
+		if j.State != store.Queued && j.State != store.Running {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(followPoll):
+		}
+	}
+}
+
 // claim takes the running slot for loop. The caller holds d.mu.
 func (d *Daemon) claim(loop string) (*running, error) {
 	if d.current != nil {
