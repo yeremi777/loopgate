@@ -37,7 +37,7 @@ A human returning a taken-over Job to its Loop, which continues from the files o
 _Avoid_: resume, release
 
 **Blocked**:
-The state of a Job that stopped before coding because its work cannot be undone, cannot be done safely, or has no clear target.
+The state of a Job that stopped because its work cannot be undone, cannot be done safely, or has no clear target, or because a stage or Verify gate changed a protected path.
 _Avoid_: stuck, failed
 
 **Flag**:
