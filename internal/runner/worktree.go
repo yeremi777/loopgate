@@ -27,8 +27,9 @@ type Created struct {
 	Base          string
 }
 
-// CreateWorktree fetches origin, adds the worktree on a new branch from
-// origin's default branch, and commits the Spec onto it when the branch lacks it.
+// CreateWorktree fetches origin, adds the worktree from origin's default
+// branch, on a new branch or detached, and commits the Spec onto it when the
+// branch lacks it.
 func CreateWorktree(ctx context.Context, w Worktree) (Created, error) {
 	var spec []byte
 	if w.Spec != "" {
@@ -74,10 +75,14 @@ func CreateWorktree(ctx context.Context, w Worktree) (Created, error) {
 	return Created{DefaultBranch: strings.TrimPrefix(ref, "origin/"), Base: base}, nil
 }
 
-// RemoveWorktree deletes the worktree at path from checkout, with whatever
-// the commands in it left behind.
+// RemoveWorktree deletes the worktree at path, with whatever the commands in
+// it left behind, and drops its registration from checkout, also when adding
+// it stopped halfway.
 func RemoveWorktree(ctx context.Context, checkout, path string) error {
-	_, err := Git(ctx, time.Minute, checkout, "worktree", "remove", "--force", path)
+	if err := os.RemoveAll(path); err != nil {
+		return err
+	}
+	_, err := Git(ctx, time.Minute, checkout, "worktree", "prune")
 	return err
 }
 

@@ -36,7 +36,7 @@ func Serve(ln net.Listener, d *daemon.Daemon) error {
 			reply(w, struct{}{}, err)
 			return
 		}
-		loop, err := d.Add(data)
+		loop, err := d.Add(r.Context(), data)
 		reply(w, loop.Name, err)
 	})
 	mux.HandleFunc("DELETE /loops/{name}", func(w http.ResponseWriter, r *http.Request) {
