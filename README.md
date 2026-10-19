@@ -65,9 +65,9 @@ Pass or fail comes only from the exit codes of your setup and verify commands on
   gh auth login
   gh auth setup-git
   ```
-- The stage skills from [pwguler/skills](https://github.com/pwguler/skills). Install them before loopgate, and choose Claude Code when asked. Every job calls `drill`, `implement`, `rubric`, `land` and `tldr` by name.
+- The stage skills from [pwguler/skills](https://github.com/pwguler/skills). Install them globally for Claude Code before loopgate. Every job calls `drill`, `implement`, `rubric`, `land` and `tldr` by name.
   ```sh
-  npx skills add pwguler/skills
+  npx skills add pwguler/skills -g -a claude-code
   ```
 
 **2. loopgate:**
@@ -79,7 +79,7 @@ loopctl install
 
 From a clone, run `go install ./cmd/...` and `loopctl install` from its root instead.
 
-`loopctl install` starts `loopd` now and at every login with launchd, restarts it after a crash, and adds the loopgate skill to `~/.claude/skills/loopgate`. It prints where it found `claude`, `gh`, `git`, `node` and `go`, then waits until `loopd` answers; when `loopd` cannot start, as when `gh` is not logged in, install fails with the error `loopd` logged. Fix the cause and run it again. Run it again after an upgrade; it replaces the loaded copy. `loopctl uninstall` stops `loopd` and removes the agent and the skill; your loops and jobs in `~/.loopd` stay.
+`loopctl install` starts `loopd` now and at every login with launchd, restarts it after a crash, and adds the loopgate skill to `~/.claude/skills/loopgate`. It first checks for the stage skills in `~/.claude/skills`: a job whose skill is missing runs anyway, without the skill and without an error, so install names the missing ones and stops. It prints where it found `claude`, `gh`, `git`, `node` and `go`, then waits until `loopd` answers; when `loopd` cannot start, as when `gh` is not logged in, install fails with the error `loopd` logged. Fix the cause and run it again. Run it again after an upgrade; it replaces the loaded copy. `loopctl uninstall` stops `loopd` and removes the agent and the skill; your loops and jobs in `~/.loopd` stay.
 
 **3. Check it:** `loopctl version` prints the installed version, and `loopctl list` prints a table with only its header row. If it later says `loopd not running`, read `~/.loopd/loopd.log`.
 

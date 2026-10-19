@@ -178,8 +178,9 @@ func jobID(s string) (int64, error) {
 	return id, nil
 }
 
-// install writes the launchd agent for the loopd that sits next to this
-// loopctl, starts it, and installs the loopgate skill for Claude Code.
+// install refuses until the stage skills that every job calls are installed,
+// then writes the launchd agent for the loopd that sits next to this loopctl,
+// starts it, and installs the loopgate skill for Claude Code.
 func install(home string) error {
 	exe, err := os.Executable()
 	if err != nil {
@@ -195,6 +196,15 @@ func install(home string) error {
 	user, err := os.UserHomeDir()
 	if err != nil {
 		return err
+	}
+	var missing []string
+	for _, name := range []string{"drill", "implement", "rubric", "land", "tldr"} {
+		if _, err := os.Stat(filepath.Join(user, ".claude", "skills", name, "SKILL.md")); err != nil {
+			missing = append(missing, name)
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("missing stage skills in ~/.claude/skills: %s; run `npx skills add pwguler/skills -g -a claude-code`", strings.Join(missing, ", "))
 	}
 	if err := os.MkdirAll(home, 0o700); err != nil {
 		return err
