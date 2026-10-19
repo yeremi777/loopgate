@@ -154,12 +154,6 @@ func (r *jobRun) iterate(ctx context.Context) (Outcome, error) {
 		if err != nil {
 			return Outcome{}, err
 		}
-		if !gate.Passed {
-			if err := r.progress.add(i, "verify gate failed", "```\n"+tail(gate.Output)+"\n```"); err != nil {
-				return Outcome{}, err
-			}
-			continue
-		}
 		// The setup and verify commands run code too, so they face the same check as a stage.
 		question, err := r.protectedQuestion(ctx)
 		if err != nil {
@@ -167,6 +161,12 @@ func (r *jobRun) iterate(ctx context.Context) (Outcome, error) {
 		}
 		if question != "" {
 			return Outcome{State: store.Blocked, Question: question, Summary: res.Summary}, nil
+		}
+		if !gate.Passed {
+			if err := r.progress.add(i, "verify gate failed", "```\n"+tail(gate.Output)+"\n```"); err != nil {
+				return Outcome{}, err
+			}
+			continue
 		}
 
 		changes, err := verify.Changes(ctx, j.Worktree, j.Base)

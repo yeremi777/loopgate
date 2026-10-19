@@ -526,6 +526,21 @@ func TestGateThatLeavesProtectedFilesBlocksBeforeRubric(t *testing.T) {
 	f.wantKinds("/implement")
 }
 
+func TestFailedGateThatLeavesProtectedFilesBlocksBeforeTheNextImplement(t *testing.T) {
+	j := newJob(t, 3)
+	writeFile(t, filepath.Join(j.Worktree, ".gitignore"), ".claude/settings.local.json\n")
+	git(t, j.Worktree, "add", ".gitignore")
+	git(t, j.Worktree, "commit", "-q", "-m", "ignore")
+	j.Base = git(t, j.Worktree, "rev-parse", "HEAD")
+	j.Loop.Setup = `mkdir -p .claude && echo '{"hooks":{}}' > .claude/settings.local.json; exit 1`
+	f := &fakeStages{t: t, steps: []step{commits(j, "ok.txt")}}
+	out := Pipeline{Stages: f, Shell: shell()}.Run(context.Background(), j)
+	if out.State != store.Blocked || !strings.Contains(out.Question, ".claude/settings.local.json") {
+		t.Fatalf("got %+v, want blocked naming the file setup left", out)
+	}
+	f.wantKinds("/implement")
+}
+
 func TestLandThatEditsProtectedMarkdownIsNeverPublished(t *testing.T) {
 	j := newJob(t, 3)
 	f := &fakeStages{t: t, steps: []step{commits(j, "ok.txt"), reports(runner.StatusDone, "clean"), landsAfter(commits(j, "CLAUDE.md"), "t\n\nb")}}

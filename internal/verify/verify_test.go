@@ -124,12 +124,17 @@ func TestGateNamesRefusedHostsWhenVerifyFailsAfterSetup(t *testing.T) {
 	}
 }
 
-func TestGateNamesRefusedHostsWhenSetupTimesOut(t *testing.T) {
-	repo := newRepo(t)
-	loop := config.Loop{Setup: "curl -s -m 5 https://example.com/; sleep 60", Verify: "true"}
-	_, err := Gate(context.Background(), shell(), repo, loop, 3*time.Second, nil)
-	if !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "example.com") {
-		t.Fatalf("got %v, want a deadline error naming example.com", err)
+func TestGateNamesRefusedHostsWhenACommandTimesOut(t *testing.T) {
+	for name, loop := range map[string]config.Loop{
+		"setup":  {Setup: "curl -s -m 5 https://example.com/; sleep 60", Verify: "true"},
+		"verify": {Setup: "curl -s -m 5 https://example.com/ || true", Verify: "sleep 60"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := Gate(context.Background(), shell(), newRepo(t), loop, 3*time.Second, nil)
+			if !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "example.com") || strings.Contains(err.Error(), "\n") {
+				t.Fatalf("got %q, want a one-line deadline error naming example.com", err)
+			}
+		})
 	}
 }
 

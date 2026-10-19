@@ -39,30 +39,45 @@ func Gate(ctx context.Context, r runner.Runner, dir string, loop config.Loop, ti
 	if loop.Setup != "" {
 		setup, hosts, err := r.Setup(ctx, dir, loop.Setup, timeout, guard, loop.Network)
 		if hosts != nil {
-			refused = "\nloopgate refused hosts outside the loop's network list: " + strings.Join(hosts, ", ") + "\n"
+			refused = "loopgate refused hosts outside the loop's network list: " + strings.Join(hosts, ", ")
 		}
 		if err != nil {
-			return Outcome{}, fmt.Errorf("setup command: %w%s", err, strings.TrimRight(refused, "\n"))
+			return Outcome{}, fmt.Errorf("setup command: %w%s", err, inline(refused))
 		}
 		if setup.ExitCode != 0 {
-			return Outcome{Output: fmt.Sprintf("setup command exited %d:\n%s%s", setup.ExitCode, setup.Output, refused)}, nil
+			return Outcome{Output: fmt.Sprintf("setup command exited %d:\n%s%s", setup.ExitCode, setup.Output, block(refused))}, nil
 		}
 		status, err := runner.Git(ctx, 30*time.Second, dir, "status", "--porcelain")
 		if err != nil {
 			return Outcome{}, err
 		}
 		if status != "" {
-			return Outcome{Output: "setup command changed files that are tracked or not ignored:\n" + status + "\nsetup command output:\n" + setup.Output + refused}, nil
+			return Outcome{Output: "setup command changed files that are tracked or not ignored:\n" + status + "\nsetup command output:\n" + setup.Output + block(refused)}, nil
 		}
 	}
 	res, err := r.Shell(ctx, dir, loop.Verify, timeout, guard)
 	if err != nil {
-		return Outcome{}, fmt.Errorf("verify command: %w", err)
+		return Outcome{}, fmt.Errorf("verify command: %w%s", err, inline(refused))
 	}
 	if res.ExitCode != 0 {
-		return Outcome{Head: head, Output: res.Output + refused}, nil
+		return Outcome{Head: head, Output: res.Output + block(refused)}, nil
 	}
 	return Outcome{Passed: true, Head: head, Output: res.Output}, nil
+}
+
+// inline and block place a note at the end of an error line or of command output.
+func inline(note string) string {
+	if note == "" {
+		return ""
+	}
+	return "; " + note
+}
+
+func block(note string) string {
+	if note == "" {
+		return ""
+	}
+	return "\n" + note + "\n"
 }
 
 // ShipCheck passes only a clean tree whose HEAD descends from gated and
