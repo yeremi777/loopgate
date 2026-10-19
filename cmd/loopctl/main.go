@@ -18,12 +18,12 @@ import (
 const usage = `loopctl controls loopd, which runs Claude Code on loops and stops at a draft PR.
 
 usage:
-  loopctl list                         show loops and whether each is paused
+  loopctl list                         show each loop's state, trigger and checkout
   loopctl add <loop.yaml>              register a loop file
   loopctl remove <name>                unregister a loop
   loopctl pause <name>                 stop a loop's timer or issue polling
   loopctl resume <name>                start them again
-  loopctl run <name> [--spec <path>]   start a job now, on a spec or the loop's own task
+  loopctl run <name> [--spec <path>]   start a job now on --spec, or a timer loop's own task or spec
   loopctl stop <name>                  end the loop's running job; the loop stays
   loopctl logs <job>                   show a job's state, branch, PR, cost and progress
   loopctl takeover <job>               stop a job and hand its worktree to you

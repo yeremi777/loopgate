@@ -26,7 +26,7 @@ Pass or fail comes only from your verify command's exit code, never from the mod
 - macOS, Go 1.26.5 or newer, git.
 - [Claude Code](https://claude.com/claude-code), logged in. Jobs use your login and count against your usage.
 - [GitHub CLI](https://cli.github.com), logged in: `gh auth login`, then `gh auth setup-git`. loopgate stores no tokens.
-- Skills named `drill`, `implement`, `rubric`, `land` and `tldr` in your Claude Code setup. loopgate calls them by name and does not ship them.
+- Skills named `drill`, `implement`, `rubric`, `land` and `tldr` in your user-level Claude Code setup (`~/.claude/skills`). loopgate calls them by name and does not ship them; see [Skills](#skills) for what each must do.
 
 ## Install
 
@@ -36,9 +36,9 @@ loopctl install-service
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/loopgate.loopd.plist
 ```
 
-`install-service` writes a launchd agent that starts `loopd` at login with your current `PATH`, and restarts it after a crash. Its log is `~/.loopd/loopd.log`. Run it again after `PATH` changes. To remove it: `launchctl bootout gui/$(id -u)/loopgate.loopd`, then delete the plist.
+`install-service` writes a launchd agent that starts `loopd` at login with your current `PATH`, and restarts it after a crash. Its log is `~/.loopd/loopd.log`. After `PATH` changes, run it again, then `launchctl bootout gui/$(id -u)/loopgate.loopd` and bootstrap again. To remove it: bootout, then delete the plist.
 
-`loopd` only runs while your Mac is awake. Timer fires missed during sleep are skipped, not caught up.
+`loopd` only runs while your Mac is awake. A timer fire missed during sleep runs once on wake; further missed fires are dropped.
 
 ## Loops
 
@@ -51,7 +51,7 @@ trigger:
   github: { repo: owner/app, label: agent, every: 10m }
 verify: go test ./... && golangci-lint run
 bounds: { max_iterations: 5, timeout: 30m }
-protected: [.golangci.yml]           # added to .github/**, .claude/**, CLAUDE.md, AGENTS.md
+protected: [.golangci.yml]           # added to .github/**, .claude/**, **/CLAUDE.md, **/AGENTS.md
 tests: ["**/*_test.go"]              # changed or deleted tests are listed in the PR
 network: [proxy.golang.org, sum.golang.org]
 ```
@@ -63,13 +63,13 @@ A timer loop replaces `github` with `timer: { every: 6h }` or `timer: { cron: "0
 | `verify` | Shell command run in the worktree. Exit 0 is the only pass. |
 | `bounds` | Required. `max_iterations` counts implement runs; `timeout` covers the whole job. |
 | `protected` | A change to a matching path blocks the job for you to decide. |
-| `network` | Domains the sandboxed stages may reach, such as package registries. GitHub domains are refused. |
+| `network` | Domains the sandboxed stages may reach, such as package registries. GitHub domains are refused. The verify command gets no network. |
 
 ## Use
 
 | You want | Run |
 |---|---|
-| Hand a settled spec to a loop | `loopctl run <loop> --spec docs/specs/<slug>.md` |
+| Hand a settled spec to a loop | `loopctl run <loop> --spec docs/specs/<slug>.md`, from the checkout's root |
 | Build issues while you are away | Label them with the loop's label. Each issue runs once. |
 | Run an issue again | `loopctl requeue <loop> <issue>` |
 | See a job | `loopctl logs <job>`: state, branch, PR, cost, progress |
@@ -80,7 +80,7 @@ A timer loop replaces `github` with `timer: { every: 6h }` or `timer: { cron: "0
 
 One job runs at a time. A job ends `done` with a draft PR, `blocked` with a question, `exhausted` when its bounds run out, `failed`, or `manual` after a takeover. A job from an issue answers on the issue: the PR link, or the blocking question with the `needs-drill` label.
 
-The draft PR opens with loopgate's report: the commit that passed the gate and the review, the changed tests, the cost, and every choice the agent made on its own.
+The draft PR opens with loopgate's report: the commit that passed the gate and the review, the changed tests, the cost, and every Flag: a choice the agent made on its own, for you to accept or reject.
 
 ### From a Claude Code session
 
@@ -93,13 +93,29 @@ ln -s ~/code/loopgate/skills/loopgate ~/.claude/skills/loopgate
 
 Then say "hand docs/specs/x.md to the loop", "loop status", or "take over job 3".
 
+## Skills
+
+Each stage is a fresh `claude -p` session that loads your user-level settings and skills, never the worktree's own `.claude` settings and never an MCP server. It returns `done`, `blocked` with one question, or `revise`.
+
+| Stage | Invocation | Must leave behind |
+|---|---|---|
+| drill (issues) | `/drill` with the issue fenced as data | a committed `docs/specs/issue-<n>.md`, or a one-sentence plan as its summary |
+| implement | `/implement <spec path or plan>` | every change committed; a summary listing each Flag |
+| rubric | `/rubric defect pass, steps 1 to 3 only, on the diff … against commit <base>` | no edits; `revise` with the act-on findings, or `done` |
+| land | `/land PR, keep spec <path>` | Markdown-only commits; the PR title, a blank line and the body as its summary |
+
+Summaries follow your `tldr` skill.
+
 ## Safety
 
-- No stage can reach GitHub. Stages run sandboxed, with network limited to the loop's `network` list, and deny rules on every `gh` call, `git push` and `git merge`. `loopd` alone pushes, without force, and only opens draft PRs.
-- `land` may change Markdown only. Any other change after the gate, or a rewrite of the gated commit, fails the job before anything is pushed.
+- No stage can reach GitHub. Stages run in Claude Code's sandbox with no unsandboxed escape, network limited to the loop's `network` list, no MCP servers, and deny rules on commands that start with `gh`, `git push` or `git merge`. `loopd` alone pushes, without force, and only opens draft PRs.
+- The verify command runs code the model wrote, so it runs under macOS Seatbelt: no network but localhost, no keychain and no SSH agent (so no GitHub credentials), and writes only to the worktree, `~/.loopd/cache` and `TMPDIR`. Go modules come from your own module cache first, then from the stages' downloads.
+- Stages and the verify command cannot read `~/.ssh`, `~/.aws`, `~/.config/gh`, `~/.gnupg`, `~/.netrc`, `~/.npmrc`, `~/.docker`, `~/.kube` or `~/Library/Keychains`. Stages cannot write the repository's git config, hooks or the worktree's `.git` pointer, and `loopd` runs its own git with hooks and fsmonitor off.
+- After every stage, a change to a protected path, committed or not, ignored files included, blocks the job before the next stage starts.
+- `land` may change unprotected Markdown only. Any other change after the gate, a rename, or a rewrite of the gated commit fails the job before anything is pushed.
 - Issue text reaches the model as fenced, untrusted data. It cannot change the verify command, bounds, protected paths, or stages.
-- Stages get an allowlisted environment; your other variables and secrets stay in `loopd`. Every stage runs in its own process group, which is killed on timeout, stop, or takeover.
-- A label is the only way an issue starts a job, and adding a label takes triage access to the repo.
+- Stages get an allowlisted environment; your other variables stay in `loopd`. Every stage and verify run is its own process group, which is killed on timeout, stop, or takeover.
+- A label starts an issue job, and adding a label takes triage access to the repo. A label that an issue template adds lives in `.github/`, which is protected.
 
 ## License
 

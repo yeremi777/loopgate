@@ -1,0 +1,3 @@
+# The verify command runs sandboxed, without network
+
+The verify command is the only pass-or-fail signal, but it executes code the model wrote: `go test` runs test files that implement added. Run with the user's environment it could push, merge or read secrets with the user's credentials, so it runs under macOS Seatbelt with no outbound network but localhost, no keychain or SSH agent, and writes only to the worktree, the loopgate cache and TMPDIR. Seatbelt cannot filter by domain, so the alternative was open network with credentials removed, which still lets a test send out whatever it can read; we chose no network and serve Go modules from the user's own module cache first, so a dependency the stages have not fetched fails the gate instead.
