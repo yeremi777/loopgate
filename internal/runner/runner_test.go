@@ -180,7 +180,11 @@ func TestRunKeepsOnlyAllowlistedEnv(t *testing.T) {
 			t.Fatalf("child env lacks %s", want)
 		}
 	}
-	for _, want := range []string{"HOME=/home/me", "SSH_AUTH_SOCK=/tmp/agent", "TMPDIR=/tmp/me/", "GOCACHE=" + r.Cache + "/go-build"} {
+	for _, want := range []string{
+		"HOME=/home/me", "SSH_AUTH_SOCK=/tmp/agent", "TMPDIR=/tmp/me/", "GOCACHE=" + r.Cache + "/go-build",
+		"npm_config_cache=" + r.Cache + "/npm", "npm_config_store_dir=" + r.Cache + "/pnpm-store", "npm_config_cache_dir=" + r.Cache + "/pnpm",
+		"UV_CACHE_DIR=" + r.Cache + "/uv", "PIP_CACHE_DIR=" + r.Cache + "/pip",
+	} {
 		if !slices.Contains(env, want) {
 			t.Fatalf("child env lacks %s: %q", want, env)
 		}
@@ -367,6 +371,45 @@ func TestShellSandboxConfinesTheVerifyCommand(t *testing.T) {
 	for _, bad := range []string{"OUTSIDE-WRITTEN", "SECRET-READ", "hush"} {
 		if strings.Contains(res.Output, bad) {
 			t.Fatalf("sandbox let through %q:\n%s", bad, res.Output)
+		}
+	}
+}
+
+func TestSetupReachesTheNetworkOnlyThroughTheProxy(t *testing.T) {
+	dir, cache := realDir(t), realDir(t)
+	outside := filepath.Join(realDir(t), "outside")
+	guard := filepath.Join(dir, ".git")
+	r := Runner{Environ: []string{"PATH=" + os.Getenv("PATH"), "SSH_AUTH_SOCK=/tmp/agent", "TMPDIR=" + realDir(t)}, Cache: cache}
+	script := strings.Join([]string{
+		"echo in > inside && echo inside-ok",
+		"echo out > " + outside + " && echo OUTSIDE-WRITTEN",
+		"echo evil > .git && echo GUARD-WRITTEN",
+		"env | grep -c SSH_AUTH_SOCK",
+		`[ -n "$HTTPS_PROXY" ] && [ "$HTTPS_PROXY" = "$HTTP_PROXY" ] && [ "$HTTPS_PROXY" = "$https_proxy" ] && [ "$HTTPS_PROXY" = "$http_proxy" ] && echo proxy-set`,
+		"curl -s -m 5 -o /dev/null -w 'proxied-%{http_connect}\\n' https://example.com/",
+		"curl -s -m 5 --noproxy '*' -o /dev/null -w 'bypass-%{http_code}\\n' https://example.com/",
+		"exit 4",
+	}, "; ")
+	for _, network := range [][]string{nil, {"registry.npmjs.org"}} {
+		res, refused, err := r.Setup(context.Background(), dir, script, time.Minute, []string{guard}, network)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !slices.Equal(refused, []string{"example.com"}) {
+			t.Fatalf("network %q: refused %q, want example.com", network, refused)
+		}
+		if res.ExitCode != 4 {
+			t.Fatalf("network %q: exit %d, want 4:\n%s", network, res.ExitCode, res.Output)
+		}
+		for _, want := range []string{"inside-ok", "\n0\n", "proxy-set", "proxied-403", "bypass-000"} {
+			if !strings.Contains(res.Output, want) {
+				t.Fatalf("network %q: output lacks %q:\n%s", network, want, res.Output)
+			}
+		}
+		for _, bad := range []string{"OUTSIDE-WRITTEN", "GUARD-WRITTEN"} {
+			if strings.Contains(res.Output, bad) {
+				t.Fatalf("network %q: sandbox let through %q:\n%s", network, bad, res.Output)
+			}
 		}
 	}
 }

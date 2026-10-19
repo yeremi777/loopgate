@@ -56,7 +56,8 @@ func Changes(ctx context.Context, dir, base string) ([]Change, error) {
 
 // Touched returns the protected paths that differ from base, in commits or in
 // the working tree, untracked and ignored files included: a stage that leaves
-// .claude/settings.local.json behind would steer the stages after it.
+// .claude/settings.local.json behind would steer the stages after it. Ignored
+// files in installed dependencies do not count.
 func Touched(ctx context.Context, dir, base string, globs []string) ([]string, error) {
 	committed, err := Changes(ctx, dir, base)
 	if err != nil {
@@ -73,6 +74,9 @@ func Touched(ctx context.Context, dir, base string, globs []string) ([]string, e
 		all = append(all, c)
 	}
 	for _, entry := range splitNUL(status) {
+		if strings.HasPrefix(entry, "!! ") && inDependencyDir(entry[3:]) {
+			continue
+		}
 		if len(entry) > 3 && !seen[entry[3:]] {
 			seen[entry[3:]] = true
 			all = append(all, Change{Path: entry[3:], Kind: Modified})
@@ -81,6 +85,17 @@ func Touched(ctx context.Context, dir, base string, globs []string) ([]string, e
 	hits := Protected(all, globs)
 	slices.Sort(hits)
 	return hits, nil
+}
+
+// inDependencyDir reports whether file sits under a directory that a package
+// manager fills, whose files are the installed dependencies, not the Job's work.
+// Claude Code and GitHub configuration never holds dependencies.
+func inDependencyDir(file string) bool {
+	if strings.HasPrefix(file, ".claude/") || strings.HasPrefix(file, ".github/") {
+		return false
+	}
+	dirs := strings.Split(file, "/")
+	return slices.ContainsFunc(dirs[:len(dirs)-1], func(d string) bool { return d == "node_modules" || d == ".venv" })
 }
 
 func splitNUL(s string) []string {

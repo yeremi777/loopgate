@@ -84,6 +84,25 @@ func TestFailedGateFeedsItsOutputToTheNextImplementRun(t *testing.T) {
 	}
 }
 
+func TestFailedSetupFeedsItsOutputToTheNextImplementRun(t *testing.T) {
+	j := newJob(t, 3)
+	j.Loop.Setup = `test -f ok.txt || { echo "setup needs ok.txt"; exit 1; }`
+	f := &fakeStages{t: t, steps: []step{
+		reports(runner.StatusDone, "done, trust me"),
+		commits(j, "ok.txt"),
+		reports(runner.StatusDone, "clean"),
+		lands("t\n\nb"),
+	}}
+	out := Pipeline{Stages: f, Shell: shell(), Publisher: &fakePublisher{}}.Run(context.Background(), j)
+	if out.State != store.Done {
+		t.Fatalf("got %+v, want done", out)
+	}
+	f.wantKinds("/implement", "/implement", "/rubric", "/land")
+	if !strings.Contains(f.stages[1].Prompt, "setup needs ok.txt") {
+		t.Fatalf("second implement prompt lacks setup output: %q", f.stages[1].Prompt)
+	}
+}
+
 func TestUncommittedWorkFailsTheGate(t *testing.T) {
 	j := newJob(t, 2)
 	f := &fakeStages{t: t, steps: []step{
@@ -488,6 +507,36 @@ func TestStageThatLeavesProtectedFilesBlocksBeforeTheNextStage(t *testing.T) {
 	out := Pipeline{Stages: f, Shell: shell()}.Run(context.Background(), j)
 	if out.State != store.Blocked || !strings.Contains(out.Question, ".claude/settings.local.json") {
 		t.Fatalf("got %+v, want blocked naming the ignored settings file", out)
+	}
+	f.wantKinds("/implement")
+}
+
+func TestGateThatLeavesProtectedFilesBlocksBeforeRubric(t *testing.T) {
+	j := newJob(t, 3)
+	writeFile(t, filepath.Join(j.Worktree, ".gitignore"), ".claude/settings.local.json\n")
+	git(t, j.Worktree, "add", ".gitignore")
+	git(t, j.Worktree, "commit", "-q", "-m", "ignore")
+	j.Base = git(t, j.Worktree, "rev-parse", "HEAD")
+	j.Loop.Setup = `mkdir -p .claude && echo '{"hooks":{}}' > .claude/settings.local.json`
+	f := &fakeStages{t: t, steps: []step{commits(j, "ok.txt")}}
+	out := Pipeline{Stages: f, Shell: shell()}.Run(context.Background(), j)
+	if out.State != store.Blocked || !strings.Contains(out.Question, ".claude/settings.local.json") {
+		t.Fatalf("got %+v, want blocked naming the file setup left", out)
+	}
+	f.wantKinds("/implement")
+}
+
+func TestFailedGateThatLeavesProtectedFilesBlocksBeforeTheNextImplement(t *testing.T) {
+	j := newJob(t, 3)
+	writeFile(t, filepath.Join(j.Worktree, ".gitignore"), ".claude/settings.local.json\n")
+	git(t, j.Worktree, "add", ".gitignore")
+	git(t, j.Worktree, "commit", "-q", "-m", "ignore")
+	j.Base = git(t, j.Worktree, "rev-parse", "HEAD")
+	j.Loop.Setup = `mkdir -p .claude && echo '{"hooks":{}}' > .claude/settings.local.json; exit 1`
+	f := &fakeStages{t: t, steps: []step{commits(j, "ok.txt")}}
+	out := Pipeline{Stages: f, Shell: shell()}.Run(context.Background(), j)
+	if out.State != store.Blocked || !strings.Contains(out.Question, ".claude/settings.local.json") {
+		t.Fatalf("got %+v, want blocked naming the file setup left", out)
 	}
 	f.wantKinds("/implement")
 }

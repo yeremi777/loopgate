@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"os/exec"
 	"path/filepath"
 	"strconv"
@@ -23,6 +24,24 @@ type ShellResult struct {
 // TMPDIR but never to denyWrite, and reads none of DenyRead. A non-zero exit
 // is a result, not an error.
 func (r Runner) Shell(ctx context.Context, dir, script string, timeout time.Duration, denyWrite []string) (ShellResult, error) {
+	return r.sandboxed(ctx, dir, script, timeout, denyWrite)
+}
+
+// Setup runs script as Shell does, because it runs code the model can change,
+// and gives it network only through a proxy that reaches the network domains.
+// It returns the hosts the proxy refused, also when script could not finish.
+func (r Runner) Setup(ctx context.Context, dir, script string, timeout time.Duration, denyWrite, network []string) (ShellResult, []string, error) {
+	p, err := startProxy(network, (&net.Dialer{}).DialContext)
+	if err != nil {
+		return ShellResult{}, nil, fmt.Errorf("setup proxy: %w", err)
+	}
+	url := "http://" + p.addr()
+	res, err := r.sandboxed(ctx, dir, script, timeout, denyWrite, "HTTPS_PROXY="+url, "HTTP_PROXY="+url, "https_proxy="+url, "http_proxy="+url)
+	return res, p.close(), err
+}
+
+// sandboxed runs script under the Shell profile, with extraEnv added to the child's env.
+func (r Runner) sandboxed(ctx context.Context, dir, script string, timeout time.Duration, denyWrite []string, extraEnv ...string) (ShellResult, error) {
 	if r.Cache == "" {
 		return ShellResult{}, errors.New("runner needs a cache directory")
 	}
@@ -34,7 +53,7 @@ func (r Runner) Shell(ctx context.Context, dir, script string, timeout time.Dura
 		return ShellResult{}, err
 	}
 	cmd := r.command(ctx, dir, "/usr/bin/sandbox-exec", "-p", profile, "/bin/sh", "-c", script)
-	cmd.Env = withoutVar(env, "SSH_AUTH_SOCK")
+	cmd.Env = append(withoutVar(env, "SSH_AUTH_SOCK"), extraEnv...)
 	var out bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &out
 	err = runGroup(ctx, cmd)

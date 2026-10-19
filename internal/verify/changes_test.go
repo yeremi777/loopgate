@@ -119,6 +119,34 @@ func TestTouchedSeesProtectedPathsInCommitsAndTheWorkingTree(t *testing.T) {
 	}
 }
 
+func TestTouchedSkipsIgnoredFilesInDependencyDirsOnly(t *testing.T) {
+	branch, _ := newBranch(t)
+	base := git(t, branch, "rev-parse", "HEAD")
+	write(t, filepath.Join(branch, ".gitignore"), "node_modules/\n.venv/\nnode_modules_x/\nsrc/CLAUDE.md\n")
+	write(t, filepath.Join(branch, "vendor/node_modules/kept/CLAUDE.md"), "committed")
+	git(t, branch, "add", ".gitignore")
+	git(t, branch, "add", "-f", "vendor/node_modules/kept/CLAUDE.md")
+	git(t, branch, "commit", "-q", "-m", "ignore dependencies")
+	for _, f := range []string{
+		"node_modules/pkg/AGENTS.md",
+		"packages/web/node_modules/pkg/CLAUDE.md",
+		".venv/lib/python3.13/site-packages/pkg/CLAUDE.md",
+		"node_modules_x/CLAUDE.md",
+		"src/CLAUDE.md",
+		".claude/commands/node_modules/rubric.md",
+		".github/node_modules/x",
+	} {
+		write(t, filepath.Join(branch, f), "rules")
+	}
+	got, err := Touched(context.Background(), branch, base, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{".claude/commands/node_modules/rubric.md", ".github/node_modules/x", "node_modules_x/CLAUDE.md", "src/CLAUDE.md", "vendor/node_modules/kept/CLAUDE.md"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
 // newBranch returns a clone on a work branch off origin/main, and a second
 // clone that can move origin's main.
 func newBranch(t *testing.T) (branch, seed string) {
