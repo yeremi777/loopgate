@@ -2,14 +2,54 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/yeremi777/loopgate/internal/config"
 	"github.com/yeremi777/loopgate/internal/runner"
+	"github.com/yeremi777/loopgate/internal/verify"
 )
+
+// trial runs the Loop's Verify gate, bounded by its timeout, on a fresh
+// detached worktree of origin's default branch, and removes the worktree.
+func (d *Daemon) trial(loop config.Loop) (err error) {
+	ctx, cancel := context.WithTimeout(d.ctx, loop.Bounds.Timeout)
+	defer cancel()
+	trials := filepath.Join(d.home, "trials")
+	if err := os.MkdirAll(trials, 0o700); err != nil {
+		return err
+	}
+	dir, err := os.MkdirTemp(trials, loop.Name+"-")
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, os.RemoveAll(dir)) }()
+	wt := filepath.Join(dir, "worktree")
+	made, err := runner.CreateWorktree(ctx, runner.Worktree{Checkout: loop.Checkout, Path: wt})
+	if err != nil {
+		return fmt.Errorf("trial gate: %w", err)
+	}
+	defer func() { err = errors.Join(err, runner.RemoveWorktree(d.ctx, loop.Checkout, wt)) }()
+	guard, err := runner.GitGuard(wt)
+	if err != nil {
+		return err
+	}
+	gate, err := verify.Gate(ctx, d.deps.Pipeline.Shell, wt, loop, loop.Bounds.Timeout, guard)
+	if ctx.Err() == context.DeadlineExceeded {
+		return fmt.Errorf("trial gate on origin/%s ran past the loop's timeout of %s; loop %s not added", made.DefaultBranch, loop.Bounds.Timeout, loop.Name)
+	}
+	if err != nil {
+		return fmt.Errorf("trial gate on origin/%s: %w", made.DefaultBranch, err)
+	}
+	if !gate.Passed {
+		return fmt.Errorf("trial gate failed on origin/%s; loop %s not added:\n%s", made.DefaultBranch, loop.Name, gate.Output)
+	}
+	return nil
+}
 
 // checkCheckout refuses a checkout that no Job could start from: one that is
 // not a clone's top level, has no origin HEAD to cut worktrees from, or whose

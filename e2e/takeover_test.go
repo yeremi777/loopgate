@@ -89,8 +89,8 @@ func (e env) timerLoop(t *testing.T, name, claude string) string {
 	if err := os.WriteFile(file, []byte(loop), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	e.load(file)
 	e.startLoopd()
-	e.mustLoopctl("add", file)
 	return checkout
 }
 

@@ -3,10 +3,12 @@ package daemon
 import (
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/yeremi777/loopgate/internal/config"
 	"github.com/yeremi777/loopgate/internal/gittest"
@@ -135,6 +137,62 @@ func TestAddMatchesTheGitHubRepoInEveryRemoteURLForm(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestAddPassesTheTrialGateOnOriginsDefaultBranchAfterAFetch(t *testing.T) {
+	d := newDaemon(t, t.TempDir())
+	checkout := gittest.Checkout(t, "https://github.com/me/app.git")
+	writeFile(filepath.Join(checkout, "ok.txt"), "ok\n")
+	gittest.Run(t, checkout, "add", "ok.txt")
+	gittest.Run(t, checkout, "commit", "-q", "-m", "ok")
+	gittest.Run(t, checkout, "push", "-q", "origin", "HEAD:main")
+	gittest.Run(t, checkout, "reset", "-q", "--hard", "HEAD~1")
+	gittest.Run(t, checkout, "update-ref", "refs/remotes/origin/main", "HEAD")
+
+	loop := strings.Replace(fixLoop(checkout), `verify: "true"`, "verify: test -f ok.txt", 1)
+	if _, err := d.Add([]byte(loop)); err != nil {
+		t.Fatal(err)
+	}
+	if got := worktrees(t, checkout); got != 1 {
+		t.Fatalf("%d worktrees after the trial gate, want only the checkout", got)
+	}
+}
+
+func TestAddRefusesALoopWhoseTrialGateFails(t *testing.T) {
+	d := newDaemon(t, t.TempDir())
+	checkout := gittest.Checkout(t, "https://github.com/me/app.git")
+	for _, tc := range []struct{ name, verify, timeout, want string }{
+		{"red", "echo main is red; exit 1", "1m", "main is red"},
+		{"slow", "sleep 30", "1s", "past the loop's timeout of 1s"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			loop := strings.Replace(fixLoop(checkout), `verify: "true"`, "verify: "+tc.verify, 1)
+			loop = strings.Replace(loop, "timeout: 20m", "timeout: "+tc.timeout, 1)
+			start := time.Now()
+			_, err := d.Add([]byte(loop))
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err %v, want it to name %q", err, tc.want)
+			}
+			if took := time.Since(start); took > 15*time.Second {
+				t.Fatalf("trial gate took %s", took)
+			}
+			if got, _ := d.List(); len(got) != 0 {
+				t.Fatalf("loop added anyway: %+v", got)
+			}
+			if got := worktrees(t, checkout); got != 1 {
+				t.Fatalf("%d worktrees after the trial gate, want only the checkout", got)
+			}
+		})
+	}
+}
+
+func worktrees(t *testing.T, checkout string) int {
+	t.Helper()
+	out, err := exec.Command("git", "-C", checkout, "worktree", "list", "--porcelain").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.Count(string(out), "worktree ")
 }
 
 func TestUnknownLoop(t *testing.T) {

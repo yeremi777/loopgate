@@ -10,7 +10,8 @@ import (
 	"time"
 )
 
-// Worktree describes a Job worktree cut from the default branch of Checkout's origin.
+// Worktree describes a Job worktree cut from the default branch of Checkout's origin,
+// on a new Branch, or detached when Branch is empty.
 // Spec, when set, is a path relative to Checkout that is copied into the worktree.
 type Worktree struct {
 	Checkout string
@@ -57,7 +58,11 @@ func CreateWorktree(ctx context.Context, w Worktree) (Created, error) {
 	if _, err := Git(ctx, 30*time.Second, w.Checkout, "worktree", "prune"); err != nil {
 		return Created{}, err
 	}
-	if _, err := Git(ctx, time.Minute, w.Checkout, "worktree", "add", "--quiet", "-b", w.Branch, w.Path, base); err != nil {
+	add := []string{"worktree", "add", "--quiet", "--detach", w.Path, base}
+	if w.Branch != "" {
+		add = []string{"worktree", "add", "--quiet", "-b", w.Branch, w.Path, base}
+	}
+	if _, err := Git(ctx, time.Minute, w.Checkout, add...); err != nil {
 		return Created{}, err
 	}
 
@@ -67,6 +72,13 @@ func CreateWorktree(ctx context.Context, w Worktree) (Created, error) {
 		}
 	}
 	return Created{DefaultBranch: strings.TrimPrefix(ref, "origin/"), Base: base}, nil
+}
+
+// RemoveWorktree deletes the worktree at path from checkout, with whatever
+// the commands in it left behind.
+func RemoveWorktree(ctx context.Context, checkout, path string) error {
+	_, err := Git(ctx, time.Minute, checkout, "worktree", "remove", "--force", path)
+	return err
 }
 
 func commitSpec(ctx context.Context, w Worktree, spec []byte) error {

@@ -123,44 +123,44 @@ func statusOf(err error) int {
 	}
 }
 
-type Client struct{ http *http.Client }
+// Client calls loopd. add waits on trial instead of http, because loopd
+// bounds the Trial gate by the Loop's own timeout.
+type Client struct{ http, trial *http.Client }
 
 func NewClient(socket string) *Client {
 	dialer := net.Dialer{Timeout: 2 * time.Second}
-	return &Client{http: &http.Client{
-		// run fetches origin and adds a worktree before it answers.
-		Timeout: 5 * time.Minute,
-		Transport: &http.Transport{
-			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-				return dialer.DialContext(ctx, "unix", socket)
-			},
+	transport := &http.Transport{
+		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return dialer.DialContext(ctx, "unix", socket)
 		},
-	}}
+	}
+	// run fetches origin and adds a worktree before it answers.
+	return &Client{http: &http.Client{Timeout: 5 * time.Minute, Transport: transport}, trial: &http.Client{Transport: transport}}
 }
 
 func (c *Client) List(ctx context.Context) ([]daemon.LoopStatus, error) {
 	var loops []daemon.LoopStatus
-	err := call(ctx, c, http.MethodGet, "/loops", nil, &loops)
+	err := call(ctx, c.http, http.MethodGet, "/loops", nil, &loops)
 	return loops, err
 }
 
-// Add registers a Loop file and returns the Loop's name.
+// Add registers a Loop file once its Trial gate passes and returns the Loop's name.
 func (c *Client) Add(ctx context.Context, data []byte) (string, error) {
 	var name string
-	err := call(ctx, c, http.MethodPost, "/loops", data, &name)
+	err := call(ctx, c.trial, http.MethodPost, "/loops", data, &name)
 	return name, err
 }
 
 func (c *Client) Remove(ctx context.Context, name string) error {
-	return call[struct{}](ctx, c, http.MethodDelete, "/loops/"+url.PathEscape(name), nil, nil)
+	return call[struct{}](ctx, c.http, http.MethodDelete, "/loops/"+url.PathEscape(name), nil, nil)
 }
 
 func (c *Client) Pause(ctx context.Context, name string) error {
-	return call[struct{}](ctx, c, http.MethodPost, "/loops/"+url.PathEscape(name)+"/pause", nil, nil)
+	return call[struct{}](ctx, c.http, http.MethodPost, "/loops/"+url.PathEscape(name)+"/pause", nil, nil)
 }
 
 func (c *Client) Resume(ctx context.Context, name string) error {
-	return call[struct{}](ctx, c, http.MethodPost, "/loops/"+url.PathEscape(name)+"/resume", nil, nil)
+	return call[struct{}](ctx, c.http, http.MethodPost, "/loops/"+url.PathEscape(name)+"/resume", nil, nil)
 }
 
 // Run starts a Job of the named Loop; spec is an absolute path or empty.
@@ -170,42 +170,42 @@ func (c *Client) Run(ctx context.Context, name, spec string) (store.Job, error) 
 		return store.Job{}, err
 	}
 	var j store.Job
-	err = call(ctx, c, http.MethodPost, "/loops/"+url.PathEscape(name)+"/run", body, &j)
+	err = call(ctx, c.http, http.MethodPost, "/loops/"+url.PathEscape(name)+"/run", body, &j)
 	return j, err
 }
 
 func (c *Client) Job(ctx context.Context, id int64) (daemon.JobLog, error) {
 	var log daemon.JobLog
-	err := call(ctx, c, http.MethodGet, "/jobs/"+strconv.FormatInt(id, 10), nil, &log)
+	err := call(ctx, c.http, http.MethodGet, "/jobs/"+strconv.FormatInt(id, 10), nil, &log)
 	return log, err
 }
 
 func (c *Client) Requeue(ctx context.Context, name string, issue int) error {
-	return call[struct{}](ctx, c, http.MethodPost, "/loops/"+url.PathEscape(name)+"/requeue/"+strconv.Itoa(issue), nil, nil)
+	return call[struct{}](ctx, c.http, http.MethodPost, "/loops/"+url.PathEscape(name)+"/requeue/"+strconv.Itoa(issue), nil, nil)
 }
 
 func (c *Client) Stop(ctx context.Context, name string) error {
-	return call[struct{}](ctx, c, http.MethodPost, "/loops/"+url.PathEscape(name)+"/stop", nil, nil)
+	return call[struct{}](ctx, c.http, http.MethodPost, "/loops/"+url.PathEscape(name)+"/stop", nil, nil)
 }
 
 func (c *Client) Takeover(ctx context.Context, id int64) (store.Job, error) {
 	var j store.Job
-	err := call(ctx, c, http.MethodPost, "/jobs/"+strconv.FormatInt(id, 10)+"/takeover", nil, &j)
+	err := call(ctx, c.http, http.MethodPost, "/jobs/"+strconv.FormatInt(id, 10)+"/takeover", nil, &j)
 	return j, err
 }
 
 func (c *Client) Handback(ctx context.Context, id int64) (store.Job, error) {
 	var j store.Job
-	err := call(ctx, c, http.MethodPost, "/jobs/"+strconv.FormatInt(id, 10)+"/handback", nil, &j)
+	err := call(ctx, c.http, http.MethodPost, "/jobs/"+strconv.FormatInt(id, 10)+"/handback", nil, &j)
 	return j, err
 }
 
-func call[T any](ctx context.Context, c *Client, method, path string, body []byte, out *T) error {
+func call[T any](ctx context.Context, client *http.Client, method, path string, body []byte, out *T) error {
 	req, err := http.NewRequestWithContext(ctx, method, "http://loopd"+path, bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
-	res, err := c.http.Do(req)
+	res, err := client.Do(req)
 	if errors.Is(err, syscall.ENOENT) || errors.Is(err, syscall.ECONNREFUSED) {
 		return ErrNotRunning
 	}

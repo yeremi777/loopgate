@@ -32,15 +32,13 @@ esac
 	gitIn(t, checkout, "commit", "-q", "--allow-empty", "-m", "base")
 	gitIn(t, checkout, "push", "-q", "origin", "HEAD:main")
 	gitIn(t, checkout, "remote", "set-head", "origin", "main")
-	gitIn(t, checkout, "remote", "set-url", "origin", "https://github.com/me/app.git")
-	gitIn(t, checkout, "config", "url."+origin+".insteadOf", "https://github.com/me/app.git")
 	file := filepath.Join(root, "issues.yaml")
 	loop := "name: issues\ncheckout: " + checkout + "\ntrigger:\n  github: { repo: me/app, label: agent, every: 1s }\nverify: test -f ok.txt\nbounds: { max_iterations: 2, timeout: 1m }\n"
 	if err := os.WriteFile(file, []byte(loop), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	e.load(file)
 	e.startLoopd()
-	e.mustLoopctl("add", file)
 
 	comment := filepath.Join(rec, "comment.5")
 	for deadline := time.Now().Add(45 * time.Second); time.Now().Before(deadline); time.Sleep(250 * time.Millisecond) {

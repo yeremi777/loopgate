@@ -133,6 +133,14 @@ func newRunEnv(t *testing.T) *runEnv {
 	t.Cleanup(func() { _ = st.Close() })
 	r := &runEnv{st: st, checkout: checkout, stages: &scriptedStages{gate: make(chan struct{})},
 		issues: &fakeIssues{comments: map[int][]string{}, labels: map[int]string{}}}
+	// The deps verify command fails on main until a Job adds ok.txt, so these
+	// Loops are loaded as files, which loopd reads at start without a trial gate.
+	for name, loop := range map[string]string{
+		"deps":   "name: deps\ncheckout: " + checkout + "\ntrigger:\n  timer: { every: 1h }\ntask: bump go dependencies\nverify: test -f ok.txt || { echo missing ok.txt; exit 1; }\nbounds: { max_iterations: 3, timeout: 1m }\n",
+		"issues": "name: issues\ncheckout: " + checkout + "\ntrigger:\n  github: { repo: me/app, label: agent, every: 10m }\nverify: true\nbounds: { max_iterations: 3, timeout: 1m }\n",
+	} {
+		writeFile(filepath.Join(home, "loops", name+".yaml"), loop)
+	}
 	shell := runner.Runner{Environ: os.Environ(), Cache: os.TempDir()}
 	d, err := New(home, st, Deps{
 		Pipeline: job.Pipeline{Stages: r.stages, Shell: shell, Publisher: fakePublisher{}},
@@ -148,14 +156,6 @@ func newRunEnv(t *testing.T) *runEnv {
 	}
 	t.Cleanup(d.Close)
 	r.d = d
-	for _, loop := range []string{
-		"name: deps\ncheckout: " + checkout + "\ntrigger:\n  timer: { every: 1h }\ntask: bump go dependencies\nverify: test -f ok.txt || { echo missing ok.txt; exit 1; }\nbounds: { max_iterations: 3, timeout: 1m }\n",
-		"name: issues\ncheckout: " + checkout + "\ntrigger:\n  github: { repo: me/app, label: agent, every: 10m }\nverify: true\nbounds: { max_iterations: 3, timeout: 1m }\n",
-	} {
-		if _, err := d.Add([]byte(loop)); err != nil {
-			t.Fatal(err)
-		}
-	}
 	return r
 }
 

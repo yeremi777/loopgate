@@ -85,6 +85,36 @@ func TestLoopdServesLoopctlAndKeepsStateAcrossRestart(t *testing.T) {
 	}
 }
 
+func TestAddRunsTheTrialGateAndRefusesARedOne(t *testing.T) {
+	env := newEnv(t, "exit 0")
+	env.startLoopd()
+	checkout := gittest.Checkout(t, "https://github.com/me/app.git")
+	write := func(verify string) string {
+		file := filepath.Join(t.TempDir(), "fix.yaml")
+		loop := strings.Replace(fixLoop(checkout), `verify: "true"`, "verify: "+verify, 1)
+		if err := os.WriteFile(file, []byte(loop), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return file
+	}
+
+	out, code := env.loopctl("add", write("echo main is red; exit 1"))
+	if code == 0 || !strings.Contains(out, "main is red") || !strings.Contains(out, "not added") {
+		t.Fatalf("red add: exit %d, output %q", code, out)
+	}
+	if out := env.mustLoopctl("list"); hasRow(out, "fix", "active") {
+		t.Fatalf("red loop listed: %q", out)
+	}
+
+	out = env.mustLoopctl("add", write("echo main is green"))
+	if !strings.Contains(out, "trial gate") || !strings.Contains(out, "added fix") {
+		t.Fatalf("green add output %q", out)
+	}
+	if out := env.mustLoopctl("list"); !hasRow(out, "fix", "active") {
+		t.Fatalf("green loop not listed: %q", out)
+	}
+}
+
 type env struct {
 	t    *testing.T
 	home string
@@ -129,6 +159,23 @@ func (e env) mustLoopctl(args ...string) string {
 		e.t.Fatalf("loopctl %v: exit %d: %s", args, code, out)
 	}
 	return out
+}
+
+// load puts a Loop file where loopd reads it at start, for a Loop whose
+// verify command fails on main until a Job runs, which add would refuse.
+func (e env) load(file string) {
+	e.t.Helper()
+	data, err := os.ReadFile(file)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	name := strings.TrimSuffix(filepath.Base(file), ".yaml")
+	if err := os.MkdirAll(filepath.Join(e.home, "loops"), 0o700); err != nil {
+		e.t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(e.home, "loops", name+".yaml"), data, 0o600); err != nil {
+		e.t.Fatal(err)
+	}
 }
 
 func (e env) startLoopd() *exec.Cmd {

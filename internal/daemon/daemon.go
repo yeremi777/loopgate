@@ -84,6 +84,9 @@ func (d *Daemon) Add(data []byte) (config.Loop, error) {
 	if err := checkCheckout(d.ctx, loop); err != nil {
 		return config.Loop{}, err
 	}
+	if err := d.trial(loop); err != nil {
+		return config.Loop{}, err
+	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if _, ok := d.loops[loop.Name]; ok {
