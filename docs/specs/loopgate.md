@@ -60,8 +60,8 @@ A local macOS service (`loopd`) and CLI (`loopctl`) that run Claude Code with th
 - AC-28: A `manual` or Blocked Job does not hold its Loop's slot or the global running cap.
 
 ### Service and harness
-- AC-29: `loopctl install-service` writes `~/Library/LaunchAgents/<label>.plist` that passes `plutil -lint` and has `RunAtLoad` true.
-- AC-30: The repo ships a Claude Code skill that drives `loopctl` for list, run with a Spec, logs, Takeover, and Handback; `rubric` judges it.
+- AC-29: `loopctl install` writes `~/Library/LaunchAgents/<label>.plist` that passes `plutil -lint` and has `RunAtLoad` true, starts it with `launchctl bootstrap`, replacing a loaded copy, and installs the loopgate skill into `~/.claude/skills/loopgate`; `loopctl uninstall` stops the agent and removes the plist and the skill.
+- AC-30: The binaries carry a Claude Code skill, installed by `loopctl install`, that drives `loopctl` for list, run with a Spec, logs, Takeover, and Handback; `rubric` judges it.
 
 ### Public repo
 - AC-31: `README.md` opens with what loopgate is and the rule that it never merges and stops at a draft PR; `rubric` judges it.
@@ -72,6 +72,6 @@ A local macOS service (`loopd`) and CLI (`loopctl`) that run Claude Code with th
 - `go vet ./...`
 - `go test -race ./...`
 - `golangci-lint run`
-- `plutil -lint ~/Library/LaunchAgents/<label>.plist` (AC-29)
+- `go test ./e2e/ -run TestInstall` (AC-29)
 - `rubric` (AC-30, AC-31)
 - Demo: in a scratch GitHub repo, `loopctl add examples/fix-issues.yaml`, label an issue `agent`, and `loopctl logs <job>` shows drill, implement, the Verify gate, and a draft PR link.

@@ -13,6 +13,7 @@ import (
 	"github.com/yeremi777/loopgate/internal/daemon"
 	"github.com/yeremi777/loopgate/internal/ipc"
 	"github.com/yeremi777/loopgate/internal/service"
+	"github.com/yeremi777/loopgate/skills"
 )
 
 const usage = `loopctl controls loopd, which runs Claude Code on loops and stops at a draft PR.
@@ -29,7 +30,8 @@ usage:
   loopctl takeover <job>               take a job, stopping it if it runs, and hand its worktree to you
   loopctl handback <job>               give a taken-over job back to its loop
   loopctl requeue <name> <issue>       let a github loop run an issue again
-  loopctl install-service              start loopd at login with launchd`
+  loopctl install                      start loopd now and at login, and add the Claude Code skill
+  loopctl uninstall                    stop loopd and remove the agent and the skill`
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
@@ -54,8 +56,10 @@ func run(args []string) error {
 	}
 	cmd, rest := args[0], args[1:]
 	switch {
-	case cmd == "install-service" && len(rest) == 0:
-		return installService(home)
+	case cmd == "install" && len(rest) == 0:
+		return install(home)
+	case cmd == "uninstall" && len(rest) == 0:
+		return uninstall()
 	case cmd == "list" && len(rest) == 0:
 		loops, err := c.List(ctx)
 		if err != nil {
@@ -155,9 +159,9 @@ func jobID(s string) (int64, error) {
 	return id, nil
 }
 
-// installService writes the launchd agent for the loopd that sits next to
-// this loopctl, and says how to start it.
-func installService(home string) error {
+// install writes the launchd agent for the loopd that sits next to this
+// loopctl, starts it, and installs the loopgate skill for Claude Code.
+func install(home string) error {
 	exe, err := os.Executable()
 	if err != nil {
 		return err
@@ -176,14 +180,52 @@ func installService(home string) error {
 	if err := os.MkdirAll(home, 0o700); err != nil {
 		return err
 	}
-	path, err := service.Install(filepath.Join(user, "Library", "LaunchAgents"), service.Config{Loopd: loopd, Home: home, Path: os.Getenv("PATH")})
+	plist, err := service.Install(agentsDir(user), service.Config{Loopd: loopd, Home: home, Path: os.Getenv("PATH")})
 	if err != nil {
 		return err
 	}
-	fmt.Printf("wrote %s\nstart it now and at every login with:\n  launchctl bootstrap gui/%d %s\nlogs: %s\n",
-		path, os.Getuid(), path, filepath.Join(home, "loopd.log"))
+	if err := service.Load(plist); err != nil {
+		return err
+	}
+	dir := skillDir(user)
+	if info, err := os.Lstat(dir); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		if err := os.Remove(dir); err != nil {
+			return err
+		}
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), skills.Loopgate, 0o644); err != nil {
+		return err
+	}
+	fmt.Printf("loopd runs now and at every login; its log is %s\nthe loopgate skill is in %s\nnext: copy a loop file from examples/ and run loopctl add <file>\n",
+		filepath.Join(home, "loopd.log"), dir)
 	return nil
 }
+
+// uninstall stops loopd and removes what install added. Loops, jobs and
+// worktrees in the loopd home stay.
+func uninstall() error {
+	user, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	service.Unload()
+	plist := filepath.Join(agentsDir(user), service.Label+".plist")
+	if err := os.Remove(plist); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if err := os.RemoveAll(skillDir(user)); err != nil {
+		return err
+	}
+	fmt.Println("loopd stopped; the agent and the loopgate skill are removed")
+	return nil
+}
+
+func agentsDir(user string) string { return filepath.Join(user, "Library", "LaunchAgents") }
+
+func skillDir(user string) string { return filepath.Join(user, ".claude", "skills", "loopgate") }
 
 func printLog(log daemon.JobLog) {
 	j := log.Job

@@ -162,15 +162,24 @@ func hasRow(out, name, state string) bool {
 }
 
 
-func TestInstallServiceWritesAgentForBuiltLoopd(t *testing.T) {
+func TestInstallStartsTheAgentAndInstallsTheSkillThenUninstallUndoesIt(t *testing.T) {
 	e := newEnv(t, "exit 0")
 	home := t.TempDir()
-	cmd := e.cmd("loopctl", "install-service")
-	cmd.Env = append(cmd.Env, "HOME="+home)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("install-service: %v: %s", err, out)
+	calls := filepath.Join(t.TempDir(), "launchctl")
+	fakes := strings.SplitN(e.path, ":", 2)[0]
+	writeExec(t, filepath.Join(fakes, "launchctl"), "#!/bin/sh\necho \"$*\" >> "+calls+"\n[ \"$1\" = bootout ] && exit 3\nexit 0\n")
+	run := func(args ...string) string {
+		t.Helper()
+		cmd := e.cmd("loopctl", args...)
+		cmd.Env = append(cmd.Env, "HOME="+home)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("loopctl %v: %v: %s", args, err, out)
+		}
+		return string(out)
 	}
+
+	run("install")
 	plist := filepath.Join(home, "Library/LaunchAgents/loopgate.loopd.plist")
 	if lint, err := exec.Command("plutil", "-lint", plist).CombinedOutput(); err != nil {
 		t.Fatalf("plutil -lint: %v: %s", err, lint)
@@ -186,8 +195,20 @@ func TestInstallServiceWritesAgentForBuiltLoopd(t *testing.T) {
 	if got := strings.TrimSpace(string(args)); got != want {
 		t.Fatalf("agent runs %q, want the loopd next to loopctl", got)
 	}
-	if !strings.Contains(string(out), "launchctl bootstrap gui/") {
-		t.Fatalf("output does not say how to start it: %s", out)
+	skill := filepath.Join(home, ".claude/skills/loopgate/SKILL.md")
+	if body := readFile(t, skill); !strings.Contains(body, "name: loopgate") {
+		t.Fatalf("skill not installed: %q", body)
+	}
+	uid := strconv.Itoa(os.Getuid())
+	if got := readFile(t, calls); got != "bootout gui/"+uid+"/loopgate.loopd\nbootstrap gui/"+uid+" "+plist+"\n" {
+		t.Fatalf("launchctl calls %q", got)
+	}
+
+	run("uninstall")
+	for _, gone := range []string{plist, skill} {
+		if _, err := os.Stat(gone); !os.IsNotExist(err) {
+			t.Fatalf("%s still there after uninstall", gone)
+		}
 	}
 }
 

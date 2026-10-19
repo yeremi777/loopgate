@@ -5,8 +5,12 @@ import (
 	"bytes"
 	"encoding/xml"
 	"errors"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"text/template"
 )
 
@@ -81,4 +85,19 @@ func escape(s string) (string, error) {
 	var b bytes.Buffer
 	err := xml.EscapeText(&b, []byte(s))
 	return b.String(), err
+}
+
+// Load starts the agent now and at every login, replacing a loaded copy.
+func Load(plist string) error {
+	domain := "gui/" + strconv.Itoa(os.Getuid())
+	_ = exec.Command("launchctl", "bootout", domain+"/"+Label).Run()
+	if out, err := exec.Command("launchctl", "bootstrap", domain, plist).CombinedOutput(); err != nil {
+		return fmt.Errorf("launchctl bootstrap: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// Unload stops the agent; an agent that is not loaded is already stopped.
+func Unload() {
+	_ = exec.Command("launchctl", "bootout", "gui/"+strconv.Itoa(os.Getuid())+"/"+Label).Run()
 }

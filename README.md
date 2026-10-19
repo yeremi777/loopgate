@@ -4,6 +4,17 @@ loopgate runs Claude Code on your work while you are away, gates the result on y
 
 It is the outer loop around a Claude Code harness you already have: your `CLAUDE.md`, skills and hooks run every stage. loopgate decides when a job starts, gives each job its own git worktree, gates each implement run, retries within bounds, and ships the draft PR. It runs locally on macOS.
 
+## When to use it
+
+| Hand it to the loop | Stay in your own Claude Code session |
+|---|---|
+| The work is settled: a spec you drilled, or a small issue with one clear reading | The design is still open, and you want to drill, prototype or decide as you go |
+| You are away from your desk, or busy with other work | You want to watch each step and steer it |
+| A recurring chore on a schedule, such as dependency bumps | The change needs secrets, accounts, production systems or a data migration; loopgate blocks those anyway |
+| A verify command can prove the result | Only a person can judge the result, such as how a UI feels |
+
+You can switch at any time: take a running job back into your session, and hand it back when you are done.
+
 ## How a job runs
 
 ```mermaid
@@ -40,31 +51,44 @@ flowchart LR
 
 Pass or fail comes only from your verify command's exit code, never from the model's claim. Each stage is a fresh `claude -p` session; what earlier implement runs learned reaches the next one through a progress log.
 
-## Requirements
-
-- macOS, Go 1.26.5 or newer, git.
-- [Claude Code](https://claude.com/claude-code), logged in. Jobs use your login and count against your usage.
-- [GitHub CLI](https://cli.github.com), logged in: `gh auth login`, then `gh auth setup-git`. loopgate stores no tokens.
-- The stage skills `drill`, `implement`, `rubric`, `land` and `tldr` in your user-level Claude Code setup. loopgate calls them by name and does not ship them. They come from [pwguler/skills](https://github.com/pwguler/skills): `npx skills add pwguler/skills`, then choose Claude Code. [Skills](#skills) lists what each stage needs from them.
-
 ## Install
+
+**1. Prerequisites**, once:
+
+- macOS, git, and Go 1.26.5 or newer.
+- [Claude Code](https://claude.com/claude-code), logged in. Jobs use your login and count against your usage.
+- [GitHub CLI](https://cli.github.com), logged in. loopgate stores no tokens.
+  ```sh
+  brew install gh
+  gh auth login
+  gh auth setup-git
+  ```
+- The stage skills from [pwguler/skills](https://github.com/pwguler/skills). Install them before loopgate, and choose Claude Code when asked. Every job calls `drill`, `implement`, `rubric`, `land` and `tldr` by name.
+  ```sh
+  npx skills add pwguler/skills
+  ```
+
+**2. loopgate:**
 
 ```sh
 go install github.com/yeremi777/loopgate/cmd/...@latest
-loopctl install-service
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/loopgate.loopd.plist
+loopctl install
 ```
 
-From a clone, run the same steps from its root, and link the Claude Code skill:
+From a clone, run `go install ./cmd/...` and `loopctl install` from its root instead.
 
-```sh
-go install ./cmd/...
-loopctl install-service
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/loopgate.loopd.plist
-ln -s "$PWD/skills/loopgate" ~/.claude/skills/loopgate
-```
+`loopctl install` starts `loopd` now and at every login with launchd, restarts it after a crash, and adds the loopgate skill to `~/.claude/skills/loopgate`. Run it again after an upgrade; it replaces the loaded copy. `loopctl uninstall` stops `loopd` and removes the agent and the skill; your loops and jobs in `~/.loopd` stay.
 
-`install-service` writes a launchd agent that starts `loopd` at login with your current `PATH`, and restarts it after a crash. Its log is `~/.loopd/loopd.log`. After `PATH` changes, run it again, then `launchctl bootout gui/$(id -u)/loopgate.loopd` and bootstrap again. To remove it: bootout, then delete the plist.
+**3. Check it:** `loopctl list` prints a table with only its header row. If it says `loopd not running`, read `~/.loopd/loopd.log`.
+
+### Configuration
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `PATH` | your shell's | `loopctl install` hands it to `loopd`, which finds `claude`, `gh` and `git` through it. After you move any of them, run `loopctl install` again. |
+| `LOOPD_HOME` | `~/.loopd` | Where loops, jobs, worktrees, caches and the log live. Set it before `loopctl install`, and in every shell that runs `loopctl`. Keep it short: its socket path must stay under 104 bytes. |
+
+No `.env` file and no token are needed: Claude Code and `gh` keep their own logins in your keychain.
 
 `loopd` only runs while your Mac is awake. A timer fire missed during sleep runs once on wake; further missed fires are dropped.
 
@@ -112,14 +136,7 @@ The draft PR opens with loopgate's report: the commit that passed the gate and t
 
 ### From a Claude Code session
 
-The repo ships a skill that drives `loopctl` for you. Install it once from a clone:
-
-```sh
-git clone https://github.com/yeremi777/loopgate ~/code/loopgate
-ln -s ~/code/loopgate/skills/loopgate ~/.claude/skills/loopgate
-```
-
-Then say "hand docs/specs/x.md to the loop", "loop status", or "take over job 3".
+`loopctl install` adds a loopgate skill that drives `loopctl` for you. In any session, say "hand docs/specs/x.md to the loop", "loop status", or "take over job 3".
 
 ## Skills
 
@@ -147,8 +164,7 @@ Summaries follow your `tldr` skill.
 
 ## Acknowledgements
 
-- The stage skills that every Job runs, `drill`, `implement`, `rubric`, `land` and `tldr`, are [pwguler/skills](https://github.com/pwguler/skills) (MIT). loopgate is the outer loop around them; it runs them unattended and adds its own gates.
-- Ideas, not code, came from [pwguler/pi-loop](https://github.com/pwguler/pi-loop) (interval and cron scheduling, a single-owner lock, skip-if-busy fires, hard bounds) and [taufik-hdyt25/AIAgent](https://github.com/taufik-hdyt25/AIAgent) (headless `claude`, a branch per task, process-group kill, environment sanitizing, issue to draft PR).
+The stage skills that every Job runs, `drill`, `implement`, `rubric`, `land` and `tldr`, are [pwguler/skills](https://github.com/pwguler/skills) (MIT). loopgate is the outer loop around them: it runs them unattended and adds its own gates.
 
 ## License
 
