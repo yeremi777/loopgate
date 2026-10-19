@@ -250,7 +250,7 @@ func install(home string) error {
 	if info, err := os.Stat(log); err == nil {
 		logged = info.Size()
 	}
-	if err := service.Load(plist); err != nil {
+	if err := service.Load(plist, os.Stdout); err != nil {
 		return err
 	}
 	dir := skillDir(user)

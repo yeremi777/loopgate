@@ -6,6 +6,7 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -90,17 +91,24 @@ func escape(s string) (string, error) {
 
 // unloadWait bounds how long Load waits for a loaded loopd to stop, which
 // ends its running Job first.
-const unloadWait = time.Minute
+const unloadWait = 60 * time.Second
 
-// Load starts the agent now and at every login, replacing a loaded copy.
-func Load(plist string) error {
+// Load starts the agent now and at every login, replacing a loaded copy, and
+// tells out when it waits for that copy to stop.
+func Load(plist string, out io.Writer) error {
 	domain := "gui/" + strconv.Itoa(os.Getuid())
-	_ = exec.Command("launchctl", "bootout", domain+"/"+Label).Run()
+	bootout, _ := exec.Command("launchctl", "bootout", domain+"/"+Label).CombinedOutput()
 	// bootout returns while launchd is still stopping the old loopd, and
 	// bootstrap fails with an I/O error until launchd no longer has it.
-	for deadline := time.Now().Add(unloadWait); exec.Command("launchctl", "print", domain+"/"+Label).Run() == nil; time.Sleep(100 * time.Millisecond) {
+	loaded := func() bool { return exec.Command("launchctl", "print", domain+"/"+Label).Run() == nil }
+	for deadline, waiting := time.Now().Add(unloadWait), false; loaded(); time.Sleep(100 * time.Millisecond) {
+		if !waiting {
+			_, _ = fmt.Fprintln(out, "waiting for the running loopd to stop")
+			waiting = true
+		}
 		if time.Now().After(deadline) {
-			return fmt.Errorf("the running loopd did not stop within %s; run loopctl install again", unloadWait)
+			return fmt.Errorf("the running loopd did not stop within %d seconds (launchctl bootout: %s); run loopctl install again",
+				int(unloadWait.Seconds()), strings.TrimSpace(string(bootout)))
 		}
 	}
 	if out, err := exec.Command("launchctl", "bootstrap", domain, plist).CombinedOutput(); err != nil {

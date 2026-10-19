@@ -253,7 +253,10 @@ func TestInstallStartsTheAgentAndInstallsTheSkillThenUninstallUndoesIt(t *testin
 	if body := readFile(t, skill); !strings.Contains(body, "name: loopgate") {
 		t.Fatalf("skill not installed: %q", body)
 	}
-	if out := run("install"); !strings.Contains(out, "loopd answers") {
+	if strings.Contains(out, "waiting for the running loopd to stop") {
+		t.Fatalf("first install waited for a loopd that was not loaded: %q", out)
+	}
+	if out := run("install"); !strings.Contains(out, "waiting for the running loopd to stop\n") || !strings.Contains(out, "loopd answers") {
 		t.Fatalf("install over a loopd that stops slowly: %q", out)
 	}
 	uid := strconv.Itoa(os.Getuid())
@@ -347,7 +350,7 @@ func fakeLaunchd(t *testing.T, e env) (calls string) {
 	writeExec(t, filepath.Join(fakes, "launchctl"), `#!/bin/sh
 echo "$*" >> `+calls+`
 case "$1" in
-bootout) [ -f `+pid+` ] || exit 3; (sleep 1; kill $(cat `+pid+`); rm `+pid+`) > /dev/null 2>&1 & exit 0;;
+bootout) [ -f `+pid+` ] || exit 3; (sleep 1; p=$(cat `+pid+`); kill $p; while kill -0 $p; do sleep 0.05; done; rm `+pid+`) > /dev/null 2>&1 & exit 0;;
 print) [ -f `+pid+` ] || exit 113;;
 bootstrap)
 	[ -f `+pid+` ] && { echo "Bootstrap failed: 5: Input/output error"; exit 5; }
