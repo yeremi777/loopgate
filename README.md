@@ -83,6 +83,8 @@ From a clone, run `go install ./cmd/...` and `loopctl install` from its root ins
 
 To upgrade, run the same `go install …@latest` and `loopctl install` again.
 
+To remove loopgate, run `loopctl uninstall`, then delete the binaries with `rm "$(go env GOPATH)/bin/loopd" "$(go env GOPATH)/bin/loopctl"`. Delete `~/.loopd` too to drop your loops, jobs and caches.
+
 ### Configuration
 
 | Variable | Default | Meaning |
