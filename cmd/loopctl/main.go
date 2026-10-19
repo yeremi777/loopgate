@@ -34,7 +34,7 @@ usage:
   loopctl run <name> [--spec <path>]   start a job now on --spec, or a timer loop's own task or spec
   loopctl stop <name>                  end the loop's running job; the loop stays
   loopctl logs <job>                   show a job's state, branch, PR, cost and progress
-  loopctl logs -f <job>                then follow the running job live until it ends; Ctrl-C leaves it running
+  loopctl logs -f <job>                show that, then follow the running job until it ends; Ctrl-C leaves it running
   loopctl takeover <job>               take a job, stopping it if it runs, and hand its worktree to you
   loopctl handback <job>               give a taken-over job back to its loop
   loopctl requeue <name> <issue>       let a github loop run an issue again

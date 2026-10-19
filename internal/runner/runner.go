@@ -177,9 +177,9 @@ func (s *streamJSON) line(data []byte) {
 }
 
 // toolArg is the input that says most about a tool call: the file, command,
-// pattern, path, URL or description it names.
+// pattern, path, URL, skill or description it names.
 func toolArg(input map[string]any) string {
-	for _, key := range []string{"file_path", "command", "pattern", "path", "url", "description"} {
+	for _, key := range []string{"file_path", "command", "pattern", "path", "url", "skill", "description"} {
 		if v, ok := input[key].(string); ok && firstLine(v) != "" {
 			return firstLine(v)
 		}

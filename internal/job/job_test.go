@@ -98,7 +98,7 @@ func TestEventsShowEachStageEachGateAndThePublishInOrder(t *testing.T) {
 		"implement 1 | done $0.10",
 		"verify 1 | setup: true",
 		"verify 1 | verify: " + j.Loop.Verify,
-		"verify 1 | FAIL verify command exited 1",
+		"verify 1 | fail: verify command exited 1",
 		"verify 1 | │ missing ok.txt",
 		"implement 2 | start",
 		"implement 2 | done $0.10",

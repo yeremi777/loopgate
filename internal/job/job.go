@@ -289,7 +289,7 @@ func (r *jobRun) gate(ctx context.Context, i int) (verify.Outcome, error) {
 		r.job.Feed.Bound(name, "pass: verify command exited 0")
 	default:
 		lines := strings.Split(strings.TrimSpace(gate.Output), "\n")
-		r.job.Feed.Bound(name, "FAIL "+strings.TrimSuffix(lines[0], ":"))
+		r.job.Feed.Bound(name, "fail: "+strings.TrimSuffix(lines[0], ":"))
 		for _, line := range lines[max(1, len(lines)-gateTail):] {
 			r.job.Feed.Line(name, "│ "+line)
 		}

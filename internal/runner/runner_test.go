@@ -146,6 +146,7 @@ func TestStageLogsToolCallsAndTextAndReadsTheFinalResultLine(t *testing.T) {
 		`{"type":"user","message":{"content":[{"type":"tool_result","content":"package job"}]}}`,
 		`{"type":"assistant","parent_tool_use_id":"toolu_1","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"go test ./...\necho done","description":"run tests"}}]}}`,
 		`{"type":"assistant","parent_tool_use_id":null,"message":{"content":[{"type":"tool_use","name":"TodoWrite","input":{"todos":[]}}]}}`,
+		`{"type":"assistant","parent_tool_use_id":null,"message":{"content":[{"type":"tool_use","name":"Skill","input":{"skill":"rubric","args":"x"}}]}}`,
 		`{"type":"assistant","parent_tool_use_id":null,"message":{"content":[{"type":"tool_use","name":"StructuredOutput","input":{"status":"done","summary":"fixed it"}}]}}`,
 		doneJSON,
 	}
@@ -162,7 +163,7 @@ func TestStageLogsToolCallsAndTextAndReadsTheFinalResultLine(t *testing.T) {
 	if want := (Result{Status: StatusDone, Summary: "fixed it", CostUSD: 0.25}); res != want {
 		t.Fatalf("got %+v, want %+v", res, want)
 	}
-	if want := []string{"I will fix the tail.", "Read /w/job.go", "  Bash go test ./...", "TodoWrite"}; !slices.Equal(logged, want) {
+	if want := []string{"I will fix the tail.", "Read /w/job.go", "  Bash go test ./...", "TodoWrite", "Skill rubric"}; !slices.Equal(logged, want) {
 		t.Fatalf("logged %q, want %q", logged, want)
 	}
 }

@@ -18,7 +18,7 @@
 - AC-5: `loopctl logs -f <job>` exits 0 when the Job reaches done, blocked, exhausted, failed or manual, after it prints the final state with the PR link, the question or the error; for a Job that is not queued or running it prints the snapshot and the final state and exits 0 at once; a queued Job is followed from when it starts.
 - AC-6: Ending `loopctl logs -f` leaves the Job running to its outcome, and the events endpoint is a `GET` that changes no state.
 - AC-7: A Job never waits for a viewer: a viewer that falls behind is ended with `viewer fell behind` and a non-zero exit, and a viewer whose `loopd` stops prints `loopd stopped` and exits non-zero.
-- AC-8: On a terminal, `loopctl logs -f` cuts each line to the terminal width, ending a cut line in `…`; piped output is not cut.
+- AC-8: On a terminal, `loopctl logs -f` cuts each event line to the terminal width, ending a cut line in `…`, and prints the snapshot and the outcome whole; piped output is not cut; control characters in what it prints are replaced.
 - AC-9: `README.md` names `loopctl logs -f <job>`, and `docs/specs/loopgate.md` AC-5 lists `logs -f <job>` and AC-7 names `--output-format stream-json --verbose`.
 
 ## Verification
