@@ -9,13 +9,14 @@ import (
 	"net/http"
 	"net/url"
 	"reflect"
+	"sync"
 	"testing"
 	"time"
 )
 
 // echoUpstream stands in for every remote host: the proxy's dial reaches it
-// whatever address the tunnel names.
-func echoUpstream(t *testing.T) func(context.Context, string, string) (net.Conn, error) {
+// whatever address the tunnel names, and the addresses asked for are recorded.
+func echoUpstream(t *testing.T, dialed ...*[]string) func(context.Context, string, string) (net.Conn, error) {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -31,7 +32,13 @@ func echoUpstream(t *testing.T) func(context.Context, string, string) (net.Conn,
 			go func() { _, _ = io.Copy(c, c); _ = c.Close() }()
 		}
 	}()
-	return func(ctx context.Context, network, _ string) (net.Conn, error) {
+	var mu sync.Mutex
+	return func(ctx context.Context, network, addr string) (net.Conn, error) {
+		mu.Lock()
+		for _, d := range dialed {
+			*d = append(*d, addr)
+		}
+		mu.Unlock()
 		var d net.Dialer
 		return d.DialContext(ctx, network, ln.Addr().String())
 	}
@@ -56,7 +63,8 @@ func connect(t *testing.T, p *proxy, target string) (int, net.Conn) {
 }
 
 func TestProxyTunnelsToNetworkDomainsOnPort443(t *testing.T) {
-	p, err := startProxy([]string{"registry.npmjs.org", "*.pythonhosted.org"}, echoUpstream(t))
+	var dialed []string
+	p, err := startProxy([]string{"registry.npmjs.org", "*.pythonhosted.org"}, echoUpstream(t, &dialed))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,6 +84,9 @@ func TestProxyTunnelsToNetworkDomainsOnPort443(t *testing.T) {
 	}
 	if got := p.close(); got != nil {
 		t.Fatalf("refused %q, want none", got)
+	}
+	if want := []string{"registry.npmjs.org:443", "registry.npmjs.org:443", "files.pythonhosted.org:443"}; !reflect.DeepEqual(dialed, want) {
+		t.Fatalf("dialed %q, want %q", dialed, want)
 	}
 }
 

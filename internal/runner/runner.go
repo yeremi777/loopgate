@@ -185,6 +185,7 @@ func (r Runner) childEnv() []string {
 		"GOMODCACHE="+filepath.Join(r.Cache, "gomod"),
 		"npm_config_cache="+filepath.Join(r.Cache, "npm"),
 		"npm_config_store_dir="+filepath.Join(r.Cache, "pnpm-store"),
+		"npm_config_cache_dir="+filepath.Join(r.Cache, "pnpm"),
 		"UV_CACHE_DIR="+filepath.Join(r.Cache, "uv"),
 		"PIP_CACHE_DIR="+filepath.Join(r.Cache, "pip"))
 	if r.GoProxy != "" {

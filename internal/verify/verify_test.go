@@ -75,13 +75,14 @@ func TestGateRunsSetupBeforeTheVerifyCommand(t *testing.T) {
 
 func TestGateLetsSetupReachTheLoopsNetwork(t *testing.T) {
 	repo := newRepo(t)
-	loop := config.Loop{Setup: "curl -s -m 5 -o /dev/null https://example.com/; exit 1", Verify: "true", Network: []string{"example.com"}}
+	// The proxy answers 200 when it reaches example.com and 502 when this machine is offline.
+	loop := config.Loop{Setup: "curl -s -m 5 -o /dev/null -w 'connect-%{http_connect}\\n' https://example.com/; exit 1", Verify: "true", Network: []string{"example.com"}}
 	out, err := Gate(context.Background(), shell(), repo, loop, time.Minute, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(out.Output, "refused") {
-		t.Fatalf("setup was refused a network domain:\n%s", out.Output)
+	if !strings.Contains(out.Output, "connect-200") && !strings.Contains(out.Output, "connect-502") {
+		t.Fatalf("setup did not get a tunnel to its network domain:\n%s", out.Output)
 	}
 }
 
