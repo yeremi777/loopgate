@@ -21,7 +21,7 @@ A work item that one sentence states, with its check, and that needs no Spec.
 _Avoid_: quick fix, small task
 
 **Verify gate**:
-The exit codes of a Loop's Setup command, when set, and its verify command on a Job's worktree, which alone decide pass or fail.
+The exit codes of a Loop's Setup command, when set, and its verify command on a Job's clean, committed worktree that the Setup command leaves unchanged, which alone decide pass or fail.
 _Avoid_: check, test step
 
 **Setup command**:
