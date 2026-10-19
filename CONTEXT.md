@@ -28,6 +28,10 @@ _Avoid_: check, test step
 A Loop's optional command that installs the worktree's dependencies through `loopd`'s proxy at the start of each Verify gate, so the verify command can run offline.
 _Avoid_: install step, bootstrap, prepare
 
+**Trial gate**:
+A Verify gate that `loopctl add` runs on a fresh worktree of origin's default branch, which must pass before the Loop is added.
+_Avoid_: dry run, smoke test, preflight
+
 **Takeover**:
 A human taking a Job from the Loop to continue it by hand in its worktree.
 _Avoid_: pause, interrupt

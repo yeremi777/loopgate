@@ -21,6 +21,8 @@ A local macOS service (`loopd`) and CLI (`loopctl`) that run Claude Code with th
 - AC-4: Loops, Jobs, Job states, and handled issue numbers survive a `loopd` restart.
 - AC-5: `loopctl list | add <file> | remove <name> | pause <name> | resume <name> | stop <name> | run <name> [--spec <path>] | logs <job> | takeover <job> | handback <job> | requeue <name> <issue>` reach `loopd` over `~/.loopd/loopd.sock`; with `loopd` down, `loopctl` exits non-zero with `loopd not running`.
 - AC-6: `loopd` refuses to start, with a message that names `gh auth login`, when `gh auth status` fails.
+- AC-39: `loopctl add` refuses a Loop, naming the cause, when its `checkout` is not the top level of a git work tree, when the checkout has no `refs/remotes/origin/HEAD`, with an error that names `git -C <checkout> remote set-head origin --auto`, or when a GitHub Loop's `repo` differs from the `owner/repo` of the checkout's `origin` remote.
+- AC-40: `loopctl add` adds a Loop only after its Trial gate passes: the Loop's Verify gate, run after a fetch on a new detached worktree of `origin/<default>` and bounded by `bounds.timeout`; a failing Trial gate adds nothing and prints the gate's output, including each host the proxy refused, and the worktree is removed after either outcome.
 
 ### Runner
 - AC-7: Each stage runs `claude -p` in the Job worktree with `--permission-mode auto`, `--permission-prompts none`, a `--json-schema` for `{status: done|blocked|revise, question, summary}`, `--setting-sources user`, `--strict-mcp-config`, and `--settings` that enable the sandbox with no unsandboxed escape, allow network only to the Loop's `network` domains, deny reads of credential directories and writes to the repository's git config, hooks and `.git` pointer, and deny commands that start with `gh`, `git push`, or `git merge`; each stage's `total_cost_usd` is recorded on its Job.
@@ -63,7 +65,7 @@ A local macOS service (`loopd`) and CLI (`loopctl`) that run Claude Code with th
 - AC-28: A `manual` or Blocked Job does not hold its Loop's slot or the global running cap.
 
 ### Service and harness
-- AC-29: `loopctl install` writes `~/Library/LaunchAgents/<label>.plist` that passes `plutil -lint` and has `RunAtLoad` true, starts it with `launchctl bootstrap`, replacing a loaded copy, and installs the loopgate skill into `~/.claude/skills/loopgate`; `loopctl uninstall` stops the agent and removes the plist and the skill.
+- AC-29: `loopctl install` writes `~/Library/LaunchAgents/<label>.plist` that passes `plutil -lint` and has `RunAtLoad` true, with a `PATH` that is the installing shell's `PATH` with each entry resolved through symlinks and each missing entry dropped; it starts the agent with `launchctl bootstrap`, replacing a loaded copy, installs the loopgate skill into `~/.claude/skills/loopgate`, prints where `claude`, `gh`, `git`, `node` and `go` resolve on that `PATH`, and exits non-zero with `loopd`'s error when `loopd` does not answer on its socket; `loopctl uninstall` stops the agent and removes the plist and the skill.
 - AC-30: The binaries carry a Claude Code skill, installed by `loopctl install`, that drives `loopctl` for list, run with a Spec, logs, Takeover, and Handback; `rubric` judges it.
 
 ### Public repo
@@ -76,6 +78,7 @@ A local macOS service (`loopd`) and CLI (`loopctl`) that run Claude Code with th
 - `go test -race ./...`
 - `golangci-lint run`
 - `go test ./e2e/ -run TestInstall` (AC-29)
+- `go test ./e2e/ -run TestAdd` (AC-39, AC-40)
 - `rubric` (AC-30, AC-31)
 - Demo: in a scratch GitHub repo, `loopctl add examples/fix-issues.yaml`, label an issue `agent`, and `loopctl logs <job>` shows drill, implement, the Verify gate, and a draft PR link.
 - Demo: in a scratch GitHub repo with a TypeScript package, a Loop with `setup: npm ci`, `verify: npm test` and `network: [registry.npmjs.org]` takes a labeled issue to a draft PR.
