@@ -11,6 +11,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/yeremi777/loopgate/internal/gittest"
 )
 
 var bin string
@@ -31,14 +33,9 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-const fixLoop = `
-name: fix
-checkout: /src/app
-trigger:
-  github: { repo: me/app, label: agent, every: 10m }
-verify: go test ./...
-bounds: { max_iterations: 5, timeout: 20m }
-`
+func fixLoop(checkout string) string {
+	return "name: fix\ncheckout: " + checkout + "\ntrigger:\n  github: { repo: me/app, label: agent, every: 10m }\nverify: \"true\"\nbounds: { max_iterations: 5, timeout: 20m }\n"
+}
 
 func TestLoopctlWithoutLoopd(t *testing.T) {
 	env := newEnv(t, "exit 0")
@@ -62,7 +59,7 @@ func TestLoopdServesLoopctlAndKeepsStateAcrossRestart(t *testing.T) {
 	loopd := env.startLoopd()
 
 	file := filepath.Join(t.TempDir(), "fix.yaml")
-	if err := os.WriteFile(file, []byte(fixLoop), 0o600); err != nil {
+	if err := os.WriteFile(file, []byte(fixLoop(gittest.Checkout(t, "https://github.com/me/app.git"))), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	env.mustLoopctl("add", file)

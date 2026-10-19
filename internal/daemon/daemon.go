@@ -78,6 +78,12 @@ func (d *Daemon) Add(data []byte) (config.Loop, error) {
 	if err != nil {
 		return config.Loop{}, err
 	}
+	if err := d.exists(loop.Name); err != nil {
+		return config.Loop{}, err
+	}
+	if err := checkCheckout(d.ctx, loop); err != nil {
+		return config.Loop{}, err
+	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if _, ok := d.loops[loop.Name]; ok {
@@ -95,6 +101,17 @@ func (d *Daemon) Add(data []byte) (config.Loop, error) {
 	}
 	d.loops[loop.Name] = loop
 	return loop, nil
+}
+
+// exists fails with ErrLoopExists when name is taken, before a slow check
+// that Add would otherwise waste; Add checks again under the lock.
+func (d *Daemon) exists(name string) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if _, ok := d.loops[name]; ok {
+		return fmt.Errorf("%s: %w", name, ErrLoopExists)
+	}
+	return nil
 }
 
 func (d *Daemon) Remove(name string) error {

@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yeremi777/loopgate/internal/gittest"
 	"github.com/yeremi777/loopgate/internal/job"
 	"github.com/yeremi777/loopgate/internal/runner"
 	"github.com/yeremi777/loopgate/internal/store"
@@ -123,18 +124,8 @@ type runEnv struct {
 
 func newRunEnv(t *testing.T) *runEnv {
 	t.Helper()
-	root := t.TempDir()
-	origin := filepath.Join(root, "origin.git")
-	gitRun(t, root, "init", "-q", "--bare", "-b", "main", origin)
-	seed := filepath.Join(root, "seed")
-	gitRun(t, root, "clone", "-q", origin, seed)
-	gitRun(t, seed, "checkout", "-q", "-b", "main")
-	gitRun(t, seed, "commit", "-q", "--allow-empty", "-m", "base")
-	gitRun(t, seed, "push", "-q", "origin", "main")
-	checkout := filepath.Join(root, "checkout")
-	gitRun(t, root, "clone", "-q", origin, checkout)
-
-	home := filepath.Join(root, "home")
+	checkout := gittest.Checkout(t, "https://github.com/me/app.git")
+	home := filepath.Join(t.TempDir(), "home")
 	st, err := store.Open(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -197,8 +188,8 @@ type scriptedStages struct {
 	gate       chan struct{}
 	failFirst  bool
 	blockFirst bool
-	mu        sync.Mutex
-	prompts   []string
+	mu         sync.Mutex
+	prompts    []string
 }
 
 func (s *scriptedStages) Run(ctx context.Context, st runner.Stage) (runner.Result, error) {

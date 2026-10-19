@@ -10,23 +10,22 @@ import (
 	"testing"
 
 	"github.com/yeremi777/loopgate/internal/daemon"
+	"github.com/yeremi777/loopgate/internal/gittest"
+	"github.com/yeremi777/loopgate/internal/job"
+	"github.com/yeremi777/loopgate/internal/runner"
 	"github.com/yeremi777/loopgate/internal/store"
 )
 
-const fixLoop = `
-name: fix
-checkout: /src/app
-trigger:
-  github: { repo: me/app, label: agent, every: 10m }
-verify: go test ./...
-bounds: { max_iterations: 5, timeout: 20m }
-`
+func fixLoop(checkout string) string {
+	return "name: fix\ncheckout: " + checkout + "\ntrigger:\n  github: { repo: me/app, label: agent, every: 10m }\nverify: \"true\"\nbounds: { max_iterations: 5, timeout: 20m }\n"
+}
 
 func TestCommandsReachDaemon(t *testing.T) {
 	c := serve(t)
 	ctx := context.Background()
+	checkout := gittest.Checkout(t, "https://github.com/me/app.git")
 
-	name, err := c.Add(ctx, []byte(fixLoop))
+	name, err := c.Add(ctx, []byte(fixLoop(checkout)))
 	if err != nil || name != "fix" {
 		t.Fatalf("add: name=%q err=%v", name, err)
 	}
@@ -37,14 +36,14 @@ func TestCommandsReachDaemon(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := []daemon.LoopStatus{{Name: "fix", Paused: true, Trigger: "github me/app", Checkout: "/src/app"}}; !reflect.DeepEqual(got, want) {
+	if want := []daemon.LoopStatus{{Name: "fix", Paused: true, Trigger: "github me/app", Checkout: checkout}}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("after pause: got %+v, want %+v", got, want)
 	}
 	if err := c.Resume(ctx, "fix"); err != nil {
 		t.Fatal(err)
 	}
 	got, _ = c.List(ctx)
-	if want := []daemon.LoopStatus{{Name: "fix", Trigger: "github me/app", Checkout: "/src/app"}}; !reflect.DeepEqual(got, want) {
+	if want := []daemon.LoopStatus{{Name: "fix", Trigger: "github me/app", Checkout: checkout}}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("after resume: got %+v, want %+v", got, want)
 	}
 	if err := c.Remove(ctx, "fix"); err != nil {
@@ -98,7 +97,7 @@ func serve(t *testing.T) *Client {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	d, err := daemon.New(home, st, daemon.Deps{})
+	d, err := daemon.New(home, st, daemon.Deps{Pipeline: job.Pipeline{Shell: runner.Runner{Environ: os.Environ(), Cache: os.TempDir()}}})
 	if err != nil {
 		t.Fatal(err)
 	}
