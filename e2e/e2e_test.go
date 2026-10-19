@@ -205,13 +205,10 @@ func hasRow(out, name, state string) bool {
 	return false
 }
 
-
 func TestInstallStartsTheAgentAndInstallsTheSkillThenUninstallUndoesIt(t *testing.T) {
 	e := newEnv(t, "exit 0")
 	home := t.TempDir()
-	calls := filepath.Join(t.TempDir(), "launchctl")
-	fakes := strings.SplitN(e.path, ":", 2)[0]
-	writeExec(t, filepath.Join(fakes, "launchctl"), "#!/bin/sh\necho \"$*\" >> "+calls+"\n[ \"$1\" = bootout ] && exit 3\nexit 0\n")
+	calls := fakeLaunchd(t, e)
 	gone := filepath.Join(t.TempDir(), "gone")
 	run := func(args ...string) string {
 		t.Helper()
@@ -224,7 +221,14 @@ func TestInstallStartsTheAgentAndInstallsTheSkillThenUninstallUndoesIt(t *testin
 		return string(out)
 	}
 
-	run("install")
+	out := run("install")
+	fakes, err := filepath.EvalSymlinks(strings.SplitN(e.path, ":", 2)[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, filepath.Join(fakes, "gh")) || !strings.Contains(out, "loopd answers") {
+		t.Fatalf("install output %q; want where gh resolved and that loopd answers", out)
+	}
 	plist := filepath.Join(home, "Library/LaunchAgents/loopgate.loopd.plist")
 	if lint, err := exec.Command("plutil", "-lint", plist).CombinedOutput(); err != nil {
 		t.Fatalf("plutil -lint: %v: %s", err, lint)
@@ -262,6 +266,50 @@ func TestInstallStartsTheAgentAndInstallsTheSkillThenUninstallUndoesIt(t *testin
 			t.Fatalf("%s still there after uninstall", gone)
 		}
 	}
+}
+
+func TestInstallFailsWithLoopdsErrorWhenLoopdCannotStart(t *testing.T) {
+	e := newEnv(t, "exit 1")
+	fakeLaunchd(t, e)
+	cmd := e.cmd("loopctl", "install")
+	cmd.Env = append(cmd.Env, "HOME="+t.TempDir())
+	start := time.Now()
+	out, err := cmd.CombinedOutput()
+	if err == nil || !strings.Contains(string(out), "gh auth login") {
+		t.Fatalf("err %v, output %q; want failure naming gh auth login", err, out)
+	}
+	if took := time.Since(start); took > 10*time.Second {
+		t.Fatalf("install took %s to see loopd's error", took)
+	}
+}
+
+// fakeLaunchd puts a launchctl on e's PATH that records its calls, starts the
+// plist's program with the plist's env and log as launchd does on bootstrap,
+// and stops it on bootout. It also adds a claude for loopd to find.
+func fakeLaunchd(t *testing.T, e env) (calls string) {
+	t.Helper()
+	dir := t.TempDir()
+	calls, pid := filepath.Join(dir, "calls"), filepath.Join(dir, "pid")
+	fakes := strings.SplitN(e.path, ":", 2)[0]
+	writeExec(t, filepath.Join(fakes, "claude"), "#!/bin/sh\nexit 0\n")
+	writeExec(t, filepath.Join(fakes, "launchctl"), `#!/bin/sh
+echo "$*" >> `+calls+`
+case "$1" in
+bootout) [ -f `+pid+` ] && kill $(cat `+pid+`) && rm `+pid+`; exit 3;;
+bootstrap)
+	plist=$3
+	x() { plutil -extract "$1" raw "$plist"; }
+	LOOPD_HOME=$(x EnvironmentVariables.LOOPD_HOME) PATH=$(x EnvironmentVariables.PATH) "$(x ProgramArguments.0)" >> "$(x StandardErrorPath)" 2>&1 &
+	echo $! > `+pid+`;;
+esac
+exit 0
+`)
+	t.Cleanup(func() {
+		if data, err := os.ReadFile(pid); err == nil {
+			_ = exec.Command("kill", strings.TrimSpace(string(data))).Run()
+		}
+	})
+	return calls
 }
 
 func TestHelpExitsZeroAndExplainsStop(t *testing.T) {

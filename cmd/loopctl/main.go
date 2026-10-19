@@ -9,7 +9,9 @@ import (
 	"path/filepath"
 	"runtime/debug"
 	"strconv"
+	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/yeremi777/loopgate/internal/config"
 	"github.com/yeremi777/loopgate/internal/daemon"
@@ -202,11 +204,27 @@ func install(home string) error {
 	if err := os.MkdirAll(home, 0o700); err != nil {
 		return err
 	}
-	plist, err := service.Install(agentsDir(user), service.Config{Loopd: loopd, Home: home, Path: service.ResolvePath(os.Getenv("PATH"))})
+	path := service.ResolvePath(os.Getenv("PATH"))
+	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+	for _, tool := range []string{"claude", "gh", "git", "node", "go"} {
+		_, _ = fmt.Fprintf(w, "%s\t%s\n", tool, lookIn(path, tool))
+	}
+	if err := w.Flush(); err != nil {
+		return err
+	}
+	plist, err := service.Install(agentsDir(user), service.Config{Loopd: loopd, Home: home, Path: path})
 	if err != nil {
 		return err
 	}
+	log := filepath.Join(home, "loopd.log")
+	var logged int64
+	if info, err := os.Stat(log); err == nil {
+		logged = info.Size()
+	}
 	if err := service.Load(plist); err != nil {
+		return err
+	}
+	if err := awaitLoopd(home, log, logged); err != nil {
 		return err
 	}
 	dir := skillDir(user)
@@ -221,9 +239,51 @@ func install(home string) error {
 	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), skills.Loopgate, 0o644); err != nil {
 		return err
 	}
-	fmt.Printf("loopd runs now and at every login; its log is %s\nthe loopgate skill is in %s\nnext: copy a loop file from examples/ and run loopctl add <file>\n",
-		filepath.Join(home, "loopd.log"), dir)
+	fmt.Printf("loopd answers now and starts at every login; its log is %s\nthe loopgate skill is in %s\nnext: copy a loop file from examples/ and run loopctl add <file>\n",
+		log, dir)
 	return nil
+}
+
+// lookIn finds name in the directories of path, as the shell would.
+func lookIn(path, name string) string {
+	for _, dir := range filepath.SplitList(path) {
+		file := filepath.Join(dir, name)
+		if info, err := os.Stat(file); err == nil && info.Mode().IsRegular() && info.Mode()&0o111 != 0 {
+			return file
+		}
+	}
+	return "not found"
+}
+
+// awaitLoopd waits until loopd answers on its socket, and fails with the
+// error loopd wrote to its log after offset when it exits first. loopd's gh
+// check alone may take 15s.
+func awaitLoopd(home, log string, offset int64) error {
+	c := ipc.NewClient(daemon.Socket(home))
+	for deadline := time.Now().Add(30 * time.Second); time.Now().Before(deadline); time.Sleep(200 * time.Millisecond) {
+		if _, err := c.List(context.Background()); err == nil {
+			return nil
+		}
+		if msg := loggedError(log, offset); msg != "" {
+			return fmt.Errorf("loopd did not start: %s", msg)
+		}
+	}
+	return fmt.Errorf("loopd did not answer within 30s; see %s", log)
+}
+
+// loggedError is the last error loopd wrote to log after offset: its
+// "loopd: " line and the lines after it.
+func loggedError(log string, offset int64) string {
+	data, err := os.ReadFile(log)
+	if err != nil || int64(len(data)) <= offset {
+		return ""
+	}
+	tail := "\n" + string(data[offset:])
+	i := strings.LastIndex(tail, "\nloopd: ")
+	if i < 0 {
+		return ""
+	}
+	return strings.TrimSpace(tail[i+len("\nloopd: "):])
 }
 
 // uninstall stops loopd and removes what install added. Loops, jobs and
