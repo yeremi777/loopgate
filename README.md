@@ -4,6 +4,8 @@ loopgate runs Claude Code on your work while you are away, gates the result on y
 
 It is the outer loop around a Claude Code harness you already have: your `CLAUDE.md`, skills and hooks run every stage. loopgate decides when a job starts, gives each job its own git worktree, gates each implement run, retries within bounds, and ships the draft PR. It runs locally on macOS.
 
+To install or upgrade, go to [Install](#install).
+
 ## When to use it
 
 | Hand it to the loop | Stay in your own Claude Code session |
