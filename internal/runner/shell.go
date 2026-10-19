@@ -48,6 +48,13 @@ func (r Runner) Shell(ctx context.Context, dir, script string, timeout time.Dura
 	return ShellResult{Output: out.String()}, nil
 }
 
+// Setup runs script as Shell does, because it runs code the model can change,
+// and gives it network only through a proxy that reaches the network domains.
+// The output ends with the hosts the proxy refused.
+func (r Runner) Setup(ctx context.Context, dir, script string, timeout time.Duration, denyWrite, network []string) (ShellResult, error) {
+	return ShellResult{}, errors.New("not implemented")
+}
+
 // seatbelt builds the Shell profile. Later rules override earlier ones.
 func seatbelt(writable, denyWrite, denyRead []string) (string, error) {
 	var b strings.Builder

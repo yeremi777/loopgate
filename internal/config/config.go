@@ -21,6 +21,7 @@ type Loop struct {
 	Name      string
 	Checkout  string
 	Trigger   Trigger
+	Setup     string
 	Verify    string
 	Bounds    Bounds
 	Protected []string

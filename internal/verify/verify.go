@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/yeremi777/loopgate/internal/config"
 	"github.com/yeremi777/loopgate/internal/runner"
 )
 
@@ -18,10 +19,10 @@ type Outcome struct {
 	Output string
 }
 
-// Gate runs command in dir and passes only a clean, committed tree whose
-// command exits 0. The command may not write guard, the repository files
-// that loopd's own git trusts.
-func Gate(ctx context.Context, r runner.Runner, dir, command string, timeout time.Duration, guard []string) (Outcome, error) {
+// Gate runs the Loop's verify command in dir and passes only a clean,
+// committed tree whose command exits 0. The command may not write guard, the
+// repository files that loopd's own git trusts.
+func Gate(ctx context.Context, r runner.Runner, dir string, loop config.Loop, timeout time.Duration, guard []string) (Outcome, error) {
 	status, err := runner.Git(ctx, 30*time.Second, dir, "status", "--porcelain")
 	if err != nil {
 		return Outcome{}, err
@@ -33,7 +34,7 @@ func Gate(ctx context.Context, r runner.Runner, dir, command string, timeout tim
 	if err != nil {
 		return Outcome{}, err
 	}
-	res, err := r.Shell(ctx, dir, command, timeout, guard)
+	res, err := r.Shell(ctx, dir, loop.Verify, timeout, guard)
 	if err != nil {
 		return Outcome{}, fmt.Errorf("verify command: %w", err)
 	}
