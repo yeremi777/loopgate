@@ -74,24 +74,35 @@ func TestInstallRefusesRelativeOrMissingParts(t *testing.T) {
 	}
 }
 
-func TestResolvePathFollowsSymlinksAndDropsWhatLaunchdCannotUse(t *testing.T) {
+func TestResolvePathCollapsesLinksToLinksAndDropsWhatLaunchdCannotUse(t *testing.T) {
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	real := filepath.Join(root, "node-v20", "bin")
+	version := filepath.Join(root, "node-versions", "v20")
 	plain := filepath.Join(root, "plain")
-	for _, dir := range []string{real, plain} {
+	for _, dir := range []string{filepath.Join(version, "bin"), plain} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
+	alias := filepath.Join(root, "aliases-default")
 	shell := filepath.Join(root, "multishell")
-	if err := os.Symlink(filepath.Join(root, "node-v20"), shell); err != nil {
-		t.Fatal(err)
+	opt := filepath.Join(root, "opt-node")
+	for link, target := range map[string]string{alias: version, shell: alias, opt: version} {
+		if err := os.Symlink(target, link); err != nil {
+			t.Fatal(err)
+		}
 	}
-	path := strings.Join([]string{filepath.Join(shell, "bin"), filepath.Join(root, "gone"), "", ".", "bin", plain}, ":")
-	if got, want := ResolvePath(path), real+":"+plain; got != want {
+	path := strings.Join([]string{
+		filepath.Join(shell, "bin"),
+		filepath.Join(opt, "bin"),
+		filepath.Join(root, "gone"),
+		"", ".", "bin",
+		plain,
+	}, ":")
+	want := strings.Join([]string{filepath.Join(alias, "bin"), filepath.Join(opt, "bin"), plain}, ":")
+	if got := ResolvePath(path); got != want {
 		t.Fatalf("got %q, want %q", got, want)
 	}
 }

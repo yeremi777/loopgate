@@ -102,19 +102,53 @@ func Unload() {
 	_ = exec.Command("launchctl", "bootout", "gui/"+strconv.Itoa(os.Getuid())+"/"+Label).Run()
 }
 
-// ResolvePath returns path with each entry resolved through symlinks, so a
-// version manager's per-shell link does not vanish under loopd, and with
-// each relative or missing entry dropped. A version picked through a link is
-// pinned until the next install.
+// ResolvePath returns path with each link to a link collapsed and each
+// relative or missing entry dropped. A version manager's per-shell link (fnm's)
+// points at its stable alias link, which then stays in loopd's PATH and
+// follows the manager's default; a link to a real directory, such as
+// Homebrew's opt link, stays as it is and follows upgrades.
 func ResolvePath(path string) string {
 	var out []string
 	for _, dir := range filepath.SplitList(path) {
 		if !filepath.IsAbs(dir) {
 			continue
 		}
-		if real, err := filepath.EvalSymlinks(dir); err == nil {
-			out = append(out, real)
+		dir = collapseLinks(dir)
+		if info, err := os.Stat(dir); err == nil && info.IsDir() {
+			out = append(out, dir)
 		}
 	}
 	return strings.Join(out, string(filepath.ListSeparator))
+}
+
+// collapseLinks walks dir from the root and replaces each link whose target
+// is itself a link with that target, until a link points at a real file.
+func collapseLinks(dir string) string {
+	out := "/"
+	for _, part := range strings.Split(filepath.Clean(dir), "/")[1:] {
+		next := filepath.Join(out, part)
+		for hops := 0; hops < 40; hops++ {
+			target, ok := linkTarget(next)
+			if !ok {
+				break
+			}
+			if _, linked := linkTarget(target); !linked {
+				break
+			}
+			next = target
+		}
+		out = next
+	}
+	return out
+}
+
+func linkTarget(path string) (string, bool) {
+	target, err := os.Readlink(path)
+	if err != nil {
+		return "", false
+	}
+	if !filepath.IsAbs(target) {
+		target = filepath.Join(filepath.Dir(path), target)
+	}
+	return target, true
 }

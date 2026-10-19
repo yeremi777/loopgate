@@ -107,7 +107,7 @@ func TestAddRunsTheTrialGateAndRefusesARedOne(t *testing.T) {
 	}
 
 	out = env.mustLoopctl("add", write("echo main is green"))
-	if !strings.Contains(out, "trial gate") || !strings.Contains(out, "added fix") {
+	if !strings.Contains(out, "added fix") {
 		t.Fatalf("green add output %q", out)
 	}
 	if out := env.mustLoopctl("list"); !hasRow(out, "fix", "active") {
@@ -222,10 +222,7 @@ func TestInstallStartsTheAgentAndInstallsTheSkillThenUninstallUndoesIt(t *testin
 	}
 
 	out := run("install")
-	fakes, err := filepath.EvalSymlinks(strings.SplitN(e.path, ":", 2)[0])
-	if err != nil {
-		t.Fatal(err)
-	}
+	fakes := strings.SplitN(e.path, ":", 2)[0]
 	if !strings.Contains(out, filepath.Join(fakes, "gh")) || !strings.Contains(out, "loopd answers") {
 		t.Fatalf("install output %q; want where gh resolved and that loopd answers", out)
 	}

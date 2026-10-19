@@ -13,7 +13,6 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/yeremi777/loopgate/internal/config"
 	"github.com/yeremi777/loopgate/internal/daemon"
 	"github.com/yeremi777/loopgate/internal/ipc"
 	"github.com/yeremi777/loopgate/internal/service"
@@ -89,11 +88,7 @@ func run(args []string) error {
 		if err != nil {
 			return err
 		}
-		loop, err := config.Parse(data)
-		if err != nil {
-			return err
-		}
-		fmt.Printf("checking %s, then running the trial gate on origin's default branch for up to %s\n", loop.Checkout, loop.Bounds.Timeout)
+		fmt.Println("checking the checkout, then running the trial gate on origin's default branch")
 		name, err := c.Add(ctx, data)
 		if err != nil {
 			return err
@@ -224,9 +219,6 @@ func install(home string) error {
 	if err := service.Load(plist); err != nil {
 		return err
 	}
-	if err := awaitLoopd(home, log, logged); err != nil {
-		return err
-	}
 	dir := skillDir(user)
 	if info, err := os.Lstat(dir); err == nil && info.Mode()&os.ModeSymlink != 0 {
 		if err := os.Remove(dir); err != nil {
@@ -237,6 +229,9 @@ func install(home string) error {
 		return err
 	}
 	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), skills.Loopgate, 0o644); err != nil {
+		return err
+	}
+	if err := awaitLoopd(home, log, logged); err != nil {
 		return err
 	}
 	fmt.Printf("loopd answers now and starts at every login; its log is %s\nthe loopgate skill is in %s\nnext: copy a loop file from examples/ and run loopctl add <file>\n",
