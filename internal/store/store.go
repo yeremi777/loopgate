@@ -161,14 +161,40 @@ func (s *Store) updateJob(id int64, query string, args ...any) error {
 	return nil
 }
 
+const jobColumns = `id, loop, state, work, branch, worktree, base, issue, question, summary, pr_url, cost_usd, error`
+
+func scanJob(row interface{ Scan(...any) error }) (Job, error) {
+	var job Job
+	err := row.Scan(&job.ID, &job.Loop, &job.State, &job.Work, &job.Branch, &job.Worktree, &job.Base, &job.Issue, &job.Question, &job.Summary, &job.PRURL, &job.CostUSD, &job.Error)
+	return job, err
+}
+
 func (s *Store) Job(id int64) (Job, error) {
-	job := Job{ID: id}
-	err := s.db.QueryRow(`SELECT loop, state, work, branch, worktree, base, issue, question, summary, pr_url, cost_usd, error FROM jobs WHERE id = ?`, id).
-		Scan(&job.Loop, &job.State, &job.Work, &job.Branch, &job.Worktree, &job.Base, &job.Issue, &job.Question, &job.Summary, &job.PRURL, &job.CostUSD, &job.Error)
+	job, err := scanJob(s.db.QueryRow(`SELECT `+jobColumns+` FROM jobs WHERE id = ?`, id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return Job{}, fmt.Errorf("job %d: %w", id, ErrNotFound)
 	}
 	return job, err
+}
+
+// Jobs are every Job that is not done and the five newest done ones, newest first.
+func (s *Store) Jobs() ([]Job, error) {
+	rows, err := s.db.Query(`SELECT `+jobColumns+` FROM jobs
+		WHERE state != ? OR id IN (SELECT id FROM jobs WHERE state = ? ORDER BY id DESC LIMIT 5)
+		ORDER BY id DESC`, Done, Done)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var jobs []Job
+	for rows.Next() {
+		job, err := scanJob(rows)
+		if err != nil {
+			return nil, err
+		}
+		jobs = append(jobs, job)
+	}
+	return jobs, rows.Err()
 }
 
 // ClaimIssue records issue as handled by loop, and reports whether it was new.
