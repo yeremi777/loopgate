@@ -84,6 +84,25 @@ func TestFailedGateFeedsItsOutputToTheNextImplementRun(t *testing.T) {
 	}
 }
 
+func TestFailedSetupFeedsItsOutputToTheNextImplementRun(t *testing.T) {
+	j := newJob(t, 3)
+	j.Loop.Setup = `test -f ok.txt || { echo "setup needs ok.txt"; exit 1; }`
+	f := &fakeStages{t: t, steps: []step{
+		reports(runner.StatusDone, "done, trust me"),
+		commits(j, "ok.txt"),
+		reports(runner.StatusDone, "clean"),
+		lands("t\n\nb"),
+	}}
+	out := Pipeline{Stages: f, Shell: shell(), Publisher: &fakePublisher{}}.Run(context.Background(), j)
+	if out.State != store.Done {
+		t.Fatalf("got %+v, want done", out)
+	}
+	f.wantKinds("/implement", "/implement", "/rubric", "/land")
+	if !strings.Contains(f.stages[1].Prompt, "setup needs ok.txt") {
+		t.Fatalf("second implement prompt lacks setup output: %q", f.stages[1].Prompt)
+	}
+}
+
 func TestUncommittedWorkFailsTheGate(t *testing.T) {
 	j := newJob(t, 2)
 	f := &fakeStages{t: t, steps: []step{

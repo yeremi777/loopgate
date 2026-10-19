@@ -18,6 +18,7 @@ checkout: /src/app
 trigger:
   github: { repo: me/app, label: agent, every: 10m }
 verify: "go test ./..."
+setup: npm ci
 bounds: { max_iterations: 5, timeout: 20m }
 protected: [".github/**"]
 tests: ["**/*_test.go"]
@@ -33,6 +34,7 @@ func TestParseGitHubLoop(t *testing.T) {
 		Name:      "fix-issues",
 		Checkout:  "/src/app",
 		Trigger:   GitHub{Repo: "me/app", Label: "agent", Every: 10 * time.Minute},
+		Setup:     "npm ci",
 		Verify:    "go test ./...",
 		Bounds:    Bounds{MaxIterations: 5, Timeout: 20 * time.Minute},
 		Protected: []string{".github/**"},

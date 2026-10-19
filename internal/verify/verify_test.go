@@ -40,16 +40,57 @@ func TestGateRefusesUncommittedWorkWithoutRunningCommand(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			repo := newRepo(t)
 			write(t, filepath.Join(repo, dirty), "uncommitted")
-			marker := filepath.Join(t.TempDir(), "ran")
-			out, err := Gate(context.Background(), shell(), repo, config.Loop{Verify: "touch " + marker}, time.Minute, nil)
+			setupMarker, marker := filepath.Join(t.TempDir(), "setup-ran"), filepath.Join(t.TempDir(), "ran")
+			out, err := Gate(context.Background(), shell(), repo, config.Loop{Setup: "touch " + setupMarker, Verify: "touch " + marker}, time.Minute, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
 			if out.Passed || !strings.Contains(out.Output, dirty) {
 				t.Fatalf("got %+v, want failed naming %s", out, dirty)
 			}
+			for _, m := range []string{setupMarker, marker} {
+				if _, err := os.Stat(m); !os.IsNotExist(err) {
+					t.Fatalf("%s: a command ran on a dirty tree", filepath.Base(m))
+				}
+			}
+		})
+	}
+}
+
+func TestGateRunsSetupBeforeTheVerifyCommand(t *testing.T) {
+	repo := newRepo(t)
+	write(t, filepath.Join(repo, ".gitignore"), "node_modules/\n")
+	git(t, repo, "add", ".gitignore")
+	git(t, repo, "commit", "-q", "-m", "ignore deps")
+	loop := config.Loop{Setup: "mkdir -p node_modules && echo installed", Verify: "test -d node_modules && echo checked"}
+	out, err := Gate(context.Background(), shell(), repo, loop, time.Minute, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := (Outcome{Passed: true, Head: git(t, repo, "rev-parse", "HEAD"), Output: "checked\n"}); out != want {
+		t.Fatalf("got %+v, want %+v", out, want)
+	}
+}
+
+func TestGateFailsOnSetupThatFailsOrChangesTheTree(t *testing.T) {
+	cases := map[string]struct{ setup, want string }{
+		"exits non-zero":    {"echo 'npm error E404'; curl -s -m 5 https://example.com/; exit 1", "example.com"},
+		"changes a tracked": {"echo v2 > README", "README"},
+		"leaves untracked":  {"echo x > package-lock.json", "package-lock.json"},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			repo := newRepo(t)
+			marker := filepath.Join(t.TempDir(), "ran")
+			out, err := Gate(context.Background(), shell(), repo, config.Loop{Setup: c.setup, Verify: "touch " + marker}, time.Minute, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if out.Passed || !strings.Contains(out.Output, "setup") || !strings.Contains(out.Output, c.want) {
+				t.Fatalf("got %+v, want failed naming setup and %s", out, c.want)
+			}
 			if _, err := os.Stat(marker); !os.IsNotExist(err) {
-				t.Fatal("verify command ran on a dirty tree")
+				t.Fatal("verify command ran after a failed setup")
 			}
 		})
 	}

@@ -19,9 +19,10 @@ type Outcome struct {
 	Output string
 }
 
-// Gate runs the Loop's verify command in dir and passes only a clean,
-// committed tree whose command exits 0. The command may not write guard, the
-// repository files that loopd's own git trusts.
+// Gate runs the Loop's setup command, when set, then its verify command in
+// dir, and passes only a clean, committed tree that setup leaves unchanged and
+// whose commands both exit 0. Neither command may write guard, the repository
+// files that loopd's own git trusts.
 func Gate(ctx context.Context, r runner.Runner, dir string, loop config.Loop, timeout time.Duration, guard []string) (Outcome, error) {
 	status, err := runner.Git(ctx, 30*time.Second, dir, "status", "--porcelain")
 	if err != nil {
@@ -33,6 +34,22 @@ func Gate(ctx context.Context, r runner.Runner, dir string, loop config.Loop, ti
 	head, err := runner.Git(ctx, 30*time.Second, dir, "rev-parse", "HEAD")
 	if err != nil {
 		return Outcome{}, err
+	}
+	if loop.Setup != "" {
+		setup, err := r.Setup(ctx, dir, loop.Setup, timeout, guard, loop.Network)
+		if err != nil {
+			return Outcome{}, fmt.Errorf("setup command: %w", err)
+		}
+		if setup.ExitCode != 0 {
+			return Outcome{Output: fmt.Sprintf("setup command exited %d:\n%s", setup.ExitCode, setup.Output)}, nil
+		}
+		status, err := runner.Git(ctx, 30*time.Second, dir, "status", "--porcelain")
+		if err != nil {
+			return Outcome{}, err
+		}
+		if status != "" {
+			return Outcome{Output: "setup command changed files that are tracked or not ignored:\n" + status}, nil
+		}
 	}
 	res, err := r.Shell(ctx, dir, loop.Verify, timeout, guard)
 	if err != nil {

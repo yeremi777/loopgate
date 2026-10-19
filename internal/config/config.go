@@ -68,6 +68,7 @@ type rawLoop struct {
 	Trigger   rawTrigger `yaml:"trigger"`
 	Task      string     `yaml:"task"`
 	Spec      string     `yaml:"spec"`
+	Setup     string     `yaml:"setup"`
 	Verify    string     `yaml:"verify"`
 	Bounds    rawBounds  `yaml:"bounds"`
 	Protected []string   `yaml:"protected"`
@@ -154,6 +155,7 @@ func Parse(data []byte) (Loop, error) {
 		Name:      raw.Name,
 		Checkout:  checkout,
 		Trigger:   trigger,
+		Setup:     raw.Setup,
 		Verify:    raw.Verify,
 		Bounds:    Bounds{MaxIterations: raw.Bounds.MaxIterations, Timeout: raw.Bounds.Timeout},
 		Protected: raw.Protected,
