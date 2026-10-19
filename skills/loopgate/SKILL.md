@@ -5,7 +5,7 @@ description: Hand work to the loopgate loop, check on it, or take it back into t
 
 `loopctl` controls `loopd`, which runs Claude Code on a spec or task without the user, gates it on the loop's verify command and a `rubric` review, and stops at a draft PR. `loopctl help` lists every command.
 
-1. Find the loop of this repository: run `loopctl list` and pick the loop whose `CHECKOUT` is this repository's root. When none matches, say so and stop. Adding a loop is the user's decision.
+1. Find the loop of this repository: run `loopctl list` and pick the loop whose `checkout` line is this repository's root, where `~` is the user's home. When none matches, say so and stop. Adding a loop is the user's decision.
 2. Hand over a settled spec with `loopctl run <loop> --spec docs/specs/<slug>.md`. A spec that still has `## Open decisions` is a draft: run `drill` on it first. The spec need not be committed; loopd commits it on the job branch.
 3. Tell the user the job number and branch, and that the result arrives as a draft PR and a macOS notification. Show `loopctl logs <job>` for status.
 4. To take a job back, run `loopctl takeover <job>`. Continue in the worktree path that it prints, with the usual `implement` and `verify` flow. To return it, commit, then run `loopctl handback <job>`.
