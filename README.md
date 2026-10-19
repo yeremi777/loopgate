@@ -79,7 +79,9 @@ From a clone, run `go install ./cmd/...` and `loopctl install` from its root ins
 
 `loopctl install` starts `loopd` now and at every login with launchd, restarts it after a crash, and adds the loopgate skill to `~/.claude/skills/loopgate`. Run it again after an upgrade; it replaces the loaded copy. `loopctl uninstall` stops `loopd` and removes the agent and the skill; your loops and jobs in `~/.loopd` stay.
 
-**3. Check it:** `loopctl list` prints a table with only its header row. If it says `loopd not running`, read `~/.loopd/loopd.log`.
+**3. Check it:** `loopctl version` prints the installed version, and `loopctl list` prints a table with only its header row. If it says `loopd not running`, read `~/.loopd/loopd.log`.
+
+To upgrade, run the same `go install …@latest` and `loopctl install` again.
 
 ### Configuration
 

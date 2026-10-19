@@ -224,3 +224,17 @@ func TestHelpExitsZeroAndExplainsStop(t *testing.T) {
 		}
 	}
 }
+
+func TestVersionNamesTheCommitItWasBuiltFrom(t *testing.T) {
+	e := newEnv(t, "exit 0")
+	head, err := exec.Command("git", "rev-parse", "--short=12", "HEAD").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, arg := range []string{"version", "--version"} {
+		out, code := e.loopctl(arg)
+		if code != 0 || !strings.HasPrefix(out, "loopgate v") || !strings.Contains(out, strings.TrimSpace(string(head))) {
+			t.Fatalf("loopctl %s: exit %d, %q; want a version naming commit %s", arg, code, out, head)
+		}
+	}
+}

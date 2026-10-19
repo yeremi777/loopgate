@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strconv"
 	"text/tabwriter"
 
@@ -31,7 +32,8 @@ usage:
   loopctl handback <job>               give a taken-over job back to its loop
   loopctl requeue <name> <issue>       let a github loop run an issue again
   loopctl install                      start loopd now and at login, and add the Claude Code skill
-  loopctl uninstall                    stop loopd and remove the agent and the skill`
+  loopctl uninstall                    stop loopd and remove the agent and the skill
+  loopctl version                      print the installed loopgate version`
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
@@ -50,8 +52,12 @@ func run(args []string) error {
 	if len(args) == 0 {
 		return errors.New(usage)
 	}
-	if args[0] == "help" || args[0] == "-h" || args[0] == "--help" {
+	switch args[0] {
+	case "help", "-h", "--help":
 		fmt.Println(usage)
+		return nil
+	case "version", "--version":
+		fmt.Println("loopgate " + version())
 		return nil
 	}
 	cmd, rest := args[0], args[1:]
@@ -149,6 +155,16 @@ func run(args []string) error {
 	default:
 		return errors.New(usage)
 	}
+}
+
+// version is the module version that Go stamped into the binary: the release
+// tag for go install @version, else a pseudo-version naming the commit.
+func version() string {
+	info, ok := debug.ReadBuildInfo()
+	if !ok || info.Main.Version == "" {
+		return "(unknown)"
+	}
+	return info.Main.Version
 }
 
 func jobID(s string) (int64, error) {
