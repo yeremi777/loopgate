@@ -125,14 +125,41 @@ func TestAddRefusesACheckoutThatJobsCannotUse(t *testing.T) {
 	}
 }
 
-func TestAddTakesACheckoutPathInAnotherLetterCase(t *testing.T) {
+func TestAddRefusesACheckoutPathInAnotherLetterCaseAndNamesTheRealOne(t *testing.T) {
 	checkout := gittest.Checkout(t, "https://github.com/me/app.git")
 	upper := strings.ToUpper(checkout)
 	if _, err := os.Stat(upper); err != nil {
 		t.Skip("case-sensitive file system")
 	}
-	if _, err := newDaemon(t, t.TempDir()).Add(context.Background(), []byte(fixLoop(upper))); err != nil {
+	real, err := filepath.EvalSymlinks(checkout)
+	if err != nil {
 		t.Fatal(err)
+	}
+	_, err = newDaemon(t, t.TempDir()).Add(context.Background(), []byte(fixLoop(upper)))
+	if err == nil || !strings.Contains(err.Error(), real) {
+		t.Fatalf("err %v, want it to name %s", err, real)
+	}
+}
+
+func TestAddAfterCloseAddsNothing(t *testing.T) {
+	d := newDaemon(t, t.TempDir())
+	checkout := gittest.Checkout(t, "https://github.com/me/app.git")
+	d.Close()
+	if _, err := d.Add(context.Background(), []byte(fixLoop(checkout))); err == nil {
+		t.Fatal("add succeeded after Close")
+	}
+	if got := worktrees(t, checkout); got != 1 {
+		t.Fatalf("%d worktrees, want only the checkout", got)
+	}
+}
+
+func TestNewClearsTrialsLeftByAKilledLoopd(t *testing.T) {
+	home := t.TempDir()
+	left := filepath.Join(home, "trials", "fix-123", "worktree")
+	writeFile(filepath.Join(left, "file"), "x")
+	newDaemon(t, home)
+	if _, err := os.Stat(filepath.Join(home, "trials", "fix-123")); !os.IsNotExist(err) {
+		t.Fatalf("left trial still there: %v", err)
 	}
 }
 

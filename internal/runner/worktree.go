@@ -10,8 +10,8 @@ import (
 	"time"
 )
 
-// Worktree describes a Job worktree cut from the default branch of Checkout's origin,
-// on a new Branch, or detached when Branch is empty.
+// Worktree describes a worktree cut from the default branch of Checkout's
+// origin: a Job's on a new Branch, or a detached one when Branch is empty.
 // Spec, when set, is a path relative to Checkout that is copied into the worktree.
 type Worktree struct {
 	Checkout string
@@ -77,13 +77,37 @@ func CreateWorktree(ctx context.Context, w Worktree) (Created, error) {
 
 // RemoveWorktree deletes the worktree at path, with whatever the commands in
 // it left behind, and drops its registration from checkout, also when adding
-// it stopped halfway.
+// it stopped halfway: git locks a worktree while it adds it, and prune skips
+// a locked one.
 func RemoveWorktree(ctx context.Context, checkout, path string) error {
+	list, err := Git(ctx, 30*time.Second, checkout, "worktree", "list", "--porcelain")
+	if err != nil {
+		return err
+	}
+	for _, entry := range strings.Split(list, "\n\n") {
+		if registered(entry, path) && strings.Contains("\n"+entry, "\nlocked") {
+			if _, err := Git(ctx, 30*time.Second, checkout, "worktree", "unlock", path); err != nil {
+				return err
+			}
+		}
+	}
 	if err := os.RemoveAll(path); err != nil {
 		return err
 	}
-	_, err := Git(ctx, time.Minute, checkout, "worktree", "prune")
+	_, err = Git(ctx, time.Minute, checkout, "worktree", "prune")
 	return err
+}
+
+// registered reports whether a `worktree list --porcelain` entry is path's.
+func registered(entry, path string) bool {
+	listed, ok := strings.CutPrefix(strings.SplitN(entry, "\n", 2)[0], "worktree ")
+	return ok && samePath(listed, path)
+}
+
+func samePath(a, b string) bool {
+	ra, errA := filepath.EvalSymlinks(a)
+	rb, errB := filepath.EvalSymlinks(b)
+	return errA == nil && errB == nil && ra == rb
 }
 
 func commitSpec(ctx context.Context, w Worktree, spec []byte) error {

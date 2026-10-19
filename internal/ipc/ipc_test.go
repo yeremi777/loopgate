@@ -7,7 +7,9 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/yeremi777/loopgate/internal/daemon"
 	"github.com/yeremi777/loopgate/internal/gittest"
@@ -51,6 +53,20 @@ func TestCommandsReachDaemon(t *testing.T) {
 	}
 	if got, _ = c.List(ctx); len(got) != 0 {
 		t.Fatalf("after remove: got %+v", got)
+	}
+}
+
+func TestAddThatTheClientAbandonsAddsNothing(t *testing.T) {
+	c := serve(t)
+	checkout := gittest.Checkout(t, "https://github.com/me/app.git")
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if _, err := c.Add(ctx, []byte(strings.Replace(fixLoop(checkout), `verify: "true"`, "verify: sleep 5", 1))); err == nil {
+		t.Fatal("abandoned add succeeded")
+	}
+	time.Sleep(6 * time.Second)
+	if got, err := c.List(context.Background()); err != nil || len(got) != 0 {
+		t.Fatalf("after an abandoned add: loops %+v, err %v", got, err)
 	}
 }
 

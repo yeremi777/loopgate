@@ -16,10 +16,8 @@ import (
 
 // trial runs the Loop's Verify gate, bounded by its timeout, on a fresh
 // detached worktree of origin's default branch, and removes the worktree.
-// It ends early when ctx ends or loopd closes, and Close waits for it.
+// It ends early when ctx ends or loopd closes.
 func (d *Daemon) trial(ctx context.Context, loop config.Loop) (err error) {
-	d.jobs.Add(1)
-	defer d.jobs.Done()
 	ctx, cancel := context.WithTimeout(ctx, loop.Bounds.Timeout)
 	defer cancel()
 	defer context.AfterFunc(d.ctx, cancel)()
@@ -36,9 +34,7 @@ func (d *Daemon) trial(ctx context.Context, loop config.Loop) (err error) {
 	defer func() {
 		err = errors.Join(err, runner.RemoveWorktree(context.WithoutCancel(ctx), loop.Checkout, wt))
 	}()
-	// git killed halfway through worktree add leaves the worktree locked,
-	// which prune skips, so creation runs to its own git timeouts.
-	made, err := d.createWorktree(context.WithoutCancel(ctx), runner.Worktree{Checkout: loop.Checkout, Path: wt})
+	made, err := d.createWorktree(ctx, runner.Worktree{Checkout: loop.Checkout, Path: wt})
 	if err != nil {
 		return fmt.Errorf("trial gate: %w", err)
 	}
@@ -68,7 +64,7 @@ func checkCheckout(ctx context.Context, loop config.Loop) error {
 	if err != nil {
 		return fmt.Errorf("checkout %s is not a git work tree: %w", loop.Checkout, err)
 	}
-	if !samePath(top, loop.Checkout) {
+	if real, err := filepath.EvalSymlinks(loop.Checkout); err != nil || real != top {
 		return fmt.Errorf("checkout %s is not the top level of a git work tree; that is %s", loop.Checkout, top)
 	}
 	if _, err := runner.Git(ctx, 30*time.Second, loop.Checkout, "symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"); err != nil {
@@ -97,10 +93,4 @@ func repoOf(url string) string {
 		return url
 	}
 	return parts[len(parts)-2] + "/" + parts[len(parts)-1]
-}
-
-func samePath(a, b string) bool {
-	ia, errA := os.Stat(a)
-	ib, errB := os.Stat(b)
-	return errA == nil && errB == nil && os.SameFile(ia, ib)
 }

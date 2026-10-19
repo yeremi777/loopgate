@@ -73,6 +73,10 @@ func New(home string, st *store.Store, deps Deps) (*Daemon, error) {
 		}
 		loops[loop.Name] = loop
 	}
+	// A trial's worktree outlives only a loopd that was killed during it.
+	if err := os.RemoveAll(filepath.Join(home, "trials")); err != nil {
+		return nil, err
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Daemon{home: home, dir: dir, st: st, loops: loops, deps: deps, next: map[string]time.Time{}, ctx: ctx, cancel: cancel}, nil
 }
@@ -87,6 +91,10 @@ func (d *Daemon) Add(ctx context.Context, data []byte) (config.Loop, error) {
 	if err := d.exists(loop.Name); err != nil {
 		return config.Loop{}, err
 	}
+	if err := d.admit(); err != nil {
+		return config.Loop{}, err
+	}
+	defer d.jobs.Done()
 	if err := checkCheckout(ctx, loop); err != nil {
 		return config.Loop{}, err
 	}
@@ -120,6 +128,17 @@ func (d *Daemon) exists(name string) error {
 	if _, ok := d.loops[name]; ok {
 		return fmt.Errorf("%s: %w", name, ErrLoopExists)
 	}
+	return nil
+}
+
+// admit counts an Add in the work that Close waits for, unless Close began.
+func (d *Daemon) admit() error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if err := d.ctx.Err(); err != nil {
+		return fmt.Errorf("loopd is stopping: %w", err)
+	}
+	d.jobs.Add(1)
 	return nil
 }
 

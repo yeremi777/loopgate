@@ -168,6 +168,22 @@ func TestWorktreeReusesThePathOfAWorktreeWhoseDirectoryIsGone(t *testing.T) {
 	}
 }
 
+func TestRemoveWorktreeDropsALockedHalfMadeWorktree(t *testing.T) {
+	checkout, _ := cloneWithOrigin(t)
+	path := filepath.Join(t.TempDir(), "wt")
+	gitRun(t, checkout, "worktree", "add", "--quiet", "--detach", path)
+	gitRun(t, checkout, "worktree", "lock", "--reason", "initializing", path)
+	if err := RemoveWorktree(context.Background(), checkout, path); err != nil {
+		t.Fatal(err)
+	}
+	if list := gitOut(t, checkout, "worktree", "list", "--porcelain"); strings.Contains(list, path) {
+		t.Fatalf("worktree still registered:\n%s", list)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("worktree directory still there: %v", err)
+	}
+}
+
 func TestGitIgnoresHooksAndFsmonitorPlantedInTheRepo(t *testing.T) {
 	checkout, _ := cloneWithOrigin(t)
 	marker := filepath.Join(t.TempDir(), "ran")
