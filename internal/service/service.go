@@ -102,11 +102,12 @@ func Unload() {
 	_ = exec.Command("launchctl", "bootout", "gui/"+strconv.Itoa(os.Getuid())+"/"+Label).Run()
 }
 
-// ResolvePath returns path with each link to a link collapsed and each
-// relative or missing entry dropped. A version manager's per-shell link (fnm's)
-// points at its stable alias link, which then stays in loopd's PATH and
-// follows the manager's default; a link to a real directory, such as
-// Homebrew's opt link, stays as it is and follows upgrades.
+// ResolvePath returns path with each link to a link replaced by its target
+// and each relative or missing entry dropped. A version manager's per-shell
+// link (fnm's) points at its stable alias link, which then stays in loopd's
+// PATH and follows the manager's default; a link to a real directory, such as
+// Homebrew's opt link, stays as it is and follows upgrades. Only one hop is
+// taken, so a chain such as Nix's profile links keeps its stable middle link.
 func ResolvePath(path string) string {
 	var out []string
 	for _, dir := range filepath.SplitList(path) {
@@ -122,20 +123,15 @@ func ResolvePath(path string) string {
 }
 
 // collapseLinks walks dir from the root and replaces each link whose target
-// is itself a link with that target, until a link points at a real file.
+// is itself a link with that target.
 func collapseLinks(dir string) string {
 	out := "/"
 	for _, part := range strings.Split(filepath.Clean(dir), "/")[1:] {
 		next := filepath.Join(out, part)
-		for hops := 0; hops < 40; hops++ {
-			target, ok := linkTarget(next)
-			if !ok {
-				break
+		if target, ok := linkTarget(next); ok {
+			if _, linked := linkTarget(target); linked {
+				next = target
 			}
-			if _, linked := linkTarget(target); !linked {
-				break
-			}
-			next = target
 		}
 		out = next
 	}
