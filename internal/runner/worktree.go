@@ -2,7 +2,6 @@ package runner
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -76,15 +75,20 @@ func CreateWorktree(ctx context.Context, w Worktree) (string, error) {
 	return strings.TrimPrefix(ref, "origin/"), nil
 }
 
-// Git runs git in dir for loopd itself, outside any stage, and returns its trimmed output.
+// Git runs git in dir for loopd itself, outside any stage, and returns its
+// trimmed output. Hooks and fsmonitor are off, so nothing a stage planted in
+// the repository runs with loopd's access.
 func Git(ctx context.Context, timeout time.Duration, dir string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd := exec.CommandContext(ctx, "git", append([]string{"-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false"}, args...)...)
 	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return "", fmt.Errorf("git %s: %w", strings.Join(args, " "), ctxErr)
+	}
 	if err != nil {
-		return "", errors.New("git " + strings.Join(args, " ") + ": " + err.Error() + ": " + strings.TrimSpace(string(out)))
+		return "", fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
 	}
 	return strings.TrimSpace(string(out)), nil
 }

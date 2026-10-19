@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -65,7 +66,11 @@ func run() error {
 	if err := os.MkdirAll(cache, 0o700); err != nil {
 		return err
 	}
-	r := runner.Runner{Claude: claude, Environ: os.Environ(), Cache: cache}
+	user, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	r := runner.Runner{Claude: claude, Environ: os.Environ(), Cache: cache, DenyRead: runner.CredentialDirs(user), GoProxy: goProxy()}
 	d, err := daemon.New(home, st, daemon.Deps{
 		Pipeline: job.Pipeline{Stages: r, Shell: r, Publisher: github.Publisher{GH: "gh"}},
 		Issues:   github.Issues{GH: "gh"},
@@ -96,6 +101,16 @@ func run() error {
 		return err
 	}
 	return nil
+}
+
+// goProxy serves modules from the user's own module cache first, so the
+// verify command, which has no network, still finds modules already fetched.
+func goProxy() string {
+	out, err := exec.Command("go", "env", "GOMODCACHE").Output()
+	if err != nil || strings.TrimSpace(string(out)) == "" {
+		return ""
+	}
+	return "file://" + filepath.Join(strings.TrimSpace(string(out)), "cache", "download") + ",https://proxy.golang.org"
 }
 
 // tickEvery bounds how late a timer fire can start; cron has minute resolution.

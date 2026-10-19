@@ -2,11 +2,13 @@ package runner
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestWorktreeComesFromOriginDefaultBranchAndCarriesSpec(t *testing.T) {
@@ -162,5 +164,33 @@ func TestWorktreeReusesThePathOfAWorktreeWhoseDirectoryIsGone(t *testing.T) {
 	}
 	if _, err := CreateWorktree(context.Background(), Worktree{Checkout: checkout, Path: wt, Branch: "loop/x-2"}); err != nil {
 		t.Fatalf("new job at the path of a deleted one: %v", err)
+	}
+}
+
+func TestGitIgnoresHooksAndFsmonitorPlantedInTheRepo(t *testing.T) {
+	checkout, _ := cloneWithOrigin(t)
+	marker := filepath.Join(t.TempDir(), "ran")
+	hook := "#!/bin/sh\ntouch " + marker + "\n"
+	writeFile(t, filepath.Join(checkout, ".git/hooks/post-checkout"), hook)
+	if err := os.Chmod(filepath.Join(checkout, ".git/hooks/post-checkout"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gitRun(t, checkout, "config", "core.fsmonitor", "touch "+marker+" #")
+	if _, err := Git(context.Background(), time.Minute, checkout, "status", "--porcelain"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := CreateWorktree(context.Background(), Worktree{Checkout: checkout, Path: filepath.Join(t.TempDir(), "wt"), Branch: "loop/x-1"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("loopd's git ran a hook or fsmonitor planted in the repo")
+	}
+}
+
+func TestGitTimeoutKeepsItsCause(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := Git(ctx, time.Minute, t.TempDir(), "status"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("want context.Canceled in %v", err)
 	}
 }

@@ -37,6 +37,17 @@ type Runner struct {
 	Environ  []string
 	Cache    string
 	DenyRead []string
+	GoProxy  string
+}
+
+// CredentialDirs are the places under home where logins and keys live; no
+// stage or verify command may read them.
+func CredentialDirs(home string) []string {
+	var dirs []string
+	for _, rel := range []string{".ssh", ".aws", ".config/gh", ".gnupg", ".netrc", ".npmrc", ".docker", ".kube", "Library/Keychains"} {
+		dirs = append(dirs, filepath.Join(home, rel))
+	}
+	return dirs
 }
 
 type Stage struct {
@@ -158,9 +169,13 @@ func settingsJSON(network, denyWrite, denyRead []string) (string, error) {
 // childEnv is the allowlisted env plus the build caches under Cache, the one
 // place outside the worktree that stages and the verify command may write.
 func (r Runner) childEnv() []string {
-	return append(filterEnv(r.Environ),
+	env := append(filterEnv(r.Environ),
 		"GOCACHE="+filepath.Join(r.Cache, "go-build"),
 		"GOMODCACHE="+filepath.Join(r.Cache, "gomod"))
+	if r.GoProxy != "" {
+		env = append(env, "GOPROXY="+r.GoProxy)
+	}
+	return env
 }
 
 // tempDir is the TMPDIR of env, where the verify command may write.

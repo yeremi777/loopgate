@@ -159,6 +159,7 @@ func TestRunRejectsBadResults(t *testing.T) {
 func TestRunKeepsOnlyAllowlistedEnv(t *testing.T) {
 	fake := newFake(t, `cat >/dev/null; env > "$REC/env"; echo '`+doneJSON+`'`)
 	r := fake.runner()
+	r.GoProxy = "file:///home/me/go/pkg/mod/cache/download,https://proxy.golang.org"
 	r.Environ = append(r.Environ,
 		"HOME=/home/me",
 		"SSH_AUTH_SOCK=/tmp/agent",
@@ -173,8 +174,10 @@ func TestRunKeepsOnlyAllowlistedEnv(t *testing.T) {
 		t.Fatal(err)
 	}
 	env := strings.Split(fake.read("env"), "\n")
-	if want := "GOMODCACHE=" + r.Cache + "/gomod"; !slices.Contains(env, want) {
-		t.Fatalf("child env lacks %s", want)
+	for _, want := range []string{"GOMODCACHE=" + r.Cache + "/gomod", "GOPROXY=file:///home/me/go/pkg/mod/cache/download,https://proxy.golang.org"} {
+		if !slices.Contains(env, want) {
+			t.Fatalf("child env lacks %s", want)
+		}
 	}
 	for _, want := range []string{"HOME=/home/me", "SSH_AUTH_SOCK=/tmp/agent", "TMPDIR=/tmp/me/", "GOCACHE=" + r.Cache + "/go-build"} {
 		if !slices.Contains(env, want) {
@@ -372,5 +375,14 @@ func TestShellPassesWhenABackgroundProcessOutlivesASuccessfulCommand(t *testing.
 	res, err := r.Shell(context.Background(), t.TempDir(), "sleep 30 & echo done", time.Minute)
 	if err != nil || res.ExitCode != 0 || res.Output != "done\n" {
 		t.Fatalf("got %+v, %v; want a pass", res, err)
+	}
+}
+
+func TestCredentialDirs(t *testing.T) {
+	got := CredentialDirs("/Users/me")
+	for _, want := range []string{"/Users/me/.ssh", "/Users/me/.aws", "/Users/me/.config/gh", "/Users/me/Library/Keychains"} {
+		if !slices.Contains(got, want) {
+			t.Fatalf("%q lacks %s", got, want)
+		}
 	}
 }
