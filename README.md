@@ -6,17 +6,36 @@ It is the outer loop around a Claude Code harness you already have: your `CLAUDE
 
 ## How a job runs
 
+```mermaid
+flowchart TD
+    issue["Labeled GitHub issue"] --> wt
+    timer["Timer: every or cron"] --> wt
+    manual["loopctl run --spec"] --> wt
+    wt["Worktree on a loop/* branch,<br/>cut from a fresh fetch of origin"] --> kind{"From an issue?"}
+    kind -- yes --> drill["/drill, unattended:<br/>a spec or a one-line plan"]
+    kind -- no --> impl
+    drill --> impl["/implement"]
+    impl --> gate{"Verify gate:<br/>your command exits 0<br/>on a clean, committed tree"}
+    gate -- fail --> log[("Progress log")]
+    log --> impl
+    gate -- pass --> rubric{"/rubric defect review"}
+    rubric -- revise --> log
+    rubric -- done --> land["/land, offline:<br/>PR text, Markdown only"]
+    land --> ship{"Only unprotected Markdown<br/>changed since the gate?"}
+    ship -- yes --> pr["loopd pushes the branch<br/>and opens a draft PR"]
+    ship -- no --> failed["Failed: nothing pushed"]
+    pr --> tell["macOS notification<br/>and a comment on the issue"]
 ```
-trigger: a labeled GitHub issue | a timer | loopctl run --spec
-  -> worktree on loop/<loop>-..., cut from a fresh fetch of origin's default branch
-  -> /drill        (issues only: settles a spec or a one-line plan, unattended)
-  -> /implement    <-------------------------------+
-  -> verify command exit code (clean committed tree) | fail: next run gets the output
-  -> protected paths check -> blocked if touched    |
-  -> /rubric defect review ---------- revise -------+   up to max_iterations, within timeout
-  -> /land offline (PR text, spec moves; Markdown only)
-  -> loopd pushes the branch and runs gh pr create --draft
-  -> macOS notification, and a comment on the issue
+
+Any stage can stop the Job as **Blocked** with one question: it reports a decision only you can make, or it changed a protected path. A Job from an issue then posts the question on the issue. When `max_iterations` implement runs or the `timeout` are used up, the Job ends **exhausted**, with no PR.
+
+You and the loop can trade a Job at any point:
+
+```mermaid
+flowchart LR
+    loop["Loop runs the Job"] -- "loopctl takeover" --> you["You work in its worktree<br/>with your own Claude Code session"]
+    you -- "commit, then loopctl handback" --> loop
+    loop -- "draft PR" --> review["You review and merge"]
 ```
 
 Pass or fail comes only from your verify command's exit code, never from the model's claim. Each stage is a fresh `claude -p` session; what earlier implement runs learned reaches the next one through a progress log.
@@ -26,7 +45,7 @@ Pass or fail comes only from your verify command's exit code, never from the mod
 - macOS, Go 1.26.5 or newer, git.
 - [Claude Code](https://claude.com/claude-code), logged in. Jobs use your login and count against your usage.
 - [GitHub CLI](https://cli.github.com), logged in: `gh auth login`, then `gh auth setup-git`. loopgate stores no tokens.
-- Skills named `drill`, `implement`, `rubric`, `land` and `tldr` in your user-level Claude Code setup (`~/.claude/skills`). loopgate calls them by name and does not ship them; see [Skills](#skills) for what each must do.
+- The stage skills `drill`, `implement`, `rubric`, `land` and `tldr` in your user-level Claude Code setup. loopgate calls them by name and does not ship them. They come from [pwguler/skills](https://github.com/pwguler/skills): `npx skills add pwguler/skills`, then choose Claude Code. [Skills](#skills) lists what each stage needs from them.
 
 ## Install
 
@@ -125,6 +144,11 @@ Summaries follow your `tldr` skill.
 - Issue text reaches the model as fenced, untrusted data. It cannot change the verify command, bounds, protected paths, or stages.
 - Stages get an allowlisted environment; your other variables stay in `loopd`. Every stage and verify run is its own process group, which is killed on timeout, stop, or takeover.
 - A label starts an issue job. Adding a label takes triage access, but an issue template can add a label for anyone who opens an issue: do not give a loop a label that a template adds.
+
+## Acknowledgements
+
+- The stage skills that every Job runs, `drill`, `implement`, `rubric`, `land` and `tldr`, are [pwguler/skills](https://github.com/pwguler/skills) (MIT). loopgate is the outer loop around them; it runs them unattended and adds its own gates.
+- Ideas, not code, came from [pwguler/pi-loop](https://github.com/pwguler/pi-loop) (interval and cron scheduling, a single-owner lock, skip-if-busy fires, hard bounds) and [taufik-hdyt25/AIAgent](https://github.com/taufik-hdyt25/AIAgent) (headless `claude`, a branch per task, process-group kill, environment sanitizing, issue to draft PR).
 
 ## License
 
