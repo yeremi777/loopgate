@@ -14,7 +14,8 @@ import (
 
 // proxy is the setup command's only way out of Seatbelt: it tunnels CONNECT
 // to port 443 of the network domains, refuses every other request, and keeps
-// the hosts it refused.
+// the hosts it refused. Its tunnels end when it closes, so a process that
+// outlives the setup command keeps no network.
 type proxy struct {
 	domains []string
 	dial    func(ctx context.Context, network, addr string) (net.Conn, error)
@@ -23,6 +24,8 @@ type proxy struct {
 
 	mu      sync.Mutex
 	refused map[string]bool
+	tunnels map[net.Conn]bool
+	closed  bool
 }
 
 // startProxy listens on localhost, the one address Seatbelt lets through.
@@ -31,7 +34,7 @@ func startProxy(domains []string, dial func(ctx context.Context, network, addr s
 	if err != nil {
 		return nil, err
 	}
-	p := &proxy{domains: domains, dial: dial, ln: ln, refused: map[string]bool{}}
+	p := &proxy{domains: domains, dial: dial, ln: ln, refused: map[string]bool{}, tunnels: map[net.Conn]bool{}}
 	p.srv = &http.Server{Handler: p, ReadHeaderTimeout: 10 * time.Second}
 	go func() { _ = p.srv.Serve(ln) }()
 	return p, nil
@@ -39,11 +42,15 @@ func startProxy(domains []string, dial func(ctx context.Context, network, addr s
 
 func (p *proxy) addr() string { return p.ln.Addr().String() }
 
-// close stops the proxy and returns the hosts it refused, sorted.
+// close stops the proxy, ends its open tunnels, and returns the hosts it refused, sorted.
 func (p *proxy) close() []string {
 	_ = p.srv.Close()
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	p.closed = true
+	for c := range p.tunnels {
+		_ = c.Close()
+	}
 	if len(p.refused) == 0 {
 		return nil
 	}
@@ -80,6 +87,10 @@ func (p *proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer func() { _ = conn.Close() }()
+	if !p.track(conn, up) {
+		return
+	}
+	defer p.untrack(conn, up)
 	if _, err := io.WriteString(conn, "HTTP/1.1 200 Connection Established\r\n\r\n"); err != nil {
 		return
 	}
@@ -90,6 +101,27 @@ func (p *proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 	_, _ = io.Copy(conn, up)
+}
+
+// track registers a tunnel's connections for close to end, and refuses once the proxy closed.
+func (p *proxy) track(conns ...net.Conn) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.closed {
+		return false
+	}
+	for _, c := range conns {
+		p.tunnels[c] = true
+	}
+	return true
+}
+
+func (p *proxy) untrack(conns ...net.Conn) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for _, c := range conns {
+		delete(p.tunnels, c)
+	}
 }
 
 // allows matches the network list as the stages' sandbox does: a domain

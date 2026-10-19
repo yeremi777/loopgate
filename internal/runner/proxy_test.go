@@ -3,12 +3,14 @@ package runner
 import (
 	"bufio"
 	"context"
+	"errors"
 	"io"
 	"net"
 	"net/http"
 	"net/url"
 	"reflect"
 	"testing"
+	"time"
 )
 
 // echoUpstream stands in for every remote host: the proxy's dial reaches it
@@ -74,6 +76,29 @@ func TestProxyTunnelsToNetworkDomainsOnPort443(t *testing.T) {
 	}
 	if got := p.close(); got != nil {
 		t.Fatalf("refused %q, want none", got)
+	}
+}
+
+// A process that outlives the setup command must lose its tunnel when setup ends.
+func TestProxyCloseEndsOpenTunnels(t *testing.T) {
+	p, err := startProxy([]string{"registry.npmjs.org"}, echoUpstream(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, c := connect(t, p, "registry.npmjs.org:443")
+	if code != http.StatusOK {
+		t.Fatalf("status %d, want 200", code)
+	}
+	p.close()
+	if err := c.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	_, _ = io.WriteString(c, "ping")
+	buf := make([]byte, 4)
+	n, err := io.ReadFull(c, buf)
+	var netErr net.Error
+	if err == nil || (errors.As(err, &netErr) && netErr.Timeout()) {
+		t.Fatalf("tunnel still open after close: read %q, %v", buf[:n], err)
 	}
 }
 
