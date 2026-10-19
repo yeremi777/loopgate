@@ -28,6 +28,8 @@ type Job struct {
 	Work     string
 	Branch   string
 	Worktree string
+	Base     string
+	Issue    int
 	Question string
 	Summary  string
 	PRURL    string
@@ -61,6 +63,8 @@ CREATE TABLE IF NOT EXISTS jobs (
 	work     TEXT NOT NULL DEFAULT '',
 	branch   TEXT NOT NULL DEFAULT '',
 	worktree TEXT NOT NULL DEFAULT '',
+	base     TEXT NOT NULL DEFAULT '',
+	issue    INTEGER NOT NULL DEFAULT 0,
 	question TEXT NOT NULL DEFAULT '',
 	summary  TEXT NOT NULL DEFAULT '',
 	pr_url   TEXT NOT NULL DEFAULT '',
@@ -119,10 +123,20 @@ func (s *Store) SetJobState(id int64, state JobState) error {
 	return s.updateJob(id, `UPDATE jobs SET state = ? WHERE id = ?`, state, id)
 }
 
+// Start is where a Job runs: its work, branch, worktree, the commit it was
+// cut from, and the issue it answers (0 for none).
+type Start struct {
+	Work     string
+	Branch   string
+	Worktree string
+	Base     string
+	Issue    int
+}
+
 // StartJob marks a Job running in its worktree.
-func (s *Store) StartJob(id int64, work, branch, worktree string) error {
-	return s.updateJob(id, `UPDATE jobs SET state = ?, work = ?, branch = ?, worktree = ? WHERE id = ?`,
-		Running, work, branch, worktree, id)
+func (s *Store) StartJob(id int64, st Start) error {
+	return s.updateJob(id, `UPDATE jobs SET state = ?, work = ?, branch = ?, worktree = ?, base = ?, issue = ? WHERE id = ?`,
+		Running, st.Work, st.Branch, st.Worktree, st.Base, st.Issue, id)
 }
 
 func (s *Store) FinishJob(id int64, f Finish) error {
@@ -149,8 +163,8 @@ func (s *Store) updateJob(id int64, query string, args ...any) error {
 
 func (s *Store) Job(id int64) (Job, error) {
 	job := Job{ID: id}
-	err := s.db.QueryRow(`SELECT loop, state, work, branch, worktree, question, summary, pr_url, cost_usd, error FROM jobs WHERE id = ?`, id).
-		Scan(&job.Loop, &job.State, &job.Work, &job.Branch, &job.Worktree, &job.Question, &job.Summary, &job.PRURL, &job.CostUSD, &job.Error)
+	err := s.db.QueryRow(`SELECT loop, state, work, branch, worktree, base, issue, question, summary, pr_url, cost_usd, error FROM jobs WHERE id = ?`, id).
+		Scan(&job.Loop, &job.State, &job.Work, &job.Branch, &job.Worktree, &job.Base, &job.Issue, &job.Question, &job.Summary, &job.PRURL, &job.CostUSD, &job.Error)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Job{}, fmt.Errorf("job %d: %w", id, ErrNotFound)
 	}

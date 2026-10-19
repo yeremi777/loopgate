@@ -34,6 +34,10 @@ type Job struct {
 	Worktree      string
 	Branch        string
 	DefaultBranch string
+	// Base is the commit the worktree was cut from; every branch diff uses it.
+	Base string
+	// Issue is the GitHub issue number the Job answers, or 0.
+	Issue int
 }
 
 // Stager runs one Claude Code stage; runner.Runner is the real one.
@@ -80,7 +84,11 @@ const maxLogOutput = 4000
 func (p Pipeline) Run(ctx context.Context, j Job) Outcome {
 	ctx, cancel := context.WithTimeout(ctx, j.Loop.Bounds.Timeout)
 	defer cancel()
-	r := &jobRun{Pipeline: p, job: j, progress: progressLog{path: filepath.Join(j.Dir, "progress.md")}}
+	guard, err := runner.GitGuard(j.Worktree)
+	if err != nil {
+		return Outcome{State: store.Failed, Err: err}
+	}
+	r := &jobRun{Pipeline: p, job: j, guard: guard, progress: progressLog{path: filepath.Join(j.Dir, "progress.md")}}
 	earlier, err := os.ReadFile(r.progress.path)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return Outcome{State: store.Failed, Err: err}
@@ -104,6 +112,7 @@ type jobRun struct {
 	job      Job
 	work     Work
 	drill    string
+	guard    []string
 	progress progressLog
 	cost     float64
 }
@@ -152,19 +161,12 @@ func (r *jobRun) iterate(ctx context.Context) (Outcome, error) {
 			continue
 		}
 
-		changes, err := verify.Changes(ctx, j.Worktree, j.DefaultBranch)
+		changes, err := verify.Changes(ctx, j.Worktree, j.Base)
 		if err != nil {
 			return Outcome{}, err
 		}
-		if hits := verify.Protected(changes, j.Loop.Protected); hits != nil {
-			return Outcome{
-				State:    store.Blocked,
-				Question: "The change touches protected paths: " + strings.Join(hits, ", ") + ". Should these change?",
-				Summary:  res.Summary,
-			}, nil
-		}
 
-		review, err := r.stage(ctx, rubricPrompt(j.DefaultBranch))
+		review, err := r.stage(ctx, rubricPrompt(j.Base))
 		if err != nil {
 			return Outcome{}, err
 		}
@@ -204,7 +206,7 @@ func (r *jobRun) ship(ctx context.Context, out Outcome) (Outcome, error) {
 	case runner.StatusRevise:
 		return Outcome{}, errors.New("land reported revise, which only rubric may report")
 	}
-	if err := verify.ShipCheck(ctx, j.Worktree, out.Gated); err != nil {
+	if err := verify.ShipCheck(ctx, j.Worktree, out.Gated, j.Loop.Protected); err != nil {
 		return Outcome{}, fmt.Errorf("land changed the gated work: %w", err)
 	}
 	pr, err := parsePR(land.Summary)
@@ -220,15 +222,33 @@ func (r *jobRun) ship(ctx context.Context, out Outcome) (Outcome, error) {
 	return out, nil
 }
 
+// stage runs one stage, then blocks the Job when the stage left a protected
+// path changed, before any later stage can load it.
 func (r *jobRun) stage(ctx context.Context, prompt string) (runner.Result, error) {
 	res, err := r.Stages.Run(ctx, runner.Stage{
-		Dir:     r.job.Worktree,
-		Prompt:  prompt,
-		Timeout: remaining(ctx),
-		Network: r.job.Loop.Network,
+		Dir:       r.job.Worktree,
+		Prompt:    prompt,
+		Timeout:   remaining(ctx),
+		Network:   r.job.Loop.Network,
+		DenyWrite: r.guard,
 	})
 	r.cost += res.CostUSD
-	return res, err
+	if err != nil {
+		return res, err
+	}
+	hits, err := verify.Touched(ctx, r.job.Worktree, r.job.Base, r.job.Loop.Protected)
+	if err != nil {
+		return runner.Result{}, err
+	}
+	if hits != nil {
+		return runner.Result{
+			Status:   runner.StatusBlocked,
+			Question: "The change touches protected paths: " + strings.Join(hits, ", ") + ". Should these change?",
+			Summary:  res.Summary,
+			CostUSD:  res.CostUSD,
+		}, nil
+	}
+	return res, nil
 }
 
 // unchanged fails when a reviewer moved HEAD or left edits, since reviewers never edit.

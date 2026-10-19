@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -20,12 +21,12 @@ func TestWorktreeComesFromOriginDefaultBranchAndCarriesSpec(t *testing.T) {
 	writeFile(t, filepath.Join(checkout, "docs/specs/x.md"), "spec")
 
 	wt := filepath.Join(t.TempDir(), "wt")
-	def, err := CreateWorktree(context.Background(), Worktree{Checkout: checkout, Path: wt, Branch: "loop/fix-42", Spec: "docs/specs/x.md"})
+	created, err := CreateWorktree(context.Background(), Worktree{Checkout: checkout, Path: wt, Branch: "loop/fix-42", Spec: "docs/specs/x.md"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if def != "trunk" {
-		t.Fatalf("default branch %q, want trunk", def)
+	if created.DefaultBranch != "trunk" || created.Base != gitOut(t, checkout, "rev-parse", "origin/trunk") {
+		t.Fatalf("created %+v, want trunk at origin's head", created)
 	}
 	if got := readFile(t, filepath.Join(wt, "README")); got != "v2" {
 		t.Fatalf("worktree README %q, want origin's v2", got)
@@ -192,5 +193,23 @@ func TestGitTimeoutKeepsItsCause(t *testing.T) {
 	cancel()
 	if _, err := Git(ctx, time.Minute, t.TempDir(), "status"); !errors.Is(err, context.Canceled) {
 		t.Fatalf("want context.Canceled in %v", err)
+	}
+}
+
+func TestGitGuardNamesTheRepositoryFilesAStageMustNotWrite(t *testing.T) {
+	checkout, _ := cloneWithOrigin(t)
+	wt := filepath.Join(realDir(t), "wt")
+	if _, err := CreateWorktree(context.Background(), Worktree{Checkout: checkout, Path: wt, Branch: "loop/x-1"}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := GitGuard(wt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	common, _ := filepath.EvalSymlinks(filepath.Join(checkout, ".git"))
+	for _, want := range []string{filepath.Join(common, "config"), filepath.Join(common, "hooks"), filepath.Join(common, "info"), filepath.Join(wt, ".git")} {
+		if !slices.Contains(got, want) {
+			t.Fatalf("guard %q lacks %s", got, want)
+		}
 	}
 }

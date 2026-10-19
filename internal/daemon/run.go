@@ -48,7 +48,7 @@ func (d *Daemon) Requeue(loop string, issue int) error {
 var (
 	ErrBusy           = errors.New("a job is already running")
 	ErrNeedsSpec      = errors.New("a github loop runs by hand only with --spec")
-	ErrNotTakeable    = errors.New("a done job cannot be taken over; check out its branch instead")
+	ErrNotTakeable    = errors.New("this job cannot be taken over")
 	ErrNotManual      = errors.New("only a taken-over job can be handed back")
 	ErrNothingRunning = errors.New("the loop has no running job")
 	ErrStarting       = errors.New("the job is still starting; try again")
@@ -147,11 +147,14 @@ func (d *Daemon) Takeover(id int64) (store.Job, error) {
 	}
 	switch j.State {
 	case store.Done:
-		return store.Job{}, fmt.Errorf("job %d: %w", id, ErrNotTakeable)
+		return store.Job{}, fmt.Errorf("job %d is done; check out %s instead: %w", id, j.Branch, ErrNotTakeable)
 	case store.Queued, store.Running:
 		return store.Job{}, fmt.Errorf("job %d: %w", id, ErrStarting)
 	case store.Manual:
 		return j, nil
+	}
+	if j.Worktree == "" {
+		return store.Job{}, fmt.Errorf("job %d never got a worktree: %w", id, ErrNotTakeable)
 	}
 	if err := d.st.SetJobState(id, store.Manual); err != nil {
 		return store.Job{}, err
@@ -206,16 +209,11 @@ func (d *Daemon) start(loop config.Loop, work job.Work) (job.Job, error) {
 		return job.Job{}, err
 	}
 	tag := time.Now().Format("20060102-150405")
+	j := job.Job{ID: created.ID, Loop: loop, Work: work, Dir: d.jobDir(created.ID)}
 	if issue, ok := work.(job.Issue); ok {
-		tag = strconv.Itoa(issue.Number)
+		tag, j.Issue = strconv.Itoa(issue.Number), issue.Number
 	}
-	j := job.Job{
-		ID:     created.ID,
-		Loop:   loop,
-		Work:   work,
-		Dir:    d.jobDir(created.ID),
-		Branch: "loop/" + loop.Name + "-" + tag + "-" + strconv.FormatInt(created.ID, 10),
-	}
+	j.Branch = "loop/" + loop.Name + "-" + tag + "-" + strconv.FormatInt(created.ID, 10)
 	j.Worktree = filepath.Join(j.Dir, "worktree")
 	if err := os.MkdirAll(j.Dir, 0o700); err != nil {
 		return job.Job{}, d.fail(created.ID, err)
@@ -224,10 +222,12 @@ func (d *Daemon) start(loop config.Loop, work job.Work) (job.Job, error) {
 	if s, ok := work.(job.Spec); ok {
 		wt.Spec = s.Path
 	}
-	if j.DefaultBranch, err = runner.CreateWorktree(d.ctx, wt); err != nil {
+	made, err := runner.CreateWorktree(d.ctx, wt)
+	if err != nil {
 		return job.Job{}, d.fail(created.ID, err)
 	}
-	return j, d.st.StartJob(j.ID, describe(work), j.Branch, j.Worktree)
+	j.DefaultBranch, j.Base = made.DefaultBranch, made.Base
+	return j, d.st.StartJob(j.ID, store.Start{Work: describe(work), Branch: j.Branch, Worktree: j.Worktree, Base: j.Base, Issue: j.Issue})
 }
 
 func (d *Daemon) resume(loop config.Loop, stored store.Job) (job.Job, error) {
@@ -235,9 +235,10 @@ func (d *Daemon) resume(loop config.Loop, stored store.Job) (job.Job, error) {
 	if err != nil {
 		return job.Job{}, err
 	}
-	// The issue was drilled before the takeover; resume from what drill left.
+	// The issue was drilled before the takeover; resume from what drill left,
+	// and keep the untrusted issue title out of the implement prompt.
 	if issue, ok := work.(job.Issue); ok {
-		work = job.Task{Text: fmt.Sprintf("GitHub issue #%d: %s", issue.Number, issue.Title)}
+		work = job.Task{Text: fmt.Sprintf("continue GitHub issue #%d from this branch and its progress log", issue.Number)}
 		spec := fmt.Sprintf("docs/specs/issue-%d.md", issue.Number)
 		if _, err := os.Stat(filepath.Join(stored.Worktree, spec)); err == nil {
 			work = job.Spec{Path: spec}
@@ -255,6 +256,8 @@ func (d *Daemon) resume(loop config.Loop, stored store.Job) (job.Job, error) {
 		Worktree:      stored.Worktree,
 		Branch:        stored.Branch,
 		DefaultBranch: strings.TrimPrefix(ref, "origin/"),
+		Base:          stored.Base,
+		Issue:         stored.Issue,
 	}
 	return j, d.st.SetJobState(j.ID, store.Running)
 }
@@ -268,6 +271,9 @@ func (d *Daemon) finish(ctx context.Context, cur *running, j job.Job) {
 	d.mu.Lock()
 	end := store.Finish{State: out.State, Question: out.Question, Summary: out.Summary, PRURL: out.PRURL, CostUSD: out.CostUSD}
 	switch {
+	case out.State == store.Done:
+		// The draft PR exists; a stop or takeover that came late changes nothing.
+		cur.takenOver = false
 	case cur.takenOver:
 		end = store.Finish{State: store.Manual, Summary: out.Summary, CostUSD: out.CostUSD}
 	case cur.stopped:
@@ -292,23 +298,22 @@ func (d *Daemon) finish(ctx context.Context, cur *running, j job.Job) {
 // answerIssue tells an issue's author how its Job ended: the PR link, or the
 // question that blocks it with the needs-drill label.
 func (d *Daemon) answerIssue(j job.Job, end store.Finish) {
-	issue, ok := j.Work.(job.Issue)
 	gh, isGitHub := j.Loop.Trigger.(config.GitHub)
-	if !ok || !isGitHub {
+	if j.Issue == 0 || !isGitHub {
 		return
 	}
 	var err error
 	switch end.State {
 	case store.Done:
-		err = d.deps.Issues.Comment(d.ctx, gh.Repo, issue.Number, "loopgate opened a draft pull request for this issue: "+end.PRURL)
+		err = d.deps.Issues.Comment(d.ctx, gh.Repo, j.Issue, "loopgate opened a draft pull request for this issue: "+end.PRURL)
 	case store.Blocked:
-		err = d.deps.Issues.Comment(d.ctx, gh.Repo, issue.Number, "loopgate stopped before building this and needs a human decision:\n\n"+end.Question)
+		err = d.deps.Issues.Comment(d.ctx, gh.Repo, j.Issue, "loopgate stopped before building this and needs a human decision:\n\n"+end.Question)
 		if err == nil {
-			err = d.deps.Issues.Label(d.ctx, gh.Repo, issue.Number, "needs-drill")
+			err = d.deps.Issues.Label(d.ctx, gh.Repo, j.Issue, "needs-drill")
 		}
 	}
 	if err != nil {
-		log.Printf("loopd: answer issue #%d: %v", issue.Number, err)
+		log.Printf("loopd: answer issue #%d: %v", j.Issue, err)
 	}
 }
 

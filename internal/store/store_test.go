@@ -89,7 +89,7 @@ func TestJobDetailsSurviveReopen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.StartJob(job.ID, "spec docs/specs/x.md", "loop/fix-1", "/jobs/1/worktree"); err != nil {
+	if err := st.StartJob(job.ID, Start{Work: "spec docs/specs/x.md", Branch: "loop/fix-1", Worktree: "/jobs/1/worktree", Base: "abc123", Issue: 7}); err != nil {
 		t.Fatal(err)
 	}
 	end := Finish{State: Done, Summary: "added Double", PRURL: "https://github.com/me/app/pull/7", CostUSD: 1.25}
@@ -106,7 +106,7 @@ func TestJobDetailsSurviveReopen(t *testing.T) {
 	}
 	want := Job{
 		ID: job.ID, Loop: "fix", State: Done, Work: "spec docs/specs/x.md",
-		Branch: "loop/fix-1", Worktree: "/jobs/1/worktree",
+		Branch: "loop/fix-1", Worktree: "/jobs/1/worktree", Base: "abc123", Issue: 7,
 		Summary: "added Double", PRURL: "https://github.com/me/app/pull/7", CostUSD: 1.25,
 	}
 	if got != want {
@@ -117,7 +117,7 @@ func TestJobDetailsSurviveReopen(t *testing.T) {
 func TestInterruptFailsJobsLeftRunning(t *testing.T) {
 	st := open(t, filepath.Join(t.TempDir(), "state.db"))
 	running, _ := st.CreateJob("fix")
-	if err := st.StartJob(running.ID, "task x", "loop/fix-1", "/wt"); err != nil {
+	if err := st.StartJob(running.ID, Start{Work: "task x", Branch: "loop/fix-1", Worktree: "/wt"}); err != nil {
 		t.Fatal(err)
 	}
 	queued, _ := st.CreateJob("fix")

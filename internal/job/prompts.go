@@ -52,13 +52,13 @@ Title: %[3]s
 - Write the summary as the tldr skill says.`, i.Number, begin, quote(i.Title), quote(i.Body), end, issueSpec(i))
 }
 
-func rubricPrompt(defaultBranch string) string {
-	return fmt.Sprintf(`/rubric defect pass, steps 1 to 3 only, on the diff of this branch against origin/%s.
+func rubricPrompt(base string) string {
+	return fmt.Sprintf(`/rubric defect pass, steps 1 to 3 only, on the diff of this branch against commit %s.
 
 You run unattended inside loopgate as a reviewer. Do not edit, stage, or commit any file.
 Report status revise when any finding is act on, and put every act-on finding in the summary with its file, line, and the fix it needs.
 Report status done when act on is empty.
-Write the summary as the tldr skill says.`, defaultBranch)
+Write the summary as the tldr skill says.`, base)
 }
 
 func landPrompt(w Work) string {
@@ -104,8 +104,8 @@ func dropAttribution(body string) string {
 func report(j Job, out Outcome, drill string, cost float64) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "## loopgate\n\n")
-	if issue, ok := j.Work.(Issue); ok {
-		fmt.Fprintf(&b, "Closes #%d.\n\n", issue.Number)
+	if j.Issue != 0 {
+		fmt.Fprintf(&b, "Closes #%d.\n\n", j.Issue)
 	}
 	fmt.Fprintf(&b, "- Job %d of loop `%s` passed `%s` and a rubric review at %s.\n", j.ID, j.Loop.Name, j.Loop.Verify, out.Gated)
 	fmt.Fprintf(&b, "- Cost so far: $%.2f.\n", cost)

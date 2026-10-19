@@ -1,12 +1,14 @@
 package daemon
 
 import (
+	"context"
 	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/yeremi777/loopgate/internal/job"
 	"github.com/yeremi777/loopgate/internal/runner"
 	"github.com/yeremi777/loopgate/internal/store"
 )
@@ -134,4 +136,71 @@ func runGit(t *testing.T, dir string, args ...string) string {
 		t.Fatal(err)
 	}
 	return out
+}
+
+func TestHandbackOfAnIssueJobStillAnswersTheIssue(t *testing.T) {
+	r := newRunEnv(t)
+	r.stages.blockFirst = true
+	r.issues.open = []job.Issue{{Number: 6, Title: "six"}}
+	r.release()
+	r.d.Tick(t0)
+	r.d.Tick(t0.Add(10 * time.Minute))
+	if j := r.waitDone(t, 1); j.State != store.Blocked || j.Issue != 6 {
+		t.Fatalf("job %+v", j)
+	}
+	if _, err := r.d.Takeover(1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.d.Handback(1); err != nil {
+		t.Fatal(err)
+	}
+	if j := r.waitDone(t, 1); j.State != store.Done {
+		t.Fatalf("after handback %+v", j)
+	}
+	said := r.issues.said(6)
+	if len(said) != 2 || !strings.Contains(said[1], "https://github.com/me/app/pull/1") {
+		t.Fatalf("issue 6 comments %q", said)
+	}
+}
+
+func TestTakeoverRefusesAJobWithoutAWorktree(t *testing.T) {
+	r := newRunEnv(t)
+	created, err := r.st.CreateJob("deps")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.st.FinishJob(created.ID, store.Finish{State: store.Failed, Error: "fetch failed"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.d.Takeover(created.ID); !errors.Is(err, ErrNotTakeable) {
+		t.Fatalf("want ErrNotTakeable, got %v", err)
+	}
+}
+
+func TestLateStopKeepsAPublishedJobDone(t *testing.T) {
+	r := newRunEnv(t)
+	pub := &gatedPublisher{published: make(chan struct{}), resume: make(chan struct{})}
+	r.d.deps.Pipeline.Publisher = pub
+	r.release()
+	started, err := r.d.Run("deps", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-pub.published
+	if err := r.d.Stop("deps"); err != nil {
+		t.Fatal(err)
+	}
+	close(pub.resume)
+	if j := r.waitDone(t, started.ID); j.State != store.Done || j.PRURL != "https://github.com/me/app/pull/1" {
+		t.Fatalf("published job %+v", j)
+	}
+}
+
+// gatedPublisher opens the PR, then holds Publish until resume closes.
+type gatedPublisher struct{ published, resume chan struct{} }
+
+func (g *gatedPublisher) Publish(context.Context, string, string, string, job.PR) (string, error) {
+	close(g.published)
+	<-g.resume
+	return "https://github.com/me/app/pull/1", nil
 }

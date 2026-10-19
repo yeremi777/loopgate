@@ -97,7 +97,7 @@ func TestShipCheckAllowsOnlyMarkdownAfterTheGatedCommit(t *testing.T) {
 	}
 	t.Run("unchanged", func(t *testing.T) {
 		repo := newRepo(t)
-		if err := ShipCheck(context.Background(), repo, git(t, repo, "rev-parse", "HEAD")); err != nil {
+		if err := ShipCheck(context.Background(), repo, git(t, repo, "rev-parse", "HEAD"), nil); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -105,7 +105,7 @@ func TestShipCheckAllowsOnlyMarkdownAfterTheGatedCommit(t *testing.T) {
 		repo := newRepo(t)
 		gated := git(t, repo, "rev-parse", "HEAD")
 		commit(repo, "docs/adr/0002-x.md", "CONTEXT.md")
-		if err := ShipCheck(context.Background(), repo, gated); err != nil {
+		if err := ShipCheck(context.Background(), repo, gated, nil); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -113,7 +113,7 @@ func TestShipCheckAllowsOnlyMarkdownAfterTheGatedCommit(t *testing.T) {
 		repo := newRepo(t)
 		gated := git(t, repo, "rev-parse", "HEAD")
 		commit(repo, "CONTEXT.md", "main.go")
-		if err := ShipCheck(context.Background(), repo, gated); err == nil || !strings.Contains(err.Error(), "main.go") {
+		if err := ShipCheck(context.Background(), repo, gated, nil); err == nil || !strings.Contains(err.Error(), "main.go") {
 			t.Fatalf("want error naming main.go, got %v", err)
 		}
 	})
@@ -121,7 +121,7 @@ func TestShipCheckAllowsOnlyMarkdownAfterTheGatedCommit(t *testing.T) {
 		repo := newRepo(t)
 		gated := git(t, repo, "rev-parse", "HEAD")
 		write(t, filepath.Join(repo, "notes.md"), "x")
-		if err := ShipCheck(context.Background(), repo, gated); err == nil {
+		if err := ShipCheck(context.Background(), repo, gated, nil); err == nil {
 			t.Fatal("dirty tree passed")
 		}
 	})
@@ -131,8 +131,27 @@ func TestShipCheckAllowsOnlyMarkdownAfterTheGatedCommit(t *testing.T) {
 		gated := git(t, repo, "rev-parse", "HEAD")
 		git(t, repo, "reset", "-q", "--hard", "HEAD~1")
 		commit(repo, "b.md")
-		if err := ShipCheck(context.Background(), repo, gated); err == nil {
+		if err := ShipCheck(context.Background(), repo, gated, nil); err == nil {
 			t.Fatal("head that dropped the gated commit passed")
+		}
+	})
+	t.Run("code renamed to markdown", func(t *testing.T) {
+		repo := newRepo(t)
+		commit(repo, "main_test.go")
+		gated := git(t, repo, "rev-parse", "HEAD")
+		git(t, repo, "mv", "main_test.go", "main_test.md")
+		git(t, repo, "commit", "-q", "-m", "rename")
+		if err := ShipCheck(context.Background(), repo, gated, nil); err == nil || !strings.Contains(err.Error(), "main_test.go") {
+			t.Fatalf("want error naming main_test.go, got %v", err)
+		}
+	})
+	t.Run("protected markdown", func(t *testing.T) {
+		repo := newRepo(t)
+		gated := git(t, repo, "rev-parse", "HEAD")
+		commit(repo, "CLAUDE.md", "docs/notes.md")
+		if err := ShipCheck(context.Background(), repo, gated, []string{"docs/notes.md"}); err == nil ||
+			!strings.Contains(err.Error(), "CLAUDE.md") || !strings.Contains(err.Error(), "docs/notes.md") {
+			t.Fatalf("want error naming CLAUDE.md and docs/notes.md, got %v", err)
 		}
 	})
 }

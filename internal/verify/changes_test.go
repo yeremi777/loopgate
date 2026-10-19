@@ -7,8 +7,9 @@ import (
 	"testing"
 )
 
-func TestChangesListsBranchDiffAgainstDefaultBranch(t *testing.T) {
+func TestChangesListsBranchDiffAgainstItsBase(t *testing.T) {
 	branch, seed := newBranch(t)
+	base := git(t, branch, "rev-parse", "HEAD")
 	write(t, filepath.Join(branch, "a.go"), "changed")
 	write(t, filepath.Join(branch, ".github/ci.yml"), "new")
 	write(t, filepath.Join(branch, "d.go"), "renamed")
@@ -22,7 +23,8 @@ func TestChangesListsBranchDiffAgainstDefaultBranch(t *testing.T) {
 	git(t, seed, "push", "-q", "origin", "main")
 	git(t, branch, "fetch", "-q", "origin")
 
-	got, err := Changes(context.Background(), branch, "main")
+	git(t, branch, "update-ref", "refs/remotes/origin/main", "HEAD")
+	got, err := Changes(context.Background(), branch, base)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,6 +76,46 @@ func TestTestChangesReportsChangedAndDeletedTestsOnly(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %+v, want %+v", got, want)
+	}
+}
+
+func TestChangesReadsQuotedPathsAsTheyAre(t *testing.T) {
+	branch, _ := newBranch(t)
+	base := git(t, branch, "rev-parse", "HEAD")
+	write(t, filepath.Join(branch, ".github/workflows/cié.yml"), "on: push")
+	write(t, filepath.Join(branch, "a \"q\".go"), "x")
+	git(t, branch, "add", "-A")
+	git(t, branch, "commit", "-q", "-m", "work")
+	got, err := Changes(context.Background(), branch, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []Change{{Path: ".github/workflows/cié.yml", Kind: Added}, {Path: "a \"q\".go", Kind: Added}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %+v, want %+v", got, want)
+	}
+	if hits := Protected(got, nil); !reflect.DeepEqual(hits, []string{".github/workflows/cié.yml"}) {
+		t.Fatalf("protected %q", hits)
+	}
+}
+
+func TestTouchedSeesProtectedPathsInCommitsAndTheWorkingTree(t *testing.T) {
+	branch, _ := newBranch(t)
+	base := git(t, branch, "rev-parse", "HEAD")
+	write(t, filepath.Join(branch, ".gitignore"), ".claude/settings.local.json\n")
+	git(t, branch, "add", ".gitignore")
+	git(t, branch, "commit", "-q", "-m", "ignore local settings")
+	if got, err := Touched(context.Background(), branch, base, nil); err != nil || got != nil {
+		t.Fatalf("clean branch: %q, %v", got, err)
+	}
+	write(t, filepath.Join(branch, ".claude/settings.local.json"), `{"hooks":{}}`)
+	write(t, filepath.Join(branch, "CLAUDE.md"), "new rules")
+	got, err := Touched(context.Background(), branch, base, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{".claude/settings.local.json", "CLAUDE.md"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %q, want %q", got, want)
 	}
 }
 

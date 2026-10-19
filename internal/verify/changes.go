@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path"
+	"slices"
 	"strings"
 	"time"
 
@@ -27,32 +28,69 @@ type Change struct {
 // defaultProtected guards the files that steer CI and Claude Code itself.
 var defaultProtected = []string{".github/**", ".claude/**", "**/CLAUDE.md", "**/AGENTS.md"}
 
-// Changes lists the branch's changes since its merge-base with origin's default branch.
-// A rename shows as a deletion and an addition.
-func Changes(ctx context.Context, dir, defaultBranch string) ([]Change, error) {
-	out, err := runner.Git(ctx, 30*time.Second, dir, "diff", "--name-status", "--no-renames", "origin/"+defaultBranch+"...HEAD")
+// Changes lists the branch's changes since base, the commit the Job started
+// from. A rename shows as a deletion and an addition. Paths are read with -z,
+// so a quoted or non-ASCII name is matched as it is.
+func Changes(ctx context.Context, dir, base string) ([]Change, error) {
+	out, err := runner.Git(ctx, 30*time.Second, dir, "diff", "-z", "--name-status", "--no-renames", base+"...HEAD")
 	if err != nil {
 		return nil, err
 	}
+	fields := splitNUL(out)
+	if len(fields)%2 != 0 {
+		return nil, fmt.Errorf("git diff output has an odd field count")
+	}
 	var changes []Change
-	for _, line := range strings.Split(out, "\n") {
-		if line == "" {
-			continue
-		}
-		status, file, ok := strings.Cut(line, "\t")
-		if !ok {
-			return nil, fmt.Errorf("git diff line %q", line)
-		}
+	for i := 0; i < len(fields); i += 2 {
 		kind := Modified
-		switch status {
+		switch fields[i] {
 		case "A":
 			kind = Added
 		case "D":
 			kind = Deleted
 		}
-		changes = append(changes, Change{Path: file, Kind: kind})
+		changes = append(changes, Change{Path: fields[i+1], Kind: kind})
 	}
 	return changes, nil
+}
+
+// Touched returns the protected paths that differ from base, in commits or in
+// the working tree, untracked and ignored files included: a stage that leaves
+// .claude/settings.local.json behind would steer the stages after it.
+func Touched(ctx context.Context, dir, base string, globs []string) ([]string, error) {
+	committed, err := Changes(ctx, dir, base)
+	if err != nil {
+		return nil, err
+	}
+	status, err := runner.Git(ctx, 30*time.Second, dir, "status", "-z", "--porcelain=v1", "--no-renames", "--ignored", "--untracked-files=all")
+	if err != nil {
+		return nil, err
+	}
+	seen := map[string]bool{}
+	var all []Change
+	for _, c := range committed {
+		seen[c.Path] = true
+		all = append(all, c)
+	}
+	for _, entry := range splitNUL(status) {
+		if len(entry) > 3 && !seen[entry[3:]] {
+			seen[entry[3:]] = true
+			all = append(all, Change{Path: entry[3:], Kind: Modified})
+		}
+	}
+	hits := Protected(all, globs)
+	slices.Sort(hits)
+	return hits, nil
+}
+
+func splitNUL(s string) []string {
+	var out []string
+	for _, f := range strings.Split(s, "\x00") {
+		if f != "" {
+			out = append(out, f)
+		}
+	}
+	return out
 }
 
 // Protected returns the changed paths that match the default protected globs or globs.

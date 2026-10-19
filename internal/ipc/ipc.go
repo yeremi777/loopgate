@@ -128,7 +128,8 @@ type Client struct{ http *http.Client }
 func NewClient(socket string) *Client {
 	dialer := net.Dialer{Timeout: 2 * time.Second}
 	return &Client{http: &http.Client{
-		Timeout: 30 * time.Second,
+		// run fetches origin and adds a worktree before it answers.
+		Timeout: 5 * time.Minute,
 		Transport: &http.Transport{
 			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 				return dialer.DialContext(ctx, "unix", socket)
