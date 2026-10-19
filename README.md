@@ -26,7 +26,7 @@ flowchart TD
     kind -- yes --> drill["/drill, unattended:<br/>a spec or a one-line plan"]
     kind -- no --> impl
     drill --> impl["/implement"]
-    impl --> gate{"Verify gate:<br/>your command exits 0<br/>on a clean, committed tree"}
+    impl --> gate{"Verify gate:<br/>setup, if set, then verify<br/>exit 0 on a clean, committed tree"}
     gate -- fail --> log[("Progress log")]
     log --> impl
     gate -- pass --> rubric{"/rubric defect review"}
@@ -110,14 +110,23 @@ tests: ["**/*_test.go"]              # changed or deleted tests are listed in th
 network: [proxy.golang.org, sum.golang.org]
 ```
 
+A loop whose dependencies live in the worktree, such as `node_modules` or `.venv`, installs them with `setup`, because the verify command runs offline:
+
+```yaml
+setup: npm ci                        # or pnpm install --frozen-lockfile, uv sync
+verify: npm test
+network: [registry.npmjs.org]
+```
+
 A timer loop replaces `github` with `timer: { every: 6h }` or `timer: { cron: "0 9 * * 1-5" }`, and adds exactly one of `task: <one-line plan>` or `spec: docs/specs/<slug>.md`. See [`examples/`](examples).
 
 | Field | Meaning |
 |---|---|
 | `verify` | Shell command run in the worktree. Exit 0 is the only pass. |
+| `setup` | Optional. Shell command run in the worktree before each verify command, to install what the offline verify command needs. It must exit 0 and change no tracked file, and what it installs must be gitignored. pnpm through corepack must be downloaded before: run `pnpm --version` once. |
 | `bounds` | Required. `max_iterations` counts implement runs; `timeout` covers the whole job. |
 | `protected` | A change to a matching path blocks the job for you to decide. |
-| `network` | Domains the sandboxed stages may reach, such as package registries. GitHub domains are refused. The verify command gets no network. |
+| `network` | Domains the sandboxed stages and the setup command may reach, such as package registries. GitHub domains are refused. The verify command gets no network. |
 
 ## Use
 
@@ -157,8 +166,9 @@ Summaries follow your `tldr` skill.
 
 - No stage can reach GitHub. Stages run in Claude Code's sandbox with no unsandboxed escape, network limited to the loop's `network` list, no MCP servers, and deny rules on commands that start with `gh`, `git push` or `git merge`. `loopd` alone pushes, without force, and only opens draft PRs.
 - The verify command runs code the model wrote, so it runs under macOS Seatbelt: no network but localhost, no keychain and no SSH agent (so no GitHub credentials), and writes only to the worktree, `~/.loopd/cache` and `TMPDIR`. The verify command cannot write the worktree's `.git` pointer either. Go modules come from the stages' downloads first, then from your own module cache.
-- Stages and the verify command cannot read `~/.ssh`, `~/.aws`, `~/.config/gh`, `~/.gnupg`, `~/.netrc`, `~/.npmrc`, `~/.docker`, `~/.kube` or `~/Library/Keychains`. Stages cannot write the repository's git config, hooks or the worktree's `.git` pointer, and `loopd` runs its own git with hooks and fsmonitor off.
-- After every stage, a change to a protected path, committed or not, ignored files included, blocks the job before the next stage starts.
+- The setup command runs code the model can change, such as `postinstall` scripts, so it runs under the same Seatbelt profile as the verify command. Its only way out is a proxy in `loopd` that tunnels to port 443 of the loop's `network` domains; the proxy refuses everything else and the gate output names each host it refused. Stages, setup and verify keep the npm, pnpm, uv and pip caches in `~/.loopd/cache`.
+- Stages, the setup command and the verify command cannot read `~/.ssh`, `~/.aws`, `~/.config/gh`, `~/.gnupg`, `~/.netrc`, `~/.npmrc`, `~/.docker`, `~/.kube` or `~/Library/Keychains`. Stages cannot write the repository's git config, hooks or the worktree's `.git` pointer, and `loopd` runs its own git with hooks and fsmonitor off.
+- After every stage, a change to a protected path, committed or not, ignored files included except installed dependencies under `node_modules` and `.venv`, blocks the job before the next stage starts.
 - `land` may change unprotected Markdown only. Any change after the gate to a file that is not Markdown (a rename counts as removing one path and adding another), or a rewrite of the gated commit, fails the job before anything is pushed.
 - Issue text reaches the model as fenced, untrusted data. It cannot change the verify command, bounds, protected paths, or stages.
 - Stages get an allowlisted environment; your other variables stay in `loopd`. Every stage and verify run is its own process group, which is killed on timeout, stop, or takeover.

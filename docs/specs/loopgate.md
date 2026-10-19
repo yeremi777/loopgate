@@ -78,4 +78,4 @@ A local macOS service (`loopd`) and CLI (`loopctl`) that run Claude Code with th
 - `go test ./e2e/ -run TestInstall` (AC-29)
 - `rubric` (AC-30, AC-31)
 - Demo: in a scratch GitHub repo, `loopctl add examples/fix-issues.yaml`, label an issue `agent`, and `loopctl logs <job>` shows drill, implement, the Verify gate, and a draft PR link.
-- Demo: in a scratch GitHub repo with a TypeScript package, a Loop with `setup: npm ci`, `verify: npm test` and `network: [registry.npmjs.org]` takes a labeled issue to a draft PR, and `loopctl logs <job>` shows the setup output in a passing Verify gate.
+- Demo: in a scratch GitHub repo with a TypeScript package, a Loop with `setup: npm ci`, `verify: npm test` and `network: [registry.npmjs.org]` takes a labeled issue to a draft PR.
