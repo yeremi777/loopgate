@@ -58,6 +58,10 @@ func Serve(ln net.Listener, d *daemon.Daemon) error {
 		j, err := d.Run(r.PathValue("name"), req.Spec)
 		reply(w, j, err)
 	})
+	mux.HandleFunc("GET /jobs", func(w http.ResponseWriter, r *http.Request) {
+		jobs, err := d.Jobs()
+		reply(w, jobs, err)
+	})
 	mux.HandleFunc("GET /jobs/{id}", func(w http.ResponseWriter, r *http.Request) {
 		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 		if err != nil {
@@ -207,6 +211,12 @@ func (c *Client) Run(ctx context.Context, name, spec string) (store.Job, error) 
 	var j store.Job
 	err = call(ctx, c.http, http.MethodPost, "/loops/"+url.PathEscape(name)+"/run", body, &j)
 	return j, err
+}
+
+func (c *Client) Jobs(ctx context.Context) ([]store.Job, error) {
+	var jobs []store.Job
+	err := call(ctx, c.http, http.MethodGet, "/jobs", nil, &jobs)
+	return jobs, err
 }
 
 func (c *Client) Job(ctx context.Context, id int64) (daemon.JobLog, error) {

@@ -26,7 +26,7 @@ import (
 const usage = `loopctl controls loopd, which runs Claude Code on loops and stops at a draft PR.
 
 usage:
-  loopctl list                         show each loop's state, trigger and checkout
+  loopctl list                         show each loop's state, trigger and checkout, and the job ids of open and recent jobs
   loopctl add <loop.yaml>              register a loop file
   loopctl remove <name>                unregister a loop
   loopctl pause <name>                 stop a loop's timer or issue polling
@@ -86,6 +86,23 @@ func run(args []string) error {
 				state = "paused"
 			}
 			_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", l.Name, state, l.Trigger, l.Checkout)
+		}
+		if err := w.Flush(); err != nil {
+			return err
+		}
+		jobs, err := c.Jobs(ctx)
+		if err != nil || len(jobs) == 0 {
+			return err
+		}
+		fmt.Println()
+		w = tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+		_, _ = fmt.Fprintln(w, "JOB\tLOOP\tSTATE\tWORK\tPR / QUESTION")
+		for _, j := range jobs {
+			outcome := j.PRURL
+			if j.State == store.Blocked {
+				outcome = j.Question
+			}
+			_, _ = fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\n", j.ID, j.Loop, j.State, cell(j.Work), cell(outcome))
 		}
 		return w.Flush()
 	case cmd == "add" && len(rest) == 1:
@@ -379,6 +396,12 @@ func printEnd(j store.Job) {
 	for l := range strings.Lines(line) {
 		fmt.Println(printable(strings.TrimSuffix(l, "\n")))
 	}
+}
+
+// cell is the first line of s as one table cell of at most 60 characters.
+func cell(s string) string {
+	first, _, _ := strings.Cut(s, "\n")
+	return cut(printable(first), 60)
 }
 
 // printable replaces each control and bidi control character in s, which a
