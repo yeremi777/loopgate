@@ -375,6 +375,45 @@ func TestShellSandboxConfinesTheVerifyCommand(t *testing.T) {
 	}
 }
 
+func TestSetupReachesTheNetworkOnlyThroughTheProxy(t *testing.T) {
+	dir, cache := realDir(t), realDir(t)
+	outside := filepath.Join(realDir(t), "outside")
+	guard := filepath.Join(dir, ".git")
+	r := Runner{Environ: []string{"PATH=" + os.Getenv("PATH"), "SSH_AUTH_SOCK=/tmp/agent", "TMPDIR=" + realDir(t)}, Cache: cache}
+	script := strings.Join([]string{
+		"echo in > inside && echo inside-ok",
+		"echo out > " + outside + " && echo OUTSIDE-WRITTEN",
+		"echo evil > .git && echo GUARD-WRITTEN",
+		"env | grep -c SSH_AUTH_SOCK",
+		`[ -n "$HTTPS_PROXY" ] && [ "$HTTPS_PROXY" = "$HTTP_PROXY" ] && [ "$HTTPS_PROXY" = "$https_proxy" ] && [ "$HTTPS_PROXY" = "$http_proxy" ] && echo proxy-set`,
+		"curl -s -m 5 -o /dev/null -w 'proxied-%{http_connect}\\n' https://example.com/",
+		"curl -s -m 5 --noproxy '*' -o /dev/null -w 'bypass-%{http_code}\\n' https://example.com/",
+		"exit 4",
+	}, "; ")
+	for _, network := range [][]string{nil, {"registry.npmjs.org"}} {
+		res, err := r.Setup(context.Background(), dir, script, time.Minute, []string{guard}, network)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.ExitCode != 4 {
+			t.Fatalf("network %q: exit %d, want 4:\n%s", network, res.ExitCode, res.Output)
+		}
+		for _, want := range []string{"inside-ok", "\n0\n", "proxy-set", "proxied-403", "bypass-000"} {
+			if !strings.Contains(res.Output, want) {
+				t.Fatalf("network %q: output lacks %q:\n%s", network, want, res.Output)
+			}
+		}
+		for _, bad := range []string{"OUTSIDE-WRITTEN", "GUARD-WRITTEN"} {
+			if strings.Contains(res.Output, bad) {
+				t.Fatalf("network %q: sandbox let through %q:\n%s", network, bad, res.Output)
+			}
+		}
+		if !strings.HasSuffix(res.Output, "loopgate refused hosts outside the loop's network list: example.com\n") {
+			t.Fatalf("network %q: output does not end naming the refused host:\n%s", network, res.Output)
+		}
+	}
+}
+
 func TestShellPassesWhenABackgroundProcessOutlivesASuccessfulCommand(t *testing.T) {
 	r := Runner{Environ: []string{"PATH=" + os.Getenv("PATH")}, Cache: t.TempDir()}
 	res, err := r.Shell(context.Background(), t.TempDir(), "sleep 30 & echo done", time.Minute, nil)
