@@ -3,6 +3,7 @@ package store
 import (
 	"errors"
 	"path/filepath"
+	"slices"
 	"testing"
 )
 
@@ -69,6 +70,37 @@ func TestUnknownJob(t *testing.T) {
 	}
 	if err := st.SetJobState(99, Running); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("want ErrNotFound, got %v", err)
+	}
+}
+
+func TestJobsAreTheOnesInProgressAndTheFiveNewestEndedNewestFirst(t *testing.T) {
+	st := open(t, filepath.Join(t.TempDir(), "state.db"))
+	states := []JobState{Blocked, Failed, Exhausted, Manual, Done, Done, Failed, Done, Done, Running}
+	for _, state := range states {
+		j, err := st.CreateJob("fix")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := st.StartJob(j.ID, Start{Work: "issue 42 Fix login"}); err != nil {
+			t.Fatal(err)
+		}
+		if err := st.FinishJob(j.ID, Finish{State: state, PRURL: "https://github.com/me/app/pull/1"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	jobs, err := st.Jobs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ids []int64
+	for _, j := range jobs {
+		ids = append(ids, j.ID)
+	}
+	if want := []int64{10, 9, 8, 7, 6, 5, 4, 1}; !slices.Equal(ids, want) {
+		t.Fatalf("jobs %v, want %v", ids, want)
+	}
+	if j := jobs[1]; j.Loop != "fix" || j.State != Done || j.Work != "issue 42 Fix login" || j.PRURL != "https://github.com/me/app/pull/1" {
+		t.Fatalf("job 9 read back as %+v", j)
 	}
 }
 

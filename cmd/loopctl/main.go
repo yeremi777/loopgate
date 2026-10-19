@@ -26,18 +26,18 @@ import (
 const usage = `loopctl controls loopd, which runs Claude Code on loops and stops at a draft PR.
 
 usage:
-  loopctl list                         show each loop's state, trigger and checkout
+  loopctl list                         show each loop, then the job id of each job in progress and of the 5 newest ended
   loopctl add <loop.yaml>              register a loop file
-  loopctl remove <name>                unregister a loop
-  loopctl pause <name>                 stop a loop's timer or issue polling
-  loopctl resume <name>                start them again
-  loopctl run <name> [--spec <path>]   start a job now on --spec, or a timer loop's own task or spec
-  loopctl stop <name>                  end the loop's running job; the loop stays
+  loopctl remove <loop>                unregister a loop
+  loopctl pause <loop>                 stop a loop's timer or issue polling
+  loopctl resume <loop>                start them again
+  loopctl run <loop> [--spec <path>]   start a job now on --spec, or a timer loop's own task or spec
+  loopctl stop <loop>                  end the loop's running job; the loop stays
   loopctl logs <job>                   show a job's state, branch, PR, cost and progress
   loopctl logs -f <job>                show that, then follow the running job until it ends; Ctrl-C leaves it running
   loopctl takeover <job>               take a job, stopping it if it runs, and hand its worktree to you
   loopctl handback <job>               give a taken-over job back to its loop
-  loopctl requeue <name> <issue>       let a github loop run an issue again
+  loopctl requeue <loop> <issue>       let a github loop run an issue again
   loopctl install                      start loopd now and at login, and add the Claude Code skill
   loopctl uninstall                    stop loopd and remove the agent and the skill
   loopctl version                      print the installed loopgate version`
@@ -78,14 +78,34 @@ func run(args []string) error {
 		if err != nil {
 			return err
 		}
+		jobs, err := c.Jobs(ctx)
+		if err != nil {
+			return err
+		}
 		w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-		_, _ = fmt.Fprintln(w, "NAME\tSTATE\tTRIGGER\tCHECKOUT")
+		_, _ = fmt.Fprintln(w, "LOOP\tSTATE\tTRIGGER\tCHECKOUT")
 		for _, l := range loops {
 			state := "active"
 			if l.Paused {
 				state = "paused"
 			}
 			_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", l.Name, state, l.Trigger, l.Checkout)
+		}
+		if err := w.Flush(); err != nil {
+			return err
+		}
+		if len(jobs) == 0 {
+			return nil
+		}
+		fmt.Println()
+		w = tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+		_, _ = fmt.Fprintln(w, "JOB\tLOOP\tSTATE\tWORK\tPR / QUESTION")
+		for _, j := range jobs {
+			outcome := j.PRURL
+			if j.State == store.Blocked {
+				outcome = j.Question
+			}
+			_, _ = fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\n", j.ID, j.Loop, j.State, cell(j.Work), cell(outcome))
 		}
 		return w.Flush()
 	case cmd == "add" && len(rest) == 1:
@@ -379,6 +399,12 @@ func printEnd(j store.Job) {
 	for l := range strings.Lines(line) {
 		fmt.Println(printable(strings.TrimSuffix(l, "\n")))
 	}
+}
+
+// cell is the first line of s as one table cell of at most 60 characters.
+func cell(s string) string {
+	first, _, _ := strings.Cut(s, "\n")
+	return cut(printable(first), 60)
 }
 
 // printable replaces each control and bidi control character in s, which a

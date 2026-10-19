@@ -187,6 +187,9 @@ func (d *Daemon) List() ([]LoopStatus, error) {
 	return out, nil
 }
 
+// Jobs are the Jobs in progress and the newest that ended.
+func (d *Daemon) Jobs() ([]store.Job, error) { return d.st.Jobs() }
+
 func triggerName(t config.Trigger) string {
 	if gh, ok := t.(config.GitHub); ok {
 		return "github " + gh.Repo
