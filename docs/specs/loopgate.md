@@ -28,14 +28,17 @@ A local macOS service (`loopd`) and CLI (`loopctl`) that run Claude Code with th
 - AC-9: On timeout, `stop`, or Takeover, the child's whole process group ends, including grandchildren.
 - AC-10: Each Job runs in its own worktree on branch `loop/<loop>-<issue>-<job id>` or `loop/<loop>-<timestamp>-<job id>`, cut from `origin/<default>`; uncommitted changes in the main checkout are absent from it.
 - AC-11: `run --spec <path>` copies the Spec into the worktree at the same path and commits it on the Job branch when the branch lacks it.
-- AC-33: A Loop's optional `network` lists the domains its stages may reach; a domain that is or ends in `github.com` or `githubusercontent.com` fails to load.
+- AC-33: A Loop's optional `network` lists the domains its stages and its setup command may reach; a domain that is or ends in `github.com` or `githubusercontent.com` fails to load.
+- AC-38: Every stage, setup command and verify command keeps its npm, pnpm, uv and pip caches under `~/.loopd/cache`.
 
 ### Verify gate and bounds
-- AC-12: A Job reaches `land` only when the Loop's verify command, run under Seatbelt with no network but localhost, no keychain, and writes only to the worktree, cache and TMPDIR, exits 0 in its worktree on a clean, committed tree; a stage that reports `done` while the verify command fails, or that leaves uncommitted changes, does not pass.
+- AC-12: A Job reaches `land` only when the Loop's verify command, run after its setup command when one is set, under Seatbelt with no network but localhost, no keychain, and writes only to the worktree, cache and TMPDIR, exits 0 in its worktree on a clean, committed tree; a stage that reports `done` while the verify command fails, or that leaves uncommitted changes, does not pass.
+- AC-36: A Loop's optional `setup` command runs in the Job worktree inside each Verify gate, after the clean-tree check and before the verify command, under the verify command's Seatbelt profile, with `HTTPS_PROXY` and `HTTP_PROXY` set to a proxy in `loopd` that tunnels `CONNECT` to port 443 for the Loop's `network` domains and refuses every other request; a connection that bypasses the proxy reaches no remote host.
+- AC-37: A setup command that exits non-zero, or that leaves a tracked file changed or a file untracked and not ignored, fails the Verify gate, and its output, with each domain the proxy refused, goes to the progress log.
 - AC-13: After a failed Verify gate or a `rubric` revision, the next `implement` session is new and its prompt carries the progress log: each earlier iteration's verify output or findings, also kept in `~/.loopd/jobs/<id>/progress.md`.
 - AC-14: A Job whose `max_iterations` `implement` runs all end without a passing Verify gate and `rubric` review, or that exceeds `timeout`, ends as `exhausted` with no PR.
 - AC-15: A stage that reports `blocked` ends the Job as Blocked with its question stored, and no later stage runs.
-- AC-16: After every stage, a change since the Job's base commit to a path matching the default or the Loop's `protected` globs, committed or in the working tree, ignored files included, makes the Job Blocked before the next stage.
+- AC-16: After every stage, a change since the Job's base commit to a path matching the default or the Loop's `protected` globs, committed or in the working tree, ignored files included except those under a directory named `node_modules` or `.venv`, makes the Job Blocked before the next stage.
 - AC-17: The PR report lists each file that matches the Loop's `tests` globs and that the diff deleted or changed.
 - AC-34: After the Verify gate passes, a `rubric` defect-pass stage reviews the branch diff on every Job; a `revise` report sends its findings to the next `implement` run, and a `rubric` stage that changes the tree fails the Job.
 
@@ -75,3 +78,4 @@ A local macOS service (`loopd`) and CLI (`loopctl`) that run Claude Code with th
 - `go test ./e2e/ -run TestInstall` (AC-29)
 - `rubric` (AC-30, AC-31)
 - Demo: in a scratch GitHub repo, `loopctl add examples/fix-issues.yaml`, label an issue `agent`, and `loopctl logs <job>` shows drill, implement, the Verify gate, and a draft PR link.
+- Demo: in a scratch GitHub repo with a TypeScript package, a Loop with `setup: npm ci`, `verify: npm test` and `network: [registry.npmjs.org]` takes a labeled issue to a draft PR, and `loopctl logs <job>` shows the setup output in a passing Verify gate.

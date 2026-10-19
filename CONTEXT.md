@@ -21,8 +21,12 @@ A work item that one sentence states, with its check, and that needs no Spec.
 _Avoid_: quick fix, small task
 
 **Verify gate**:
-The exit code of a Loop's verify command on a Job's worktree, which alone decides pass or fail.
+The exit codes of a Loop's Setup command, when set, and its verify command on a Job's worktree, which alone decide pass or fail.
 _Avoid_: check, test step
+
+**Setup command**:
+A Loop's optional command that installs the worktree's dependencies through `loopd`'s proxy at the start of each Verify gate, so the verify command can run offline.
+_Avoid_: install step, bootstrap, prepare
 
 **Takeover**:
 A human taking a Job from the Loop to continue it by hand in its worktree.
