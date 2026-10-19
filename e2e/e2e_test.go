@@ -362,7 +362,7 @@ func TestHelpExitsZeroAndExplainsStop(t *testing.T) {
 		if code != 0 || !strings.Contains(out, "takeover <job>") {
 			t.Fatalf("loopctl %s: exit %d, %q", arg, code, out)
 		}
-		if !strings.Contains(out, "stop <name>") || !strings.Contains(out, "end the loop's running job") {
+		if !strings.Contains(out, "stop <loop>") || strings.Contains(out, "<name>") || !strings.Contains(out, "end the loop's running job") {
 			t.Fatalf("usage does not say what stop does:\n%s", out)
 		}
 	}

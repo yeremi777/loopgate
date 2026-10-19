@@ -115,9 +115,13 @@ func TestFollowNamesTheStatusOfALoopdThatCannotFollow(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = ln.Close() })
 	go func() { _ = http.Serve(ln, http.NotFoundHandler()) }()
-	_, err = NewClient(sock).Follow(context.Background(), 1, func(feed.Event) {})
+	c := NewClient(sock)
+	_, err = c.Follow(context.Background(), 1, func(feed.Event) {})
 	if err == nil || !strings.Contains(err.Error(), "404") || !strings.Contains(err.Error(), "loopctl install") {
 		t.Fatalf("follow against a loopd without the events route: %v", err)
+	}
+	if _, err := c.Jobs(context.Background()); err == nil || !strings.Contains(err.Error(), "404") || !strings.Contains(err.Error(), "loopctl install") {
+		t.Fatalf("jobs against a loopd without the jobs route: %v", err)
 	}
 }
 

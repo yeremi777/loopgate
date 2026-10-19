@@ -255,7 +255,7 @@ func (c *Client) Follow(ctx context.Context, id int64, show func(feed.Event)) (s
 	}
 	defer func() { _ = res.Body.Close() }()
 	if res.StatusCode != http.StatusOK {
-		return store.Job{}, fmt.Errorf("loopd answered %s to follow; it may be older than loopctl, so run loopctl install", res.Status)
+		return store.Job{}, olderLoopd(res)
 	}
 	dec := json.NewDecoder(res.Body)
 	for {
@@ -282,6 +282,9 @@ func call[T any](ctx context.Context, client *http.Client, method, path string, 
 	defer func() { _ = res.Body.Close() }()
 	var resp response[T]
 	if err := json.NewDecoder(res.Body).Decode(&resp); err != nil {
+		if res.StatusCode != http.StatusOK {
+			return olderLoopd(res)
+		}
 		return fmt.Errorf("loopd reply: %w", err)
 	}
 	if resp.Error != "" {
@@ -291,6 +294,12 @@ func call[T any](ctx context.Context, client *http.Client, method, path string, 
 		*out = resp.Data
 	}
 	return nil
+}
+
+// olderLoopd is the error for a reply that is not loopd's own, as from a
+// loopd that has no route for the request.
+func olderLoopd(res *http.Response) error {
+	return fmt.Errorf("loopd answered %s; it may be older than loopctl, so run loopctl install", res.Status)
 }
 
 func send(ctx context.Context, client *http.Client, method, path string, body []byte) (*http.Response, error) {

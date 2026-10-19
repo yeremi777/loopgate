@@ -1,6 +1,8 @@
 package e2e
 
 import (
+	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -19,6 +21,25 @@ esac
 printf '%s' "$prompt" | {
 ` + fakeClaudeBody + `}
 `
+
+func TestListAgainstAnOlderLoopdNamesInstallAndPrintsNothing(t *testing.T) {
+	e := newEnv(t, "exit 0")
+	ln, err := net.Listen("unix", filepath.Join(e.home, "loopd.sock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	old := http.NewServeMux()
+	old.HandleFunc("GET /loops", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"data":[{"name":"fix","paused":false,"trigger":"timer","checkout":"/repo"}]}`))
+	})
+	go func() { _ = http.Serve(ln, old) }()
+
+	out, code := e.loopctl("list")
+	if code == 0 || !strings.Contains(out, "404") || !strings.Contains(out, "loopctl install") || strings.Contains(out, "LOOP") {
+		t.Fatalf("list against a loopd without jobs: exit %d\n%s", code, out)
+	}
+}
 
 func TestListShowsJobsWithTheIdsThatCommandsTake(t *testing.T) {
 	e := newEnv(t, "exit 0")
@@ -60,7 +81,7 @@ func TestListShowsJobsWithTheIdsThatCommandsTake(t *testing.T) {
 
 	out := e.mustLoopctl("list")
 	loops, jobs, ok := strings.Cut(out, "\n\n")
-	if !ok || !hasRow(loops, "ask", "active") || !hasRow(loops, "deps", "active") {
+	if !ok || !strings.HasPrefix(loops, "LOOP ") || !hasRow(loops, "ask", "active") || !hasRow(loops, "deps", "active") {
 		t.Fatalf("list has no loops table then a blank line:\n%s", out)
 	}
 	rows := strings.Split(strings.TrimSuffix(jobs, "\n"), "\n")

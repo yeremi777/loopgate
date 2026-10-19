@@ -177,11 +177,12 @@ func (s *Store) Job(id int64) (Job, error) {
 	return job, err
 }
 
-// Jobs are every Job that is not done and the five newest done ones, newest first.
+// Jobs are every Job in progress, that is queued, running, Blocked or
+// manual, and the five newest that ended done, failed or exhausted, newest first.
 func (s *Store) Jobs() ([]Job, error) {
 	rows, err := s.db.Query(`SELECT `+jobColumns+` FROM jobs
-		WHERE state != ? OR id IN (SELECT id FROM jobs WHERE state = ? ORDER BY id DESC LIMIT 5)
-		ORDER BY id DESC`, Done, Done)
+		WHERE state IN (?, ?, ?, ?) OR id IN (SELECT id FROM jobs WHERE state IN (?, ?, ?) ORDER BY id DESC LIMIT 5)
+		ORDER BY id DESC`, Queued, Running, Blocked, Manual, Done, Failed, Exhausted)
 	if err != nil {
 		return nil, err
 	}
