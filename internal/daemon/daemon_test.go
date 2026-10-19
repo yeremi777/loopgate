@@ -68,6 +68,22 @@ func TestAddRejectsInvalidAndDuplicateLoops(t *testing.T) {
 	}
 }
 
+func TestAddOfATakenNameFailsBeforeTheTrialGate(t *testing.T) {
+	d := newDaemon(t, t.TempDir())
+	checkout := gittest.Checkout(t, "https://github.com/me/app.git")
+	if _, err := d.Add(context.Background(), []byte(fixLoop(checkout))); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	_, err := d.Add(context.Background(), []byte(strings.Replace(fixLoop(checkout), `verify: "true"`, "verify: sleep 30", 1)))
+	if !errors.Is(err, ErrLoopExists) {
+		t.Fatalf("want ErrLoopExists, got %v", err)
+	}
+	if took := time.Since(start); took > 5*time.Second {
+		t.Fatalf("a taken name waited %s for a trial gate", took)
+	}
+}
+
 func TestRemovedLoopIsGoneAfterRestart(t *testing.T) {
 	home := t.TempDir()
 	d := newDaemon(t, home)
@@ -99,7 +115,7 @@ func TestAddRefusesACheckoutThatJobsCannotUse(t *testing.T) {
 	d := newDaemon(t, t.TempDir())
 	checkout := gittest.Checkout(t, "https://github.com/me/app.git")
 	noHead := gittest.Checkout(t, "https://github.com/me/app.git")
-	gitRun(t, noHead, "remote", "set-head", "origin", "--delete")
+	gittest.Run(t, noHead, "remote", "set-head", "origin", "--delete")
 	sub := filepath.Join(checkout, "sub")
 	if err := os.Mkdir(sub, 0o755); err != nil {
 		t.Fatal(err)

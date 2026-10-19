@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -239,15 +238,6 @@ type fakePublisher struct{}
 
 func (fakePublisher) Publish(context.Context, string, string, string, job.PR) (string, error) {
 	return "https://github.com/me/app/pull/1", nil
-}
-
-func gitRun(t *testing.T, dir string, args ...string) {
-	t.Helper()
-	cmd := exec.Command("git", append([]string{"-c", "user.name=t", "-c", "user.email=t@example.com"}, args...)...)
-	cmd.Dir = dir
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("git %v: %v: %s", args, err, out)
-	}
 }
 
 func writeFile(path, content string) {

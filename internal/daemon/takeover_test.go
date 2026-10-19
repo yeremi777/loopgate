@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yeremi777/loopgate/internal/gittest"
 	"github.com/yeremi777/loopgate/internal/job"
 	"github.com/yeremi777/loopgate/internal/runner"
 	"github.com/yeremi777/loopgate/internal/store"
@@ -71,8 +72,8 @@ func TestHandbackRunsTheLoopAgainOnTheHumansCommits(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeFile(filepath.Join(started.Worktree, "human.txt"), "by hand")
-	gitRun(t, started.Worktree, "add", "human.txt")
-	gitRun(t, started.Worktree, "commit", "-q", "-m", "human work")
+	gittest.Run(t, started.Worktree, "add", "human.txt")
+	gittest.Run(t, started.Worktree, "commit", "-q", "-m", "human work")
 
 	if _, err := r.d.Handback(started.ID + 100); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("handback of unknown job: %v", err)
