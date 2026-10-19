@@ -7,6 +7,7 @@ A local macOS service (`loopd`) and CLI (`loopctl`) that run Claude Code with th
 - No merge of any kind, no force-push, no push to the default branch, and no change of a PR from draft to ready.
 - No VPS, webhooks, web UI, chat bots, or Linux/Windows service install.
 - No orchestration of subagents by `loopd`; subagents come only from the skills inside a Claude Code session.
+- No network path from any Claude Code stage to GitHub; every GitHub read and write goes through `loopd`.
 - No stored tokens or credentials; GitHub access goes through the user's `gh` login.
 - No database operations or migrations performed by a Job.
 - No copy of the user's private skill definitions, company details, `.env`, or `*.db` in the repo or its history.
@@ -14,30 +15,33 @@ A local macOS service (`loopd`) and CLI (`loopctl`) that run Claude Code with th
 ## Acceptance criteria
 
 ### Config, store, IPC
-- AC-1: A Loop file that lacks `verify`, `bounds.max_iterations`, or `bounds.timeout`, or that has an unknown field, fails to load with an error that names the field.
+- AC-1: A Loop file that lacks `name`, `checkout`, `verify`, `bounds.max_iterations`, or `bounds.timeout`, or that has an unknown field, fails to load with an error that names the field; `checkout` is the path of the user's own clone that the Loop's worktrees come from.
 - AC-2: A Loop file has exactly one trigger: `github` (`repo`, `label`, `every`) or `timer` (`every` or `cron`); a timer Loop has exactly one of `task` or `spec`.
 - AC-3: A second `loopd` on the same `~/.loopd` exits non-zero and names the running pid; a lock left by a dead pid is taken over.
 - AC-4: Loops, Jobs, Job states, and handled issue numbers survive a `loopd` restart.
-- AC-5: `loopctl list | add <file> | remove <name> | pause | resume | stop <name> | run <name> [--spec <path>] | logs <job> | takeover <job> | handback <job> | requeue <name> <issue> | focus github <owner/repo> --label <label>` reach `loopd` over `~/.loopd/loopd.sock`; with `loopd` down, `loopctl` exits non-zero with `loopd not running`.
+- AC-5: `loopctl list | add <file> | remove <name> | pause <name> | resume <name> | stop <name> | run <name> [--spec <path>] | logs <job> | takeover <job> | handback <job> | requeue <name> <issue>` reach `loopd` over `~/.loopd/loopd.sock`; with `loopd` down, `loopctl` exits non-zero with `loopd not running`.
 - AC-6: `loopd` refuses to start, with a message that names `gh auth login`, when `gh auth status` fails.
 
 ### Runner
-- AC-7: Each stage runs `claude -p` in the Job worktree with `--permission-mode auto`, `--permission-prompts none`, a `--json-schema` for `{status: done|blocked, question, summary}`, and `--settings` with deny rules for `gh pr merge`, `gh pr ready`, `git merge`, `git push --force`, and a push to the default branch.
+- AC-7: Each stage runs `claude -p` in the Job worktree with `--permission-mode auto`, `--permission-prompts none`, a `--json-schema` for `{status: done|blocked|revise, question, summary}`, `--setting-sources user`, `--strict-mcp-config`, and `--settings` that enable the sandbox with no unsandboxed escape, allow network only to the Loop's `network` domains, deny reads of credential directories and writes to the repository's git config, hooks and `.git` pointer, and deny commands that start with `gh`, `git push`, or `git merge`; each stage's `total_cost_usd` is recorded on its Job.
 - AC-8: The child environment holds only allowlisted variables; a variable outside the allowlist, set in `loopd`'s environment, is absent in the child.
 - AC-9: On timeout, `stop`, or Takeover, the child's whole process group ends, including grandchildren.
-- AC-10: Each Job runs in its own worktree on branch `loop/<loop>-<issue|timestamp>`, cut from `origin/<default>`; uncommitted changes in the main checkout are absent from it.
-- AC-11: `run --spec <path>` copies the Spec into the worktree at the same path.
+- AC-10: Each Job runs in its own worktree on branch `loop/<loop>-<issue>-<job id>` or `loop/<loop>-<timestamp>-<job id>`, cut from `origin/<default>`; uncommitted changes in the main checkout are absent from it.
+- AC-11: `run --spec <path>` copies the Spec into the worktree at the same path and commits it on the Job branch when the branch lacks it.
+- AC-33: A Loop's optional `network` lists the domains its stages may reach; a domain that is or ends in `github.com` or `githubusercontent.com` fails to load.
 
 ### Verify gate and bounds
-- AC-12: A Job reaches `land` only when the Loop's verify command exits 0 in its worktree; a stage that reports `done` while the verify command fails does not pass.
-- AC-13: After a failed Verify gate, the next `implement` session is new and its prompt names `~/.loopd/jobs/<id>/progress.md`, which holds each earlier iteration's verify output.
-- AC-14: A Job that fails the Verify gate `max_iterations` times, or exceeds `timeout`, ends as `exhausted` with no PR.
+- AC-12: A Job reaches `land` only when the Loop's verify command, run under Seatbelt with no network but localhost, no keychain, and writes only to the worktree, cache and TMPDIR, exits 0 in its worktree on a clean, committed tree; a stage that reports `done` while the verify command fails, or that leaves uncommitted changes, does not pass.
+- AC-13: After a failed Verify gate or a `rubric` revision, the next `implement` session is new and its prompt carries the progress log: each earlier iteration's verify output or findings, also kept in `~/.loopd/jobs/<id>/progress.md`.
+- AC-14: A Job whose `max_iterations` `implement` runs all end without a passing Verify gate and `rubric` review, or that exceeds `timeout`, ends as `exhausted` with no PR.
 - AC-15: A stage that reports `blocked` ends the Job as Blocked with its question stored, and no later stage runs.
-- AC-16: A diff that touches a path matching the Loop's `protected` globs makes the Job Blocked before `land`.
+- AC-16: After every stage, a change since the Job's base commit to a path matching the default or the Loop's `protected` globs, committed or in the working tree, ignored files included, makes the Job Blocked before the next stage.
 - AC-17: The PR report lists each file that matches the Loop's `tests` globs and that the diff deleted or changed.
+- AC-34: After the Verify gate passes, a `rubric` defect-pass stage reviews the branch diff on every Job; a `revise` report sends its findings to the next `implement` run, and a `rubric` stage that changes the tree fails the Job.
 
 ### Land
-- AC-18: `land` runs as `/land PR, keep spec`; afterwards `loopd` reads the PR through `gh pr view --json isDraft,headRefName`, and a PR that is not a draft is returned to draft and its Job is marked `failed`, as is a PR whose head is the default branch.
+- AC-18: `land` runs as `/land PR, keep spec` with no network and returns the PR title and body as its summary instead of pushing; `loopd` then pushes the Job branch and opens the PR with `gh pr create --draft`.
+- AC-35: `loopd` pushes only when the branch head differs from the commit that passed the Verify gate and `rubric` in unprotected `.md` files alone, renames counted as deletions; otherwise nothing is pushed.
 - AC-19: A Job that reaches a draft PR sends a macOS notification, and comments the PR link on its issue when it came from one.
 
 ### Timer trigger
