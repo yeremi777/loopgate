@@ -6,7 +6,8 @@ const token = new URLSearchParams(location.search).get("token") || "";
 const jobID = document.body.dataset.job;
 const url = (path) => "/jobs/" + jobID + path + "?token=" + encodeURIComponent(token);
 
-const view = { track: null, events: [], following: false, stopped: false };
+// stoppedAt is when the page lost loopd; problem is an error loopd answered.
+const view = { track: null, events: [], following: false, stoppedAt: null, problem: "" };
 
 // el builds an element; strings among the children become text nodes.
 function el(tag, cls, ...children) {
@@ -55,6 +56,7 @@ const stageTitle = (stage) => {
 const time = (t) => (t ? new Date(t) : null);
 const clock = (d) => d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
 const money = (n) => "$" + n.toFixed(2);
+const prNumber = (job) => (job.PRURL.match(/\/pull\/(\d+)/) || [])[1];
 
 function duration(ms) {
   const s = Math.max(0, Math.round(ms / 1000));
@@ -65,7 +67,7 @@ function duration(ms) {
 }
 
 const runningStates = new Set(["queued", "running"]);
-const isLive = () => runningStates.has(view.track.job.State);
+const isLive = () => runningStates.has(view.track.job.State) && !view.stoppedAt;
 
 // next is the stage that starts after row ends, while the Job runs on.
 function next(row) {
@@ -80,26 +82,34 @@ function next(row) {
   return null;
 }
 
-// current is the running stage and when it started, or null.
+// current is the running stage and when it started, or null. A handed-back
+// Job runs stage names again, so only a row that ended after the stage's
+// first event in this run ends it.
 function current() {
   if (view.track.job.State !== "running") return null;
   const rows = view.track.stages;
   const last = rows[rows.length - 1];
+  const firstOf = (stage) => view.events.find((e) => e.stage === stage);
   const latest = view.events[view.events.length - 1];
   let stage = latest ? latest.stage : null;
-  if (stage === null || rows.some((r) => r.stage === stage)) {
-    stage = last ? next(last) : null;
+  if (stage !== null) {
+    const since = time(firstOf(stage).time);
+    if (rows.some((r) => r.stage === stage && time(r.end) >= since)) stage = next(rows.findLast((r) => r.stage === stage));
+  } else if (last) {
+    stage = next(last);
   }
   if (stage === null) return null;
-  const first = view.events.find((e) => e.stage === stage);
+  const first = firstOf(stage);
   const start = first ? time(first.time) : last ? time(last.end) : time(view.track.job.Started);
   return { stage, start };
 }
 
-function implementRuns() {
-  const cur = current();
+// run is the implement run the Job is on, or ended on: the number of its
+// current or latest implement, verify or rubric stage.
+function run(cur) {
   const stages = view.track.stages.map((r) => r.stage).concat(cur ? [cur.stage] : []);
-  return Math.max(0, ...stages.filter((s) => kindOf(s) === "implement").map(numOf));
+  const numbered = stages.filter((s) => numOf(s) > 0);
+  return numbered.length ? numOf(numbered[numbered.length - 1]) : 0;
 }
 
 function runOf(n) {
@@ -136,15 +146,15 @@ function detail(job) {
   const command = (text) => el("code", "cmd", text);
   switch (job.State) {
     case "done": {
-      const pr = job.PRURL.match(/\/pull\/(\d+)/);
-      const link = el("a", "pr-link", "Open PR" + (pr ? " #" + pr[1] : ""), icon("external"));
+      const pr = prNumber(job);
+      const link = el("a", "pr-link", "Open PR" + (pr ? " #" + pr : ""), icon("external"));
       link.href = job.PRURL;
       link.target = "_blank";
       link.rel = "noopener noreferrer";
       box.append(link, command("loopctl try " + job.ID));
       break;
     }
-    case "blocked": box.append(el("p", "text", job.Question)); break;
+    case "blocked": box.append(el("p", "text", job.Question), command("loopctl takeover " + job.ID)); break;
     case "failed": box.append(el("p", "text", job.Error)); break;
     case "exhausted": box.append(el("p", "text", job.Summary)); break;
     case "manual": box.append(command("loopctl handback " + job.ID)); break;
@@ -156,12 +166,12 @@ function detail(job) {
 function elapsed(job) {
   const started = time(job.Started);
   if (!started) return "—";
-  const end = isLive() ? new Date() : time(job.Ended) || new Date();
-  return duration(end - started);
+  const end = view.stoppedAt || (isLive() ? new Date() : time(job.Ended));
+  return end ? duration(end - started) : "—";
 }
 
 function cost(job) {
-  if (!isLive()) return money(job.CostUSD);
+  if (!runningStates.has(job.State)) return money(job.CostUSD);
   return money(view.track.stages.reduce((sum, r) => sum + r.cost_usd, 0));
 }
 
@@ -182,18 +192,19 @@ function stepper(job, cur) {
     let note = "";
     if (cur && kindOf(cur.stage) === kind) {
       state = "current";
+    } else if (kind === "drill" && !job.Work.startsWith("issue ")) {
+      state = "skipped";
     } else if (last) {
       state = { done: "done", pass: "done", blocked: "blocked" }[last.status] || "failed";
       if (job.State === "blocked" && last === lastRow) state = "blocked";
     }
     const runs = mine.length + (state === "current" ? 1 : 0);
-    if (kind === "verify" && last && last.status !== "pass" && state !== "current") {
-      note = "gate " + numOf(last.stage) + " failed";
-    } else if (kind === "publish") {
-      const pr = job.PRURL.match(/\/pull\/(\d+)/);
-      note = pr ? "#" + pr[1] : "";
-    } else if (kind === "drill" && !job.Work.startsWith("issue ")) {
+    if (state === "skipped") {
       note = "skipped";
+    } else if (kind === "verify" && state === "failed") {
+      note = "verify " + numOf(last.stage) + " failed";
+    } else if (kind === "publish") {
+      note = prNumber(job) ? "#" + prNumber(job) : "";
     } else if (runs) {
       note = runs === 1 ? "1 run" : runs + " runs";
     }
@@ -209,16 +220,18 @@ function stepper(job, cur) {
 function card(job) {
   const cur = current();
   const state = job.State;
+  let label = state === "manual" ? "taken over" : state;
+  if (view.stoppedAt) label = "last seen " + label;
   const text = el("div", "state-text",
-    el("span", "state-label", state === "manual" ? "taken over" : state),
+    el("span", "state-label", label),
     el("h1", "headline", headline(state, cur)),
     detail(job));
-  const runs = implementRuns();
+  const n = run(cur);
   const figures = el("div", "figures",
     figure("Elapsed", elapsed(job), "elapsed"),
     figure("Cost", cost(job)),
-    figure("Run", runs ? runOf(runs) : "—"));
-  return el("section", "card s-" + state,
+    figure("Run", n ? runOf(n) : "—"));
+  return el("section", "card s-" + state + (view.stoppedAt ? " stale" : ""),
     el("div", "card-top", el("div", "state-icon", icon(stateIcon[state] || "hollow")), text, figures),
     stepper(job, cur));
 }
@@ -255,7 +268,8 @@ function logEntry(e, newest) {
 function live() {
   const cur = current();
   const stage = cur ? cur.stage : null;
-  const entries = view.events.filter((e) => e.stage === stage && !(e.bound && e.text === "start"));
+  const first = view.events.findIndex((e) => e.stage === stage);
+  const entries = first < 0 ? [] : view.events.slice(first).filter((e) => e.stage === stage && !(e.bound && e.text === "start"));
   const log = el("div", "log");
   entries.forEach((e, i) => log.append(logEntry(e, i === entries.length - 1)));
   if (!entries.length) log.append(el("p", "empty", stage ? "Waiting for the first step of " + stage : "Waiting for the first stage"));
@@ -264,19 +278,15 @@ function live() {
     log);
 }
 
-function statusChip(status) {
-  const word = status.charAt(0).toUpperCase() + status.slice(1);
-  return el("span", "chip s-" + status, word);
-}
-
 function cells(row, end) {
   const start = time(row.start);
+  const noCost = kindOf(row.stage) === "verify" || row.stage === "publish" || row.status === "running";
   return [
-    el("span", null, statusChip(row.status)),
+    el("span", null, el("span", "chip s-" + row.status, row.status)),
     el("span", null, stageTitle(row.stage)),
     el("span", "num started", clock(start)),
     el("span", "num", duration((end || new Date()) - start)),
-    el("span", "num cost", row.commands || row.stage === "publish" || row.status === "running" ? "—" : money(row.cost_usd)),
+    el("span", "num cost", noCost ? "—" : money(row.cost_usd)),
   ];
 }
 
@@ -297,64 +307,77 @@ function stagesTable() {
   const cur = current();
   if (cur) rows.push({ stage: cur.stage, status: "running", start: cur.start, cost_usd: 0 });
   const table = el("div", "panel stages",
-    el("div", "stages-row stages-head", el("span", null, "Status"), el("span", null, "Stage"), el("span", "started", "Started"), el("span", null, "Took"), el("span", "cost", "Cost"), el("span")));
-  for (const row of rows) {
+    el("div", "stages-row stages-head", el("span", null, "Status"), el("span", null, "Stage"), el("span", "num started", "Started"), el("span", "num", "Took"), el("span", "num cost", "Cost"), el("span")));
+  rows.forEach((row, i) => {
     const end = row.status === "running" ? null : time(row.end);
     if (row.status === "fail" && row.commands) {
       const summary = el("summary", null, ...cells(row, end), icon("chevron", "chev"));
-      table.append(el("details", null, summary, gateDetail(row)));
+      const details = el("details", null, summary, gateDetail(row));
+      details.dataset.row = String(i);
+      table.append(details);
     } else {
       table.append(el("div", "stages-row", ...cells(row, end), el("span")));
     }
-  }
+  });
   if (!rows.length) table.append(el("div", "stages-row muted", el("span", null, "No stage has ended yet")));
   return el("section", "section", el("div", "section-head", el("h2", null, "Stages")), table);
 }
 
-const stoppedNotice = () =>
-  el("div", "notice", el("strong", null, "loopd stopped"), el("span", "muted", " · start loopd again, then reload this page"));
+function notice() {
+  if (view.problem) return el("div", "notice", el("strong", null, "loopd answered an error"), el("span", "muted", " · " + view.problem));
+  if (view.stoppedAt) return el("div", "notice", el("strong", null, "loopd stopped"), el("span", "muted", " · start loopd again, then reload this page"));
+  return null;
+}
 
 function render() {
   const page = document.getElementById("page");
   if (!view.track) {
-    page.replaceChildren(stoppedNotice());
+    page.replaceChildren(notice());
     return;
   }
   const job = view.track.job;
   document.getElementById("loop").textContent = job.Loop;
-  const open = new Set([...document.querySelectorAll(".stages details[open] summary")].map((s) => s.children[1].textContent));
+  const open = new Set([...document.querySelectorAll(".stages details[open]")].map((d) => d.dataset.row));
   const log = document.querySelector(".log");
   const atBottom = !log || log.scrollTop + log.clientHeight >= log.scrollHeight - 4;
-  const parts = [];
-  if (view.stopped) parts.push(stoppedNotice());
-  parts.push(card(job), meta(job));
+  const parts = [notice(), card(job), meta(job)];
   if (view.following && isLive()) parts.push(live());
   parts.push(stagesTable());
-  page.replaceChildren(...parts);
-  for (const s of document.querySelectorAll(".stages details summary")) {
-    if (open.has(s.children[1].textContent)) s.parentElement.open = true;
-  }
+  page.replaceChildren(...parts.filter(Boolean));
+  for (const d of document.querySelectorAll(".stages details")) d.open = open.has(d.dataset.row);
   const newLog = document.querySelector(".log");
   if (newLog && atBottom) newLog.scrollTop = newLog.scrollHeight;
 }
 
+// renderSoon draws the page once per frame however many events arrive in it.
+let frame = 0;
+function renderSoon() {
+  if (!frame) frame = requestAnimationFrame(() => { frame = 0; render(); });
+}
+
+// Answered is an error that loopd answered, as opposed to loopd gone.
+class Answered extends Error {}
+
+// fail shows why the page lost its data: loopd's own error, or loopd gone.
+function fail(err) {
+  if (err instanceof Answered) view.problem = err.message;
+  else view.stoppedAt = view.stoppedAt || new Date();
+  render();
+}
+
 async function load() {
   const res = await fetch(url("/data"));
-  if (!res.ok) throw new Error(await res.text());
+  if (!res.ok) throw new Answered(res.status + " " + (await res.text()).trim());
   const track = await res.json();
   track.stages = track.stages || [];
   view.track = track;
+  view.problem = "";
 }
 
 let reload = null;
 function reloadSoon() {
   clearTimeout(reload);
-  reload = setTimeout(() => load().then(render, stopped), 250);
-}
-
-function stopped() {
-  view.stopped = true;
-  render();
+  reload = setTimeout(() => load().then(render, fail), 250);
 }
 
 // follow reads the Job's events until it ends, then shows how it ended. A
@@ -366,7 +389,7 @@ async function follow() {
   let error = "";
   try {
     const res = await fetch(url("/events"));
-    if (!res.ok) throw new Error(res.statusText);
+    if (!res.ok) throw new Answered(res.status + " " + (await res.text()).trim());
     const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
     let buf = "";
     for (;;) {
@@ -380,7 +403,7 @@ async function follow() {
         if (line.event) {
           view.events.push(line.event);
           if (line.event.bound) reloadSoon();
-          else render();
+          renderSoon();
         } else if (line.job) {
           ended = true;
         } else {
@@ -388,21 +411,22 @@ async function follow() {
         }
       }
     }
-  } catch {
-    ended = false;
+  } catch (err) {
+    if (err instanceof Answered) error = err.message;
   }
   if (error === "viewer fell behind") return follow();
   view.following = false;
-  if (!ended) return stopped();
   clearTimeout(reload);
-  await load().then(render, stopped);
+  if (ended) return load().then(render, fail);
+  if (error && error !== "loopd stopped") return fail(new Answered(error));
+  fail(new Error("loopd stopped"));
 }
 
 async function main() {
   try {
     await load();
-  } catch {
-    return stopped();
+  } catch (err) {
+    return fail(err);
   }
   render();
   setInterval(() => {

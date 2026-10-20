@@ -137,9 +137,16 @@ type streamEnv struct {
 // and whose implement stage sleeps for sleep seconds, and returns its id.
 func startStreamJob(t *testing.T, sleep string) (streamEnv, string) {
 	t.Helper()
+	return startJobOf(t, strings.Replace(streamClaude, "STAGE_SLEEP", sleep, 1))
+}
+
+// startJobOf runs a Job of a timer Loop whose claude is the script claude,
+// and returns its id.
+func startJobOf(t *testing.T, claude string) (streamEnv, string) {
+	t.Helper()
 	e := newEnv(t, "exit 0")
 	fakes := strings.SplitN(e.path, ":", 2)[0]
-	writeExec(t, filepath.Join(fakes, "claude"), strings.Replace(streamClaude, "STAGE_SLEEP", sleep, 1))
+	writeExec(t, filepath.Join(fakes, "claude"), claude)
 	writeExec(t, filepath.Join(fakes, "gh"), "#!/bin/sh\n[ \"$1\" = auth ] && exit 0\ncat >/dev/null\necho https://github.com/me/app/pull/9\n")
 	writeExec(t, filepath.Join(fakes, "osascript"), "#!/bin/sh\n")
 

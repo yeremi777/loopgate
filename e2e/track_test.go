@@ -128,8 +128,8 @@ func TestTrackEventsEndWithoutTheJobWhenLoopdStopsAndTheURLWorksAfterItStarts(t 
 		t.Fatal(err)
 	}
 	rest, _ := io.ReadAll(res.Body)
-	if strings.Contains(string(rest), `{"job":`) || !strings.Contains(string(rest), "loopd stopped") {
-		t.Fatalf("events after loopd stopped: %q; want loopd stopped and no job", rest)
+	if strings.Contains(string(rest), `{"job":`) {
+		t.Fatalf("events after loopd stopped: %q; want the stream to end without the job", rest)
 	}
 	_ = e.loopd.Wait()
 

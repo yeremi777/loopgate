@@ -24,7 +24,7 @@
     <div class="jobs-row">
       <a class="mono" href="/jobs/{{.ID}}?token={{$.Token}}">{{.ID}}</a>
       <span><span class="chip s-{{.State}}">{{.State}}</span></span>
-      <span class="clip">{{.Work}}</span>
+      <span class="clip mono">{{.Work}}</span>
       {{- if .PR}}<a class="clip" href="{{.PR}}" target="_blank" rel="noopener noreferrer">{{.PR}}</a>{{else}}<span class="clip muted">{{.Result}}</span>{{end}}
     </div>
     {{- end}}
