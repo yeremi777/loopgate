@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -161,6 +162,49 @@ func TestHandbackOfAnIssueJobStillAnswersTheIssue(t *testing.T) {
 	said := r.issues.said(6)
 	if len(said) != 2 || !strings.Contains(said[1], "https://github.com/me/app/pull/1") {
 		t.Fatalf("issue 6 comments %q", said)
+	}
+}
+
+func TestOldJobDirKeepsItsIntegerNameForLogsTakeoverAndHandback(t *testing.T) {
+	r := newRunEnv(t)
+	r.stages.failFirst = true
+	dir := filepath.Join(r.d.home, "jobs", "1")
+	wt := filepath.Join(dir, "worktree")
+	made, err := runner.CreateWorktree(t.Context(), runner.Worktree{Checkout: r.checkout, Path: wt, Branch: "loop/deps-20260101-000000-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(filepath.Join(dir, "progress.md"), "## iteration 1\nfrom before the upgrade\n")
+	old, err := r.st.CreateJob("deps")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.st.StartJob(old.ID, store.Start{Work: "task bump go dependencies", Branch: "loop/deps-20260101-000000-1", Worktree: wt, Base: made.Base}); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.st.FinishJob(old.ID, store.Finish{State: store.Blocked, Question: "which db?"}); err != nil {
+		t.Fatal(err)
+	}
+
+	log, err := r.d.Job(old.ID)
+	if err != nil || !strings.Contains(log.Progress, "from before the upgrade") {
+		t.Fatalf("log of an old job: %+v, %v", log, err)
+	}
+	if _, err := r.d.Takeover(old.ID); err != nil {
+		t.Fatal(err)
+	}
+	r.release()
+	if _, err := r.d.Handback(old.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got := r.waitDone(t, old.ID); got.State != store.Done {
+		t.Fatalf("old job after handback %+v", got)
+	}
+	if progress := readFile(t, filepath.Join(dir, "progress.md")); !strings.Contains(progress, "from before the upgrade") || !strings.Contains(progress, "missing ok.txt") {
+		t.Fatalf("progress of the old job:\n%s", progress)
+	}
+	if _, err := os.Stat(r.d.jobDir(old.ID)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("handback made a second directory for the old job: %v", err)
 	}
 }
 

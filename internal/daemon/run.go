@@ -298,7 +298,7 @@ func (d *Daemon) resume(loop config.Loop, stored store.Job) (job.Job, error) {
 		ID:            stored.ID,
 		Loop:          loop,
 		Work:          work,
-		Dir:           d.jobDir(stored.ID),
+		Dir:           d.dirOf(stored),
 		Worktree:      stored.Worktree,
 		Branch:        stored.Branch,
 		DefaultBranch: strings.TrimPrefix(ref, "origin/"),
@@ -409,6 +409,15 @@ func (d *Daemon) jobDir(id string) string {
 	return filepath.Join(d.home, "jobs", id)
 }
 
+// dirOf is a stored Job's directory, the parent of its worktree, so a Job
+// from before random ids keeps its integer-named one.
+func (d *Daemon) dirOf(j store.Job) string {
+	if j.Worktree == "" {
+		return d.jobDir(j.ID)
+	}
+	return filepath.Dir(j.Worktree)
+}
+
 // Close stops the running Job and waits until its outcome is stored.
 func (d *Daemon) Close() {
 	d.mu.Lock()
@@ -427,7 +436,7 @@ func (d *Daemon) Job(id string) (JobLog, error) {
 	if err != nil {
 		return JobLog{}, err
 	}
-	progress, err := os.ReadFile(filepath.Join(d.jobDir(id), "progress.md"))
+	progress, err := os.ReadFile(filepath.Join(d.dirOf(j), "progress.md"))
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return JobLog{}, err
 	}
