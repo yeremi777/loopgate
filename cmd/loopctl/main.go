@@ -38,6 +38,7 @@ usage:
   loopctl logs [-f] <job>              show a job's state, branch, PR, cost and progress; -f then follows the running job until it ends, and Ctrl-C leaves it running
   loopctl takeover <job>               take a job, stopping it if it runs, and hand its worktree to you
   loopctl handback <job>               give a taken-over job back to its loop
+  loopctl try <job>                    copy the gitignored files that .worktreeinclude names into a done job's worktree, and print it and the job's test guide
   loopctl rm <job>                     remove an ended job with its worktree, and its branch unless it has commits the job did not end at
   loopctl requeue <loop> <issue>       let a github loop run an issue again
   loopctl install                      start loopd now and at login, and add the Claude Code skill
@@ -154,6 +155,13 @@ func run(args []string) error {
 		if removed.Job.PRURL != "" {
 			fmt.Println("pr: " + removed.Job.PRURL)
 		}
+		return nil
+	case cmd == "try" && len(rest) == 1:
+		tried, err := c.Try(ctx, rest[0])
+		if err != nil {
+			return err
+		}
+		printTry(tried)
 		return nil
 	case cmd == "logs" && len(rest) == 1:
 		log, err := c.Job(ctx, rest[0])
@@ -352,6 +360,25 @@ func printLog(log daemon.JobLog) {
 	}
 	if log.Progress != "" {
 		fmt.Printf("\nprogress:\n%s", log.Progress)
+	}
+}
+
+// printTry prints a tried Job's worktree, the files try copied into it,
+// and its Test guide.
+func printTry(t daemon.Tried) {
+	fmt.Println("worktree: " + printable(home(t.Job.Worktree)))
+	copied := "nothing; list the gitignored files the app needs, such as .env, in .worktreeinclude"
+	if len(t.Copied) > 0 {
+		copied = strings.Join(t.Copied, ", ")
+	}
+	fmt.Println("copied: " + printable(copied))
+	guide := t.Job.TestGuide
+	if guide == "" {
+		guide = "The job wrote no test guide."
+	}
+	fmt.Println()
+	for line := range strings.Lines(guide) {
+		fmt.Println(printable(strings.TrimSuffix(line, "\n")))
 	}
 }
 
