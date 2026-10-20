@@ -138,6 +138,35 @@ func TestRunReportsRevision(t *testing.T) {
 	}
 }
 
+func TestStageTryFieldIsOptionalAndCarriedToTheResult(t *testing.T) {
+	fake := newFake(t, `printf '%s\n' "$@" > "$REC/args"; cat >/dev/null; echo '{"type":"result","is_error":false,"structured_output":{"status":"done","summary":"Add ok","try":"go run ./cmd/app"}}'`)
+	res, err := fake.runner().Run(context.Background(), Stage{Dir: t.TempDir(), Prompt: "p", Timeout: time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := (Result{Status: StatusDone, Summary: "Add ok", Try: "go run ./cmd/app"}); res != want {
+		t.Fatalf("got %+v, want %+v", res, want)
+	}
+	var schema struct {
+		Properties map[string]struct {
+			Type string `json:"type"`
+		} `json:"properties"`
+		Required []string `json:"required"`
+	}
+	args := strings.Split(strings.TrimSuffix(fake.read("args"), "\n"), "\n")
+	if err := json.Unmarshal([]byte(flagValue(args, "--json-schema")), &schema); err != nil {
+		t.Fatalf("json schema: %v", err)
+	}
+	if schema.Properties["try"].Type != "string" || slices.Contains(schema.Required, "try") {
+		t.Fatalf("schema %+v; want an optional string try", schema)
+	}
+
+	fake = newFake(t, `cat >/dev/null; echo '`+doneJSON+`'`)
+	if res, err := fake.runner().Run(context.Background(), Stage{Dir: t.TempDir(), Prompt: "p", Timeout: time.Minute}); err != nil || res.Try != "" {
+		t.Fatalf("a result without try: %+v, %v", res, err)
+	}
+}
+
 func TestStageLogsToolCallsAndTextAndReadsTheFinalResultLine(t *testing.T) {
 	lines := []string{
 		`{"type":"system","subtype":"init"}`,

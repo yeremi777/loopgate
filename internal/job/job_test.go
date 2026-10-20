@@ -690,6 +690,32 @@ func TestIssueJobImplementsTheSpecDrillWrote(t *testing.T) {
 	}
 }
 
+func TestLandPromptAsksForTheTestGuideInTry(t *testing.T) {
+	for name, tc := range map[string]struct {
+		work Work
+		demo bool
+	}{
+		"spec": {Spec{Path: "docs/specs/x.md"}, true},
+		"task": {Task{Text: "add ok.txt"}, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			j := newJob(t, 3)
+			j.Work = tc.work
+			f := &fakeStages{t: t, steps: []step{commits(j, "ok.txt"), reports(runner.StatusDone, "clean"), lands("t\n\nb")}}
+			Pipeline{Stages: f, Shell: shell(), Publisher: &fakePublisher{}}.Run(context.Background(), j)
+			land := f.stages[2].Prompt
+			for _, want := range []string{"Set try to", "how to start the app", "each endpoint, screen or command", "what to expect", "environment variable", "never its value"} {
+				if !strings.Contains(land, want) {
+					t.Fatalf("land prompt lacks %q:\n%s", want, land)
+				}
+			}
+			if got := strings.Contains(land, "`Demo:` lines of docs/specs/x.md"); got != tc.demo {
+				t.Fatalf("land prompt names the spec's Demo: lines: %v, want %v:\n%s", got, tc.demo, land)
+			}
+		})
+	}
+}
+
 func TestIssueJobBlockedInDrill(t *testing.T) {
 	j := issueJob(t)
 	f := &fakeStages{t: t, steps: []step{func(runner.Stage) (runner.Result, error) {

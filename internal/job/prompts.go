@@ -62,9 +62,10 @@ Write the summary as the tldr skill says.`, base)
 }
 
 func landPrompt(w Work) string {
-	head := "/land PR"
+	head, demo := "/land PR", ""
 	if s, ok := w.(Spec); ok {
 		head = "/land PR, keep spec " + s.Path
+		demo = " Start from the `Demo:` lines of " + s.Path + "."
 	}
 	return head + `
 
@@ -72,6 +73,7 @@ You run unattended inside loopgate, with no network. Nobody can answer a questio
 - Do not run git push or gh. loopgate pushes this branch and opens the draft pull request after its own checks.
 - Change only Markdown files, and commit every change you make. loopgate refuses to ship any other change after the gate.
 - Report status done with the summary set to the pull request text: the title on the first line, a blank line, then the body.
+- Set try to the test guide, which a human follows to run this branch by hand: how to start the app, then for each endpoint, screen or command the branch adds or changes, what to call or open and what to expect.` + demo + ` Name each environment variable the app needs, never its value.
 - Report status blocked, with one question, only when landing needs a decision that only the human can make.`
 }
 
