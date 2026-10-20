@@ -1,11 +1,16 @@
 package store
 
 import (
+	"bytes"
+	"database/sql"
 	"errors"
 	"fmt"
+	"log"
+	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -239,5 +244,103 @@ func TestUnclaimLetsAnIssueRunAgain(t *testing.T) {
 	}
 	if fresh, _ := st.ClaimIssue("fix", 3); !fresh {
 		t.Fatal("claim after unclaim not fresh")
+	}
+}
+
+// integerSchema is a state database from before random ids, with three Jobs.
+const integerSchema = `
+CREATE TABLE loops (name TEXT PRIMARY KEY, paused INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE jobs (
+	id       INTEGER PRIMARY KEY AUTOINCREMENT,
+	loop     TEXT NOT NULL,
+	state    TEXT NOT NULL,
+	work     TEXT NOT NULL DEFAULT '',
+	branch   TEXT NOT NULL DEFAULT '',
+	worktree TEXT NOT NULL DEFAULT '',
+	base     TEXT NOT NULL DEFAULT '',
+	issue    INTEGER NOT NULL DEFAULT 0,
+	question TEXT NOT NULL DEFAULT '',
+	summary  TEXT NOT NULL DEFAULT '',
+	pr_url   TEXT NOT NULL DEFAULT '',
+	cost_usd REAL NOT NULL DEFAULT 0,
+	error    TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE issues (loop TEXT NOT NULL, number INTEGER NOT NULL, PRIMARY KEY (loop, number));
+INSERT INTO loops (name, paused) VALUES ('fix', 1);
+INSERT INTO issues (loop, number) VALUES ('fix', 42);
+INSERT INTO jobs (id, loop, state, work, branch, worktree, base, issue, question, summary, pr_url, cost_usd, error) VALUES
+	(1, 'fix', 'done', 'issue 42 Fix login', 'loop/fix-42-1', '/h/jobs/1/worktree', 'abc', 42, '', 'fixed', 'https://github.com/me/app/pull/1', 1.5, ''),
+	(2, 'fix', 'blocked', 'task x', 'loop/fix-20260101-000000-2', '/h/jobs/2/worktree', 'def', 0, 'which db?', '', '', 0.25, ''),
+	(10, 'docs', 'failed', 'spec docs/specs/d.md', '', '', '', 0, '', '', '', 0, 'fetch failed');`
+
+func TestConvertIntegerIDsGivesEachOldJobANewIDOnceAndKeepsEverythingElse(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.db")
+	db, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(integerSchema); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	var logged bytes.Buffer
+	log.SetOutput(&logged)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+	st := open(t, path)
+	jobs, err := st.Jobs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []Job{
+		{Loop: "docs", State: Failed, Work: "spec docs/specs/d.md", Error: "fetch failed"},
+		{Loop: "fix", State: Blocked, Work: "task x", Branch: "loop/fix-20260101-000000-2", Worktree: "/h/jobs/2/worktree", Base: "def", Question: "which db?", CostUSD: 0.25},
+		{Loop: "fix", State: Done, Work: "issue 42 Fix login", Branch: "loop/fix-42-1", Worktree: "/h/jobs/1/worktree", Base: "abc", Issue: 42, Summary: "fixed", PRURL: "https://github.com/me/app/pull/1", CostUSD: 1.5},
+	}
+	if len(jobs) != len(want) {
+		t.Fatalf("jobs %+v, want %d", jobs, len(want))
+	}
+	for i, n := range []int{10, 2, 1} {
+		id := jobs[i].ID
+		if !regexp.MustCompile(`^[0-9a-f]{12}$`).MatchString(id) {
+			t.Fatalf("job %d got id %q", n, id)
+		}
+		if line := fmt.Sprintf("job %d is now %s\n", n, id); !strings.Contains(logged.String(), line) {
+			t.Fatalf("log lacks %q:\n%s", line, logged.String())
+		}
+		want[i].ID = id
+		if jobs[i] != want[i] {
+			t.Fatalf("job %d read back as %+v\nwant %+v", n, jobs[i], want[i])
+		}
+	}
+	if paused, _ := st.Paused("fix"); !paused {
+		t.Fatal("conversion lost the paused loop")
+	}
+	if fresh, _ := st.ClaimIssue("fix", 42); fresh {
+		t.Fatal("conversion lost the claimed issue")
+	}
+	next, err := st.CreateJob("fix")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if jobs, _ := st.Jobs(); jobs[0].ID != next.ID {
+		t.Fatalf("a job created after conversion is not the newest: %+v", jobs)
+	}
+	if err := st.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	logged.Reset()
+	again, err := open(t, path).Jobs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(again) != 4 || again[0].ID != next.ID || again[1] != want[0] || again[2] != want[1] || again[3] != want[2] {
+		t.Fatalf("second open changed the jobs: %+v", again)
+	}
+	if logged.Len() != 0 {
+		t.Fatalf("second open logged %q", logged.String())
 	}
 }

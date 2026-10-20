@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log"
 
 	_ "modernc.org/sqlite"
 )
@@ -57,12 +58,8 @@ type Store struct {
 	newID func() string
 }
 
-const schema = `
-CREATE TABLE IF NOT EXISTS loops (
-	name   TEXT PRIMARY KEY,
-	paused INTEGER NOT NULL DEFAULT 0
-);
-CREATE TABLE IF NOT EXISTS jobs (
+// jobsTable is the columns of the jobs table; seq orders Jobs by creation.
+const jobsTable = `(
 	seq      INTEGER PRIMARY KEY AUTOINCREMENT,
 	id       TEXT NOT NULL UNIQUE,
 	loop     TEXT NOT NULL,
@@ -77,7 +74,14 @@ CREATE TABLE IF NOT EXISTS jobs (
 	pr_url   TEXT NOT NULL DEFAULT '',
 	cost_usd REAL NOT NULL DEFAULT 0,
 	error    TEXT NOT NULL DEFAULT ''
+)`
+
+const schema = `
+CREATE TABLE IF NOT EXISTS loops (
+	name   TEXT PRIMARY KEY,
+	paused INTEGER NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS jobs ` + jobsTable + `;
 CREATE TABLE IF NOT EXISTS issues (
 	loop   TEXT NOT NULL,
 	number INTEGER NOT NULL,
@@ -94,7 +98,67 @@ func Open(path string) (*Store, error) {
 	if _, err := db.Exec(schema); err != nil {
 		return nil, errors.Join(fmt.Errorf("create schema: %w", err), db.Close())
 	}
+	if err := convertIntegerIDs(db); err != nil {
+		return nil, errors.Join(fmt.Errorf("convert integer job ids: %w", err), db.Close())
+	}
 	return &Store{db: db, newID: newID}, nil
+}
+
+// integerColumns are the columns of a jobs table from before random ids, but its id.
+const integerColumns = `loop, state, work, branch, worktree, base, issue, question, summary, pr_url, cost_usd, error`
+
+// convertIntegerIDs gives each Job of a jobs table from before random ids a
+// new id in one transaction, keeping its other fields and its creation
+// order, and logs each new id. A converted table has a seq column and is left alone.
+func convertIntegerIDs(db *sql.DB) (err error) {
+	var converted bool
+	if err := db.QueryRow(`SELECT count(*) FROM pragma_table_info('jobs') WHERE name = 'seq'`).Scan(&converted); err != nil || converted {
+		return err
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			err = errors.Join(err, tx.Rollback())
+		}
+	}()
+	rows, err := tx.Query(`SELECT id FROM jobs ORDER BY id`)
+	if err != nil {
+		return err
+	}
+	var old []int64
+	for rows.Next() {
+		var n int64
+		if err := rows.Scan(&n); err != nil {
+			return errors.Join(err, rows.Close())
+		}
+		old = append(old, n)
+	}
+	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`CREATE TABLE jobs_new ` + jobsTable); err != nil {
+		return err
+	}
+	ids := make([]string, len(old))
+	for i, n := range old {
+		ids[i] = newID()
+		if _, err := tx.Exec(`INSERT INTO jobs_new (seq, id, `+integerColumns+`) SELECT id, ?, `+integerColumns+` FROM jobs WHERE id = ?`, ids[i], n); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.Exec(`DROP TABLE jobs; ALTER TABLE jobs_new RENAME TO jobs`); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	for i, n := range old {
+		log.Printf("job %d is now %s", n, ids[i])
+	}
+	return nil
 }
 
 func (s *Store) Close() error { return s.db.Close() }
