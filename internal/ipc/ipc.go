@@ -71,6 +71,15 @@ func Serve(ln net.Listener, d *daemon.Daemon) error {
 		log, err := d.Job(id)
 		reply(w, log, err)
 	})
+	mux.HandleFunc("DELETE /jobs/{id}", func(w http.ResponseWriter, r *http.Request) {
+		id, err := d.Resolve(r.PathValue("id"))
+		if err != nil {
+			reply(w, daemon.Removal{}, err)
+			return
+		}
+		removed, err := d.RemoveJob(id)
+		reply(w, removed, err)
+	})
 	mux.HandleFunc("GET /jobs/{id}/events", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/x-ndjson")
 		enc := json.NewEncoder(w)
@@ -153,7 +162,8 @@ func statusOf(err error) int {
 	case errors.Is(err, daemon.ErrUnknownLoop), errors.Is(err, store.ErrNotFound):
 		return http.StatusNotFound
 	case errors.Is(err, daemon.ErrLoopExists), errors.Is(err, daemon.ErrBusy), errors.Is(err, daemon.ErrNotTakeable),
-		errors.Is(err, daemon.ErrNotManual), errors.Is(err, daemon.ErrNothingRunning), errors.Is(err, daemon.ErrStarting):
+		errors.Is(err, daemon.ErrNotManual), errors.Is(err, daemon.ErrNothingRunning), errors.Is(err, daemon.ErrStarting),
+		errors.Is(err, store.ErrNotEnded):
 		return http.StatusConflict
 	default:
 		return http.StatusBadRequest
@@ -221,6 +231,14 @@ func (c *Client) Job(ctx context.Context, id string) (daemon.JobLog, error) {
 	var log daemon.JobLog
 	err := call(ctx, c.http, http.MethodGet, "/jobs/"+url.PathEscape(id), nil, &log)
 	return log, err
+}
+
+// RemoveJob removes a Job that ended, with its worktree, directory and,
+// unless someone committed on it since, its branch.
+func (c *Client) RemoveJob(ctx context.Context, id string) (daemon.Removal, error) {
+	var removed daemon.Removal
+	err := call(ctx, c.http, http.MethodDelete, "/jobs/"+url.PathEscape(id), nil, &removed)
+	return removed, err
 }
 
 func (c *Client) Requeue(ctx context.Context, name string, issue int) error {

@@ -94,6 +94,44 @@ func TestPrefixOfAJobIDInAnyCaseNamesTheJobInEveryJobCommand(t *testing.T) {
 	}
 }
 
+func TestRemoveRefusesAJobInProgressThenRemovesTheEndedJobAndPrintsItsPR(t *testing.T) {
+	e := newEnv(t, "exit 0")
+	claude, started := hangFirst(t)
+	checkout := e.timerLoop(t, "work", claude)
+	m := regexp.MustCompile(`job ([0-9a-f]{12}) running on (\S+) in (\S+)`).FindStringSubmatch(e.mustLoopctl("run", "work"))
+	id, branch, wt := m[1], m[2], m[3]
+	started()
+	if out, code := e.loopctl("rm", id[:5]); code == 0 || !strings.Contains(out, "job "+id+" is running") {
+		t.Fatalf("rm of a running job: exit %d, %q", code, out)
+	}
+	e.mustLoopctl("takeover", id)
+	if out, code := e.loopctl("rm", id); code == 0 || !strings.Contains(out, "job "+id+" is manual") {
+		t.Fatalf("rm of a manual job: exit %d, %q", code, out)
+	}
+	e.mustLoopctl("handback", id)
+	e.waitState(t, id, "done")
+
+	out := e.mustLoopctl("rm", strings.ToUpper(id[:5]))
+	if want := "removed job " + id + " of loop work\npr: https://github.com/me/app/pull/5\n"; out != want {
+		t.Fatalf("rm output %q, want %q", out, want)
+	}
+	if _, err := os.Stat(filepath.Dir(wt)); !os.IsNotExist(err) {
+		t.Fatalf("job directory stays: %v", err)
+	}
+	if list := gitIn(t, checkout, "worktree", "list"); strings.Contains(list, id) {
+		t.Fatalf("worktree still registered:\n%s", list)
+	}
+	if heads := gitIn(t, checkout, "branch", "--list", branch); heads != "" {
+		t.Fatalf("branch %s stays: %q", branch, heads)
+	}
+	if out, code := e.loopctl("logs", id); code == 0 || !strings.Contains(out, "not found") {
+		t.Fatalf("logs of a removed job: exit %d, %q", code, out)
+	}
+	if ids := e.jobIDs(); len(ids) != 0 {
+		t.Fatalf("list still shows %v", ids)
+	}
+}
+
 func TestStopEndsARunningJob(t *testing.T) {
 	e := newEnv(t, "exit 0")
 	claude, started := hangFirst(t)

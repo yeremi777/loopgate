@@ -55,7 +55,10 @@ type Finish struct {
 	EndCommit string
 }
 
-var ErrNotFound = errors.New("not found")
+var (
+	ErrNotFound = errors.New("not found")
+	ErrNotEnded = errors.New("only a job that ended can be removed")
+)
 
 type Store struct {
 	db *sql.DB
@@ -269,6 +272,22 @@ func (s *Store) Job(id string) (Job, error) {
 		return Job{}, fmt.Errorf("job %s: %w", id, ErrNotFound)
 	}
 	return job, err
+}
+
+// DeleteEnded deletes the row of a Job that ended done, failed, exhausted or
+// Blocked, and returns the Job as it was; a Job in any other state stays,
+// and the error names its state.
+func (s *Store) DeleteEnded(id string) (Job, error) {
+	job, err := scanJob(s.db.QueryRow(`DELETE FROM jobs WHERE id = ? AND state IN (?, ?, ?, ?) RETURNING `+jobColumns,
+		id, Done, Failed, Exhausted, Blocked))
+	if !errors.Is(err, sql.ErrNoRows) {
+		return job, err
+	}
+	stays, err := s.Job(id)
+	if err != nil {
+		return Job{}, err
+	}
+	return Job{}, fmt.Errorf("job %s is %s: %w", id, stays.State, ErrNotEnded)
 }
 
 // Resolve is the id of the one Job whose id starts with prefix, in any

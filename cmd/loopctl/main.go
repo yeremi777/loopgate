@@ -140,6 +140,19 @@ func run(args []string) error {
 		}
 		fmt.Printf("job %s is back with the loop on %s\n", j.ID, j.Branch)
 		return nil
+	case cmd == "rm" && len(rest) == 1:
+		removed, err := c.RemoveJob(ctx, rest[0])
+		if err != nil {
+			return err
+		}
+		fmt.Printf("removed job %s of loop %s\n", removed.Job.ID, removed.Job.Loop)
+		if removed.Kept != "" {
+			fmt.Println(removed.Kept)
+		}
+		if removed.Job.PRURL != "" {
+			fmt.Println("pr: " + removed.Job.PRURL)
+		}
+		return nil
 	case cmd == "logs" && len(rest) == 1:
 		log, err := c.Job(ctx, rest[0])
 		if err != nil {
