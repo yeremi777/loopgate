@@ -56,13 +56,13 @@ func TestTakeoverOfBlockedJob(t *testing.T) {
 	}
 }
 
-func TestTakeoverRefusesDoneJob(t *testing.T) {
+func TestTakeoverDoneNamesTry(t *testing.T) {
 	r := newRunEnv(t)
 	r.release()
 	started, _ := r.d.Run("deps", "")
 	r.waitDone(t, started.ID)
-	if _, err := r.d.Takeover(started.ID); !errors.Is(err, ErrNotTakeable) {
-		t.Fatalf("want ErrNotTakeable, got %v", err)
+	if _, err := r.d.Takeover(started.ID); !errors.Is(err, ErrNotTakeable) || !strings.Contains(err.Error(), "loopctl try "+started.ID) {
+		t.Fatalf("want ErrNotTakeable naming loopctl try %s, got %v", started.ID, err)
 	}
 }
 

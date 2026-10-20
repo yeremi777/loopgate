@@ -151,7 +151,7 @@ func (d *Daemon) Takeover(id string) (store.Job, error) {
 	}
 	switch j.State {
 	case store.Done:
-		return store.Job{}, fmt.Errorf("job %s is done; check out %s instead: %w", id, j.Branch, ErrNotTakeable)
+		return store.Job{}, fmt.Errorf("job %s is done; to run it by hand, use loopctl try %s: %w", id, id, ErrNotTakeable)
 	case store.Queued, store.Running:
 		return store.Job{}, fmt.Errorf("job %s: %w", id, ErrStarting)
 	case store.Manual:
