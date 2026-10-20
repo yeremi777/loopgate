@@ -39,16 +39,20 @@ type Job struct {
 	PRURL    string
 	CostUSD  float64
 	Error    string
+	// EndCommit is the commit the Job's branch pointed at when it last ended,
+	// or empty when none was stored.
+	EndCommit string
 }
 
 // Finish is how one run of a Job ended. CostUSD adds to the cost of earlier runs.
 type Finish struct {
-	State    JobState
-	Question string
-	Summary  string
-	PRURL    string
-	CostUSD  float64
-	Error    string
+	State     JobState
+	Question  string
+	Summary   string
+	PRURL     string
+	CostUSD   float64
+	Error     string
+	EndCommit string
 }
 
 var ErrNotFound = errors.New("not found")
@@ -61,20 +65,21 @@ type Store struct {
 
 // jobsTable is the columns of the jobs table; seq orders Jobs by creation.
 const jobsTable = `(
-	seq      INTEGER PRIMARY KEY AUTOINCREMENT,
-	id       TEXT NOT NULL UNIQUE,
-	loop     TEXT NOT NULL,
-	state    TEXT NOT NULL,
-	work     TEXT NOT NULL DEFAULT '',
-	branch   TEXT NOT NULL DEFAULT '',
-	worktree TEXT NOT NULL DEFAULT '',
-	base     TEXT NOT NULL DEFAULT '',
-	issue    INTEGER NOT NULL DEFAULT 0,
-	question TEXT NOT NULL DEFAULT '',
-	summary  TEXT NOT NULL DEFAULT '',
-	pr_url   TEXT NOT NULL DEFAULT '',
-	cost_usd REAL NOT NULL DEFAULT 0,
-	error    TEXT NOT NULL DEFAULT ''
+	seq        INTEGER PRIMARY KEY AUTOINCREMENT,
+	id         TEXT NOT NULL UNIQUE,
+	loop       TEXT NOT NULL,
+	state      TEXT NOT NULL,
+	work       TEXT NOT NULL DEFAULT '',
+	branch     TEXT NOT NULL DEFAULT '',
+	worktree   TEXT NOT NULL DEFAULT '',
+	base       TEXT NOT NULL DEFAULT '',
+	issue      INTEGER NOT NULL DEFAULT 0,
+	question   TEXT NOT NULL DEFAULT '',
+	summary    TEXT NOT NULL DEFAULT '',
+	pr_url     TEXT NOT NULL DEFAULT '',
+	cost_usd   REAL NOT NULL DEFAULT 0,
+	error      TEXT NOT NULL DEFAULT '',
+	end_commit TEXT NOT NULL DEFAULT ''
 )`
 
 const schema = `
@@ -229,8 +234,8 @@ func (s *Store) StartJob(id string, st Start) error {
 }
 
 func (s *Store) FinishJob(id string, f Finish) error {
-	return s.updateJob(id, `UPDATE jobs SET state = ?, question = ?, summary = ?, pr_url = ?, cost_usd = cost_usd + ?, error = ? WHERE id = ?`,
-		f.State, f.Question, f.Summary, f.PRURL, f.CostUSD, f.Error, id)
+	return s.updateJob(id, `UPDATE jobs SET state = ?, question = ?, summary = ?, pr_url = ?, cost_usd = cost_usd + ?, error = ?, end_commit = ? WHERE id = ?`,
+		f.State, f.Question, f.Summary, f.PRURL, f.CostUSD, f.Error, f.EndCommit, id)
 }
 
 // InterruptRunning fails every queued or running Job, which a dead loopd left behind.
@@ -250,11 +255,11 @@ func (s *Store) updateJob(id string, query string, args ...any) error {
 	return nil
 }
 
-const jobColumns = `id, loop, state, work, branch, worktree, base, issue, question, summary, pr_url, cost_usd, error`
+const jobColumns = `id, loop, state, work, branch, worktree, base, issue, question, summary, pr_url, cost_usd, error, end_commit`
 
 func scanJob(row interface{ Scan(...any) error }) (Job, error) {
 	var job Job
-	err := row.Scan(&job.ID, &job.Loop, &job.State, &job.Work, &job.Branch, &job.Worktree, &job.Base, &job.Issue, &job.Question, &job.Summary, &job.PRURL, &job.CostUSD, &job.Error)
+	err := row.Scan(&job.ID, &job.Loop, &job.State, &job.Work, &job.Branch, &job.Worktree, &job.Base, &job.Issue, &job.Question, &job.Summary, &job.PRURL, &job.CostUSD, &job.Error, &job.EndCommit)
 	return job, err
 }
 

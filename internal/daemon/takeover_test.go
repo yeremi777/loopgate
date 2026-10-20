@@ -208,6 +208,30 @@ func TestOldJobDirKeepsItsIntegerNameForLogsTakeoverAndHandback(t *testing.T) {
 	}
 }
 
+func TestEndCommitIsWhereTheBranchPointsWhenTheJobEnds(t *testing.T) {
+	r := newRunEnv(t)
+	r.release()
+	shipped, err := r.d.Run("deps", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := r.waitDone(t, shipped.ID)
+	if head := runGit(t, r.checkout, "rev-parse", "refs/heads/"+done.Branch); done.State != store.Done || done.EndCommit != head || head == done.Base {
+		t.Fatalf("done job %+v; want end commit %s past the base", done, head)
+	}
+
+	r.stages.blockFirst = true
+	r.stages.prompts = nil
+	blocked, err := r.d.Run("deps", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := r.waitDone(t, blocked.ID)
+	if got.State != store.Blocked || got.EndCommit != got.Base {
+		t.Fatalf("blocked job %+v; want end commit at its base", got)
+	}
+}
+
 func TestTakeoverRefusesAJobWithoutAWorktree(t *testing.T) {
 	r := newRunEnv(t)
 	created, err := r.st.CreateJob("deps")

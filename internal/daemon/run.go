@@ -313,6 +313,7 @@ func (d *Daemon) resume(loop config.Loop, stored store.Job) (job.Job, error) {
 func (d *Daemon) finish(ctx context.Context, cur *running, j job.Job) {
 	defer d.jobs.Done()
 	out := d.deps.Pipeline.Run(ctx, j)
+	endCommit := d.endCommit(j)
 
 	d.mu.Lock()
 	end := store.Finish{State: out.State, Question: out.Question, Summary: out.Summary, PRURL: out.PRURL, CostUSD: out.CostUSD}
@@ -327,6 +328,7 @@ func (d *Daemon) finish(ctx context.Context, cur *running, j job.Job) {
 	case out.Err != nil:
 		end.Error = out.Err.Error()
 	}
+	end.EndCommit = endCommit
 	if err := d.st.FinishJob(j.ID, end); err != nil {
 		end.Error = errors.Join(out.Err, err).Error()
 	}
@@ -340,6 +342,17 @@ func (d *Daemon) finish(ctx context.Context, cur *running, j job.Job) {
 		d.deps.Notify(notice(j, end))
 		d.answerIssue(j, end)
 	}
+}
+
+// endCommit is the commit j's branch points at, or empty when git cannot
+// say, which keeps the branch from loopctl rm. It runs after loopd began
+// stopping too, so it does not use d.ctx.
+func (d *Daemon) endCommit(j job.Job) string {
+	commit, err := runner.Git(context.Background(), 30*time.Second, j.Worktree, "rev-parse", "--verify", "refs/heads/"+j.Branch)
+	if err != nil {
+		log.Printf("loopd: job %s: end commit: %v", j.ID, err)
+	}
+	return commit
 }
 
 // answerIssue tells an issue's author how its Job ended: the PR link, or the
