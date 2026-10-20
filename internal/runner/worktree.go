@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -163,6 +164,12 @@ func GitGuard(worktree string) ([]string, error) {
 		filepath.Join(admin, "gitdir"),
 		dotgit,
 	}, nil
+}
+
+// Ignored is the paths, relative to dir, that git ignores in dir, in the
+// order given.
+func Ignored(ctx context.Context, dir string, paths []string) ([]string, error) {
+	return nil, errors.New("not implemented")
 }
 
 // Git runs git in dir for loopd itself, outside any stage, and returns its
