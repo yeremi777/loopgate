@@ -12,11 +12,20 @@ import (
 	"github.com/yeremi777/loopgate/internal/runner"
 )
 
-// Outcome is the Verify gate's verdict on one tree. Head is the commit it judged.
+// Outcome is the Verify gate's verdict on one tree. Head is the commit it
+// judged, and Commands are the commands that ran to their exit.
 type Outcome struct {
-	Passed bool
-	Head   string
-	Output string
+	Passed   bool
+	Head     string
+	Output   string
+	Commands []Command
+}
+
+// Command is the setup or verify command of a gate and how it exited.
+type Command struct {
+	Name     string `json:"name"`
+	Line     string `json:"line"`
+	ExitCode int    `json:"exit_code"`
 }
 
 // Gate runs the Loop's setup command, when set, then its verify command in
@@ -36,6 +45,7 @@ func Gate(ctx context.Context, r runner.Runner, dir string, loop config.Loop, ti
 		return Outcome{}, err
 	}
 	var refused string
+	var ran []Command
 	if loop.Setup != "" {
 		started("setup: " + loop.Setup)
 		setup, hosts, err := r.Setup(ctx, dir, loop.Setup, timeout, guard, loop.Network)
@@ -45,15 +55,16 @@ func Gate(ctx context.Context, r runner.Runner, dir string, loop config.Loop, ti
 		if err != nil {
 			return Outcome{}, fmt.Errorf("setup command: %w%s", err, inline(refused))
 		}
+		ran = append(ran, Command{Name: "setup", Line: loop.Setup, ExitCode: setup.ExitCode})
 		if setup.ExitCode != 0 {
-			return Outcome{Output: fmt.Sprintf("setup command exited %d:\n%s%s", setup.ExitCode, setup.Output, block(refused))}, nil
+			return Outcome{Output: fmt.Sprintf("setup command exited %d:\n%s%s", setup.ExitCode, setup.Output, block(refused)), Commands: ran}, nil
 		}
 		status, err := runner.Git(ctx, 30*time.Second, dir, "status", "--porcelain")
 		if err != nil {
 			return Outcome{}, err
 		}
 		if status != "" {
-			return Outcome{Output: "setup command changed files that are tracked or not ignored:\n" + status + "\nsetup command output:\n" + setup.Output + block(refused)}, nil
+			return Outcome{Output: "setup command changed files that are tracked or not ignored:\n" + status + "\nsetup command output:\n" + setup.Output + block(refused), Commands: ran}, nil
 		}
 	}
 	started("verify: " + loop.Verify)
@@ -61,10 +72,11 @@ func Gate(ctx context.Context, r runner.Runner, dir string, loop config.Loop, ti
 	if err != nil {
 		return Outcome{}, fmt.Errorf("verify command: %w%s", err, inline(refused))
 	}
+	ran = append(ran, Command{Name: "verify", Line: loop.Verify, ExitCode: res.ExitCode})
 	if res.ExitCode != 0 {
-		return Outcome{Head: head, Output: fmt.Sprintf("verify command exited %d:\n%s%s", res.ExitCode, res.Output, block(refused))}, nil
+		return Outcome{Head: head, Output: fmt.Sprintf("verify command exited %d:\n%s%s", res.ExitCode, res.Output, block(refused)), Commands: ran}, nil
 	}
-	return Outcome{Passed: true, Head: head, Output: res.Output}, nil
+	return Outcome{Passed: true, Head: head, Output: res.Output, Commands: ran}, nil
 }
 
 // inline and block place a note at the end of an error line or of command output.

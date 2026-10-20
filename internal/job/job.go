@@ -233,28 +233,37 @@ func (r *jobRun) ship(ctx context.Context, out Outcome) (Outcome, error) {
 	}
 	out.TestGuide = cut(strings.TrimSpace(land.Try), maxTestGuide)
 	pr.Body = report(j, out, r.drill, r.cost) + "\n\n---\n\n" + pr.Body
+	start := time.Now()
 	url, err := r.Publisher.Publish(ctx, j.Worktree, j.Branch, j.DefaultBranch, pr)
+	row := StageRow{Stage: "publish", Start: start, End: time.Now(), Status: "done"}
 	if err != nil {
-		return Outcome{}, fmt.Errorf("publish: %w", err)
+		row.Status, err = "failed", fmt.Errorf("publish: %w", err)
+	}
+	if err := errors.Join(err, appendStage(j.Dir, row)); err != nil {
+		return Outcome{}, err
 	}
 	j.Feed.Bound("publish", "draft PR "+url)
 	out.PRURL = url
 	return out, nil
 }
 
-// stage runs one stage between its start and end events.
+// stage runs one stage between its start and end events, and adds its row.
 func (r *jobRun) stage(ctx context.Context, name, prompt string) (runner.Result, error) {
+	row := StageRow{Stage: name, Start: time.Now()}
 	r.job.Feed.Bound(name, "start")
 	res, err := r.runStage(ctx, name, prompt)
+	row.Status, row.CostUSD = string(res.Status), res.CostUSD
 	switch {
 	case err != nil:
+		row.Status = "failed"
 		r.job.Feed.Bound(name, "failed: "+err.Error())
 	case res.Status == runner.StatusBlocked:
 		r.job.Feed.Bound(name, fmt.Sprintf("blocked $%.2f: %s", res.CostUSD, res.Question))
 	default:
 		r.job.Feed.Bound(name, fmt.Sprintf("%s $%.2f", res.Status, res.CostUSD))
 	}
-	return res, err
+	row.End = time.Now()
+	return res, errors.Join(err, appendStage(r.job.Dir, row))
 }
 
 // runStage runs one stage, then blocks the Job when the stage left a
@@ -283,23 +292,29 @@ func (r *jobRun) runStage(ctx context.Context, name, prompt string) (runner.Resu
 }
 
 // gate runs the Verify gate of iteration i, reporting each command as it
-// starts, its result, and on failure the tail of its output.
+// starts, its result, and on failure the tail of its output, and adds its row.
 func (r *jobRun) gate(ctx context.Context, i int) (verify.Outcome, error) {
 	name := fmt.Sprintf("verify %d", i)
+	row := StageRow{Stage: name, Start: time.Now()}
 	gate, err := verify.Gate(ctx, r.Shell, r.job.Worktree, r.job.Loop, remaining(ctx), r.guard, func(step string) { r.job.Feed.Bound(name, step) })
+	row.Commands = gate.Commands
 	switch {
 	case err != nil:
+		row.Status = "failed"
 		r.job.Feed.Bound(name, "failed: "+err.Error())
 	case gate.Passed:
+		row.Status = "pass"
 		r.job.Feed.Bound(name, "pass: verify command exited 0")
 	default:
 		lines := strings.Split(strings.TrimSpace(gate.Output), "\n")
+		row.Status, row.Output = "fail", lines[max(0, len(lines)-gateTail):]
 		r.job.Feed.Bound(name, "fail: "+strings.TrimSuffix(lines[0], ":"))
 		for _, line := range lines[max(1, len(lines)-gateTail):] {
 			r.job.Feed.Line(name, "│ "+line)
 		}
 	}
-	return gate, err
+	row.End = time.Now()
+	return gate, errors.Join(err, appendStage(r.job.Dir, row))
 }
 
 // protectedQuestion asks whether the protected paths changed since the Job's

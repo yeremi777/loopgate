@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -793,4 +794,85 @@ func TestIssueJobBlockedInDrill(t *testing.T) {
 		t.Fatalf("got %+v", out)
 	}
 	f.wantKinds("/drill")
+}
+
+func TestStageRowsRecordEachEndedStageWithItsGateCommandsAndOutputTail(t *testing.T) {
+	j := newJob(t, 3)
+	j.Loop.Setup = "true"
+	j.Loop.Verify = "test -f ok.txt || { seq 1 30; exit 3; }"
+	f := &fakeStages{t: t, steps: []step{
+		reports(runner.StatusDone, "done, trust me"),
+		commits(j, "ok.txt"),
+		reports(runner.StatusDone, "clean"),
+		lands("t\n\nb"),
+	}}
+	before := time.Now()
+	out := Pipeline{Stages: f, Shell: shell(), Publisher: &fakePublisher{url: "https://github.com/me/app/pull/7"}}.Run(context.Background(), j)
+	if out.State != store.Done {
+		t.Fatalf("got %+v, want done", out)
+	}
+	rows, err := ReadStages(j.Dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var tail []string
+	for i := 11; i <= 30; i++ {
+		tail = append(tail, strconv.Itoa(i))
+	}
+	want := []StageRow{
+		{Stage: "implement 1", Status: "done", CostUSD: 0.1},
+		{Stage: "verify 1", Status: "fail", Commands: []verify.Command{{Name: "setup", Line: "true"}, {Name: "verify", Line: j.Loop.Verify, ExitCode: 3}}, Output: tail},
+		{Stage: "implement 2", Status: "done", CostUSD: 0.1},
+		{Stage: "verify 2", Status: "pass", Commands: []verify.Command{{Name: "setup", Line: "true"}, {Name: "verify", Line: j.Loop.Verify}}},
+		{Stage: "rubric 2", Status: "done", CostUSD: 0.1},
+		{Stage: "land", Status: "done", CostUSD: 0.1},
+		{Stage: "publish", Status: "done"},
+	}
+	if len(rows) != len(want) {
+		t.Fatalf("rows %+v, want %d", rows, len(want))
+	}
+	last := before
+	for i, row := range rows {
+		if row.Start.Before(last) || row.End.Before(row.Start) || row.End.After(time.Now()) {
+			t.Fatalf("row %d %s: start %v, end %v; want ordered after %v", i, row.Stage, row.Start, row.End, last)
+		}
+		last = row.End
+		row.Start, row.End = time.Time{}, time.Time{}
+		if !reflect.DeepEqual(row, want[i]) {
+			t.Fatalf("row %d: %+v, want %+v", i, row, want[i])
+		}
+	}
+	if info, err := os.Stat(filepath.Join(j.Dir, "stages.jsonl")); err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("stages.jsonl: %v, %v; want mode 0600", info, err)
+	}
+}
+
+func TestStageRowsEndABlockedOrFailedStage(t *testing.T) {
+	for name, c := range map[string]struct {
+		step   step
+		status string
+	}{
+		"blocked": {func(runner.Stage) (runner.Result, error) {
+			return runner.Result{Status: runner.StatusBlocked, Question: "which db?", Summary: "stopped", CostUSD: 0.2}, nil
+		}, "blocked"},
+		"failed": {func(runner.Stage) (runner.Result, error) { return runner.Result{CostUSD: 0.2}, errors.New("claude died") }, "failed"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			j := newJob(t, 3)
+			Pipeline{Stages: &fakeStages{t: t, steps: []step{c.step}}, Shell: shell()}.Run(context.Background(), j)
+			rows, err := ReadStages(j.Dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(rows) != 1 || rows[0].Stage != "implement 1" || rows[0].Status != c.status || rows[0].CostUSD != 0.2 {
+				t.Fatalf("rows %+v, want one %s implement 1 row costing 0.2", rows, c.status)
+			}
+		})
+	}
+}
+
+func TestStageRowsOfAJobThatNeverRanAreEmpty(t *testing.T) {
+	if rows, err := ReadStages(t.TempDir()); err != nil || rows != nil {
+		t.Fatalf("rows %+v, %v; want none", rows, err)
+	}
 }
