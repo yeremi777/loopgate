@@ -35,14 +35,16 @@ usage:
   loopctl resume <loop>                start them again
   loopctl run <loop> [--spec <path>]   start a job now on --spec, or a timer loop's own task or spec
   loopctl stop <loop>                  end the loop's running job; the loop stays
-  loopctl logs <job>                   show a job's state, branch, PR, cost and progress
-  loopctl logs -f <job>                show that, then follow the running job until it ends; Ctrl-C leaves it running
+  loopctl logs [-f] <job>              show a job's state, branch, PR, cost and progress; -f then follows the running job until it ends, and Ctrl-C leaves it running
   loopctl takeover <job>               take a job, stopping it if it runs, and hand its worktree to you
   loopctl handback <job>               give a taken-over job back to its loop
+  loopctl rm <job>                     remove an ended job with its worktree, and its branch unless it has commits the job did not end at
   loopctl requeue <loop> <issue>       let a github loop run an issue again
   loopctl install                      start loopd now and at login, and add the Claude Code skill
   loopctl uninstall                    stop loopd and remove the agent and the skill
-  loopctl version                      print the installed loopgate version`
+  loopctl version                      print the installed loopgate version
+
+<job> is a job id that loopctl list shows, or any unique prefix of it`
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {

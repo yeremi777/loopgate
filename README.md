@@ -142,21 +142,21 @@ A timer loop replaces `github` with `timer: { every: 6h }` or `timer: { cron: "0
 | Hand a settled spec to a loop | `loopctl run <loop> --spec docs/specs/<slug>.md`, from the checkout's root |
 | Build issues while you are away | Label them with the loop's label. Each issue runs once. |
 | Run an issue again | `loopctl requeue <loop> <issue>`, where `<issue>` is the GitHub issue number; an issue job's work in `loopctl list` shows it. |
-| Find a loop or job id | `loopctl list`: each loop with its state, trigger and checkout, and under it the job id of each of its jobs in progress (queued, running, blocked, manual) and of the 5 newest that ended, with the PR link, question, error or summary. |
-| See a job | `loopctl logs <job>`: state, branch, PR, cost, progress |
-| Watch a job live | `loopctl logs -f <job>`: each stage and verify gate as it starts and ends, one line per tool call and Claude message, then the outcome. Ctrl-C leaves the job running. The live lines last only while the job runs. |
+| Find a loop or job id | `loopctl list`: each loop with its state, trigger and checkout, and under it the job id of each of its jobs in progress (queued, running, blocked, manual) and of the 5 newest that ended, with the PR link, question, error or summary. A job id is 12 hex characters; every `<job>` below takes it or any unique prefix of it, such as `a41f`. |
+| See a job | `loopctl logs [-f] <job>`: state, branch, PR, cost, progress. With `-f`, then each stage and verify gate as it starts and ends, one line per tool call and Claude message, then the outcome. Ctrl-C leaves the job running. The live lines last only while the job runs. |
 | Take a job back | `loopctl takeover <job>`, then work in the worktree it prints |
 | Give it back | Commit, then `loopctl handback <job>` |
+| Clean up an ended job | `loopctl rm <job>`: removes a done, failed, exhausted or blocked job's worktree, directory and entry in `loopctl list`, and prints its PR link. It deletes the job's local branch only while the branch points where the job ended; otherwise it keeps the branch and says so. The remote branch, the PR and the issue stay. |
 | End the running job | `loopctl stop <loop>` (the loop keeps its trigger) |
 | Silence a loop's trigger | `loopctl pause <loop>`, later `loopctl resume <loop>` |
 
-One job runs at a time. A job ends `done` with a draft PR, `blocked` with a question, `exhausted` when its bounds run out, `failed`, or `manual` after a takeover. A job from an issue answers on the issue: the PR link, or the blocking question with the `needs-drill` label.
+One job runs at a time. A job ends `done` with a draft PR, `blocked` with a question, `exhausted` when its bounds run out, `failed`, or `manual` after a takeover. An ended job keeps its worktree until `loopctl rm <job>`. A job from an issue answers on the issue: the PR link, or the blocking question with the `needs-drill` label.
 
 The draft PR opens with loopgate's report: the commit that passed the gate and the review, the changed tests, the cost, drill's plan, and the final implement run's summary, which lists its Flags: choices the Job made on its own, for you to accept or reject.
 
 ### From a Claude Code session
 
-`loopctl install` adds a loopgate skill that drives `loopctl` for you. In any session, say "hand docs/specs/x.md to the loop", "loop status", or "take over job 3".
+`loopctl install` adds a loopgate skill that drives `loopctl` for you. In any session, say "hand docs/specs/x.md to the loop", "loop status", or "take over job a41f".
 
 ## Skills
 

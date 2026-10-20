@@ -390,6 +390,9 @@ func TestHelpExitsZeroAndExplainsStop(t *testing.T) {
 		if !strings.Contains(out, "stop <loop>") || strings.Contains(out, "<name>") || !strings.Contains(out, "end the loop's running job") {
 			t.Fatalf("usage does not say what stop does:\n%s", out)
 		}
+		if strings.Count(out, "loopctl logs") != 1 || !strings.Contains(out, "\n  loopctl logs [-f] <job> ") || !strings.Contains(out, "\n  loopctl rm <job> ") {
+			t.Fatalf("usage lacks one logs [-f] <job> line and an rm <job> line:\n%s", out)
+		}
 	}
 }
 
