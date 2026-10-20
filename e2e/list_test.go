@@ -49,6 +49,37 @@ func TestListAgainstAnOlderLoopdNamesInstallAndPrintsNothing(t *testing.T) {
 	}
 }
 
+func TestListAgainstALoopdWithIntegerJobIDsNamesInstallAndPrintsNothing(t *testing.T) {
+	e := newEnv(t, "exit 0")
+	ln, err := net.Listen("unix", filepath.Join(e.home, "loopd.sock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	job := `{"ID":1,"Loop":"fix","State":"done","Work":"task x","Branch":"loop/fix-20260101-000000-1","Worktree":"/h/jobs/1/worktree","PRURL":"https://github.com/me/app/pull/1"}`
+	old := http.NewServeMux()
+	old.HandleFunc("GET /loops", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"data":[{"name":"fix","paused":false,"trigger":"timer","checkout":"/repo"}]}`))
+	})
+	old.HandleFunc("GET /jobs", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"data":[` + job + `]}`))
+	})
+	old.HandleFunc("GET /jobs/1", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"data":{"job":` + job + `,"progress":""}}`))
+	})
+	old.HandleFunc("POST /jobs/1/takeover", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"data":` + job + `}`))
+	})
+	go func() { _ = http.Serve(ln, old) }()
+
+	for _, args := range [][]string{{"list"}, {"logs", "1"}, {"takeover", "1"}} {
+		out, code := e.loopctl(args...)
+		if code == 0 || !strings.Contains(out, "200 OK") || !strings.Contains(out, "loopctl install") || strings.Contains(out, "fix") {
+			t.Fatalf("loopctl %v against a loopd with integer job ids: exit %d\n%s", args, code, out)
+		}
+	}
+}
+
 func TestListWithoutLoopsSaysHowToAddOne(t *testing.T) {
 	e := newEnv(t, "exit 0")
 	e.startLoopd()
