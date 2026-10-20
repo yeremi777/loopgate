@@ -3,6 +3,7 @@ package job
 import (
 	"context"
 	"errors"
+	"log"
 	"math"
 	"os"
 	"os/exec"
@@ -13,6 +14,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/yeremi777/loopgate/internal/config"
 	"github.com/yeremi777/loopgate/internal/feed"
@@ -874,5 +876,41 @@ func TestStageRowsEndABlockedOrFailedStage(t *testing.T) {
 func TestStageRowsOfAJobThatNeverRanAreEmpty(t *testing.T) {
 	if rows, err := ReadStages(t.TempDir()); err != nil || rows != nil {
 		t.Fatalf("rows %+v, %v; want none", rows, err)
+	}
+}
+
+func TestStageRowsThatCannotBeWrittenLeaveTheJobToShip(t *testing.T) {
+	var logged strings.Builder
+	log.SetOutput(&logged)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+	j := newJob(t, 3)
+	if err := os.Mkdir(filepath.Join(j.Dir, "stages.jsonl"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	f := &fakeStages{t: t, steps: []step{commits(j, "ok.txt"), reports(runner.StatusDone, "clean"), lands("t\n\nb")}}
+	out := Pipeline{Stages: f, Shell: shell(), Publisher: &fakePublisher{url: "https://github.com/me/app/pull/7"}}.Run(context.Background(), j)
+	if out.State != store.Done || out.PRURL != "https://github.com/me/app/pull/7" || out.Err != nil {
+		t.Fatalf("got %+v, want done with the PR", out)
+	}
+	if !strings.Contains(logged.String(), "job 0123456789ab: stage row publish:") {
+		t.Fatalf("log %q does not name the lost row", logged.String())
+	}
+}
+
+func TestStageRowsCapEachOutputLine(t *testing.T) {
+	j := newJob(t, 1)
+	j.Loop.Verify = "printf 'x%.0s' $(seq 1 5000); echo; exit 1"
+	Pipeline{Stages: &fakeStages{t: t, steps: []step{reports(runner.StatusDone, "done")}}, Shell: shell()}.Run(context.Background(), j)
+	rows, err := ReadStages(j.Dir)
+	if err != nil || len(rows) != 2 {
+		t.Fatalf("rows %+v, %v", rows, err)
+	}
+	for _, line := range rows[1].Output {
+		if n := utf8.RuneCountInString(line); n > 300 {
+			t.Fatalf("output line of %d characters kept", n)
+		}
+	}
+	if last := rows[1].Output[len(rows[1].Output)-1]; !strings.HasSuffix(last, "x…") {
+		t.Fatalf("long line %q not cut with …", last)
 	}
 }

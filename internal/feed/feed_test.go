@@ -157,3 +157,21 @@ func TestStepEventsNameTheToolAndTheSubagentForThePage(t *testing.T) {
 		t.Fatalf("events %q, want %q", got, want)
 	}
 }
+
+func TestLineKeepsTheTextOfAnEventThatIsNoToolCall(t *testing.T) {
+	for _, e := range []Event{
+		{Stage: "verify 1", Text: "│ x\r"},
+		{Stage: "verify 1", Text: "│ "},
+		{Stage: "verify 1", Text: "verify: go test\n", Bound: true},
+	} {
+		if got := e.Line(); got != e.Text {
+			t.Errorf("line of %q is %q", e.Text, got)
+		}
+	}
+	if got := (Event{Text: "  Done.  ", Sub: true}).Line(); got != "    Done.  " {
+		t.Errorf("subagent text line %q", got)
+	}
+	if got := (Event{Tool: "TodoWrite"}).Line(); got != "TodoWrite" {
+		t.Errorf("tool call without input %q", got)
+	}
+}

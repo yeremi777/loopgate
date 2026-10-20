@@ -242,8 +242,8 @@ func TestInterruptFailsJobsLeftRunning(t *testing.T) {
 		if job.State != want {
 			t.Fatalf("job %s: state %s, want %s", id, job.State, want)
 		}
-		if want == Failed && job.Error != "loopd restarted" {
-			t.Fatalf("job %s: error %q", id, job.Error)
+		if want == Failed && (job.Error != "loopd restarted" || job.Ended.IsZero()) {
+			t.Fatalf("job %s: error %q, ended %v; want the reason and an end time", id, job.Error, job.Ended)
 		}
 	}
 }
@@ -491,5 +491,24 @@ func TestJobTimesOnADatabaseFromBeforeThem(t *testing.T) {
 	}
 	if got, _ := st.Job(job.ID); got.Started.IsZero() {
 		t.Fatal("new job on an old database has no start time")
+	}
+}
+
+func TestJobTimesOnADatabaseThatGotOnlyTheStartColumn(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.db")
+	st := open(t, path)
+	if _, err := st.db.Exec(`ALTER TABLE jobs DROP COLUMN ended_ms`); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Close(); err != nil {
+		t.Fatal(err)
+	}
+	st = open(t, path)
+	job, _ := st.CreateJob("fix")
+	if err := st.FinishJob(job.ID, Finish{State: Failed}); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := st.Job(job.ID); err != nil || got.Ended.IsZero() {
+		t.Fatalf("job %+v, %v; want an end time", got, err)
 	}
 }

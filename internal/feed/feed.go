@@ -35,7 +35,10 @@ type Event struct {
 // Line is the event as one line of text: the tool and its input, or the
 // text, indented for a subagent.
 func (e Event) Line() string {
-	line := strings.TrimSpace(e.Tool + " " + e.Text)
+	line := e.Text
+	if e.Tool != "" {
+		line = strings.TrimSpace(e.Tool + " " + e.Text)
+	}
 	if e.Sub {
 		return "  " + line
 	}
@@ -79,11 +82,17 @@ func (f *Feed) Step(stage string, s Step) {
 	f.add(Event{Stage: stage, Text: s.Text, Tool: s.Tool, Sub: s.Sub})
 }
 
+// Cut shortens text to the length an event holds, ending a cut text in "…".
+func Cut(text string) string {
+	if r := []rune(text); len(r) > maxText {
+		return string(r[:maxText-1]) + "…"
+	}
+	return text
+}
+
 func (f *Feed) add(e Event) {
 	e.Time = time.Now()
-	if r := []rune(e.Text); len(r) > maxText {
-		e.Text = string(r[:maxText-1]) + "…"
-	}
+	e.Text = Cut(e.Text)
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if e.Bound && len(f.current) > 0 && f.current[0].Stage != e.Stage {

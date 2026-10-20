@@ -197,16 +197,22 @@ func addTestGuide(db *sql.DB) error {
 	return err
 }
 
-// addTimeColumns gives a jobs table from before Job times its start and end
-// columns, which stay 0 for the Jobs already stored.
+// addTimeColumns gives a jobs table from before Job times each start and
+// end column it lacks, which stays 0 for the Jobs already stored.
 func addTimeColumns(db *sql.DB) error {
-	var has bool
-	if err := db.QueryRow(`SELECT count(*) FROM pragma_table_info('jobs') WHERE name = 'started_ms'`).Scan(&has); err != nil || has {
-		return err
+	for _, column := range []string{"started_ms", "ended_ms"} {
+		var has bool
+		if err := db.QueryRow(`SELECT count(*) FROM pragma_table_info('jobs') WHERE name = ?`, column).Scan(&has); err != nil {
+			return err
+		}
+		if has {
+			continue
+		}
+		if _, err := db.Exec(`ALTER TABLE jobs ADD COLUMN ` + column + ` INTEGER NOT NULL DEFAULT 0`); err != nil {
+			return err
+		}
 	}
-	_, err := db.Exec(`ALTER TABLE jobs ADD COLUMN started_ms INTEGER NOT NULL DEFAULT 0;
-		ALTER TABLE jobs ADD COLUMN ended_ms INTEGER NOT NULL DEFAULT 0`)
-	return err
+	return nil
 }
 
 func (s *Store) Close() error { return s.db.Close() }
@@ -281,9 +287,10 @@ func (s *Store) FinishJob(id string, f Finish) error {
 		f.State, f.Question, f.Summary, f.PRURL, f.CostUSD, f.Error, f.EndCommit, f.TestGuide, time.Now().UnixMilli(), id)
 }
 
-// InterruptRunning fails every queued or running Job, which a dead loopd left behind.
+// InterruptRunning fails every queued or running Job, which a dead loopd
+// left behind, as ended now.
 func (s *Store) InterruptRunning(reason string) error {
-	_, err := s.db.Exec(`UPDATE jobs SET state = ?, error = ? WHERE state IN (?, ?)`, Failed, reason, Queued, Running)
+	_, err := s.db.Exec(`UPDATE jobs SET state = ?, error = ?, ended_ms = ? WHERE state IN (?, ?)`, Failed, reason, time.Now().UnixMilli(), Queued, Running)
 	return err
 }
 

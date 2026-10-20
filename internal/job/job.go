@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -237,10 +238,11 @@ func (r *jobRun) ship(ctx context.Context, out Outcome) (Outcome, error) {
 	url, err := r.Publisher.Publish(ctx, j.Worktree, j.Branch, j.DefaultBranch, pr)
 	row := StageRow{Stage: "publish", Start: start, End: time.Now(), Status: "done"}
 	if err != nil {
-		row.Status, err = "failed", fmt.Errorf("publish: %w", err)
+		row.Status = "failed"
 	}
-	if err := errors.Join(err, appendStage(j.Dir, row)); err != nil {
-		return Outcome{}, err
+	r.record(row)
+	if err != nil {
+		return Outcome{}, fmt.Errorf("publish: %w", err)
 	}
 	j.Feed.Bound("publish", "draft PR "+url)
 	out.PRURL = url
@@ -263,7 +265,8 @@ func (r *jobRun) stage(ctx context.Context, name, prompt string) (runner.Result,
 		r.job.Feed.Bound(name, fmt.Sprintf("%s $%.2f", res.Status, res.CostUSD))
 	}
 	row.End = time.Now()
-	return res, errors.Join(err, appendStage(r.job.Dir, row))
+	r.record(row)
+	return res, err
 }
 
 // runStage runs one stage, then blocks the Job when the stage left a
@@ -307,14 +310,27 @@ func (r *jobRun) gate(ctx context.Context, i int) (verify.Outcome, error) {
 		r.job.Feed.Bound(name, "pass: verify command exited 0")
 	default:
 		lines := strings.Split(strings.TrimSpace(gate.Output), "\n")
-		row.Status, row.Output = "fail", lines[max(0, len(lines)-gateTail):]
+		row.Status = "fail"
+		for _, line := range lines[max(0, len(lines)-gateTail):] {
+			row.Output = append(row.Output, feed.Cut(line))
+		}
 		r.job.Feed.Bound(name, "fail: "+strings.TrimSuffix(lines[0], ":"))
 		for _, line := range lines[max(1, len(lines)-gateTail):] {
 			r.job.Feed.Line(name, "│ "+line)
 		}
 	}
 	row.End = time.Now()
-	return gate, errors.Join(err, appendStage(r.job.Dir, row))
+	r.record(row)
+	return gate, err
+}
+
+// record adds row to the Job's stage rows. A row that cannot be written is
+// logged and lost: the rows feed only the tracking page, which never decides
+// how a Job ends.
+func (r *jobRun) record(row StageRow) {
+	if err := appendStage(r.job.Dir, row); err != nil {
+		log.Printf("loopd: job %s: stage row %s: %v", r.job.ID, row.Stage, err)
+	}
 }
 
 // protectedQuestion asks whether the protected paths changed since the Job's
