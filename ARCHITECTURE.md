@@ -8,12 +8,13 @@ loopgate is a local macOS service, `loopd`, and its CLI, `loopctl`. It runs Clau
 - **store**: keeps Loop, Job and claimed-issue state in SQLite, so it survives restarts.
 - **daemon**: owns the registered Loops and the single running slot: admits a Loop through `loopctl add` only after its checkout checks and Trial gate pass, starts, stops, takes over, hands back and removes Jobs, fires timers, and polls issues.
 - **job**: carries one Job through drill, implement, the Verify gate, rubric and land, within the Loop's bounds.
-- **feed**: holds the running Job's live events in memory for `loopctl logs -f`: earlier stages as their start and end, the current stage in full.
+- **feed**: holds the running Job's live events in memory for `loopctl logs -f` and the tracking page: earlier stages as their start and end, the current stage in full.
 - **verify**: decides whether a tree may ship: the Verify gate with its Setup command, protected paths, test changes, and the after-land check.
 - **runner**: spawns every Claude Code stage and the Setup and verify commands, sandboxed and each in its own process group, runs `loopd`'s own git, and creates Job and Trial gate worktrees.
 - **github**: loopd's only path to GitHub, through the user's `gh` login: push, draft PR, issue list, comment, label.
 - **trigger/timer**: computes when a timer Loop fires next.
 - **ipc** and **service**: carry `loopctl` commands to `loopd`, and install `loopd` as a login agent.
+- **web**: `loopd`'s one TCP listener, on `127.0.0.1` at a port and token kept in `$LOOPD_HOME`: serves each Job's tracking page, built from the store, the Job's stage rows and the feed, and an index of the Loops' Jobs. It answers only `GET`; every `loopctl` command keeps the unix socket.
 
 ## Seams
 - `job.Stager`: one Claude Code stage. `runner.Runner` runs real `claude -p`; tests script the model.
@@ -28,5 +29,6 @@ loopgate is a local macOS service, `loopd`, and its CLI, `loopctl`. It runs Clau
 - A protected path changed by any stage or Verify gate blocks the Job before the next stage starts.
 - After the gate, only unprotected Markdown may change before the push.
 - One Job holds the running slot at a time; a manual or Blocked Job holds none.
-- A viewer only reads: following a Job never stops, pauses or slows it, and its live events end with the Job.
+- A viewer only reads: following or tracking a Job never stops, pauses or slows it, and its live events end with the Job.
+- The tracking pages are reachable only from this Mac: `127.0.0.1`, the token, and the listener's own `Host`.
 - Issue text reaches a model only as fenced, untrusted data.

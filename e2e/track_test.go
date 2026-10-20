@@ -139,6 +139,13 @@ func TestTrackEventsEndWithoutTheJobWhenLoopdStopsAndTheURLWorksAfterItStarts(t 
 	}
 }
 
+func TestHelpNamesTrackOnItsOwnLine(t *testing.T) {
+	out, code := newEnv(t, "exit 0").loopctl("help")
+	if code != 0 || strings.Count(out, "loopctl track") != 1 || !strings.Contains(out, "\n  loopctl track <job> ") {
+		t.Fatalf("help lacks one loopctl track <job> line:\n%s", out)
+	}
+}
+
 // fakeOpen puts an open on e's PATH that runs body after it writes its
 // arguments to the file it returns.
 func fakeOpen(t *testing.T, e env, body string) string {
