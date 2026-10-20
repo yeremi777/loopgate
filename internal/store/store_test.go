@@ -114,6 +114,31 @@ func TestJobsOrderTheOnesInProgressAndTheFiveNewestEndedNewestFirstByCreation(t 
 	}
 }
 
+func TestResolvePrefixFindsTheOneJobWhoseIDStartsWithIt(t *testing.T) {
+	st := open(t, filepath.Join(t.TempDir(), "state.db"))
+	ids := []string{"abc123000001", "abc123000002", "def456000000"}
+	next := 0
+	st.newID = func() string { next++; return ids[next-1] }
+	for range ids {
+		if _, err := st.CreateJob("fix"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for prefix, want := range map[string]string{"abc123000001": "abc123000001", "ABC123000002": "abc123000002", "d": "def456000000", "De": "def456000000"} {
+		if got, err := st.Resolve(prefix); err != nil || got != want {
+			t.Fatalf("resolve %q: %q, %v; want %q", prefix, got, err, want)
+		}
+	}
+	if _, err := st.Resolve("ABC1"); err == nil || err.Error() != "job prefix abc1 matches abc123000001, abc123000002" {
+		t.Fatalf("resolve of a prefix of two jobs: %v", err)
+	}
+	for _, prefix := range []string{"e", "abc123000001f", "", "%", "_"} {
+		if got, err := st.Resolve(prefix); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("resolve %q: %q, %v; want ErrNotFound", prefix, got, err)
+		}
+	}
+}
+
 func TestNewIDIsTwelveHexCharactersAndNeverOneAlreadyStored(t *testing.T) {
 	st := open(t, filepath.Join(t.TempDir(), "state.db"))
 	seen := map[string]bool{}

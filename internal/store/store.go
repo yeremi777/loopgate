@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 
 	_ "modernc.org/sqlite"
 )
@@ -263,6 +264,38 @@ func (s *Store) Job(id string) (Job, error) {
 		return Job{}, fmt.Errorf("job %s: %w", id, ErrNotFound)
 	}
 	return job, err
+}
+
+// Resolve is the id of the one Job whose id starts with prefix, in any
+// letter case.
+func (s *Store) Resolve(prefix string) (string, error) {
+	p := strings.ToLower(prefix)
+	if p == "" {
+		return "", fmt.Errorf("job %q: %w", prefix, ErrNotFound)
+	}
+	rows, err := s.db.Query(`SELECT id FROM jobs WHERE substr(id, 1, ?) = ? ORDER BY id`, len(p), p)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = rows.Close() }()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return "", err
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return "", err
+	}
+	switch len(ids) {
+	case 0:
+		return "", fmt.Errorf("job %s: %w", prefix, ErrNotFound)
+	case 1:
+		return ids[0], nil
+	}
+	return "", fmt.Errorf("job prefix %s matches %s", p, strings.Join(ids, ", "))
 }
 
 // Jobs are every Job in progress, that is queued, running, Blocked or

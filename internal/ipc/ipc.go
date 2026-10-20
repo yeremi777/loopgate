@@ -63,20 +63,27 @@ func Serve(ln net.Listener, d *daemon.Daemon) error {
 		reply(w, jobs, err)
 	})
 	mux.HandleFunc("GET /jobs/{id}", func(w http.ResponseWriter, r *http.Request) {
-		log, err := d.Job(r.PathValue("id"))
+		id, err := d.Resolve(r.PathValue("id"))
+		if err != nil {
+			reply(w, daemon.JobLog{}, err)
+			return
+		}
+		log, err := d.Job(id)
 		reply(w, log, err)
 	})
 	mux.HandleFunc("GET /jobs/{id}/events", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/x-ndjson")
 		enc := json.NewEncoder(w)
 		rc := http.NewResponseController(w)
-		id := r.PathValue("id")
-		err := d.Follow(r.Context(), id, func(e feed.Event) error {
-			if err := enc.Encode(followLine{Event: &e}); err != nil {
-				return err
-			}
-			return rc.Flush()
-		})
+		id, err := d.Resolve(r.PathValue("id"))
+		if err == nil {
+			err = d.Follow(r.Context(), id, func(e feed.Event) error {
+				if err := enc.Encode(followLine{Event: &e}); err != nil {
+					return err
+				}
+				return rc.Flush()
+			})
+		}
 		var end followLine
 		if err == nil {
 			var log daemon.JobLog
@@ -101,7 +108,12 @@ func Serve(ln net.Listener, d *daemon.Daemon) error {
 	})
 	for action, do := range map[string]func(string) (store.Job, error){"takeover": d.Takeover, "handback": d.Handback} {
 		mux.HandleFunc("POST /jobs/{id}/"+action, func(w http.ResponseWriter, r *http.Request) {
-			j, err := do(r.PathValue("id"))
+			id, err := d.Resolve(r.PathValue("id"))
+			if err != nil {
+				reply(w, store.Job{}, err)
+				return
+			}
+			j, err := do(id)
 			reply(w, j, err)
 		})
 	}
