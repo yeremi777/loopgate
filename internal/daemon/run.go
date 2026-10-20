@@ -316,7 +316,7 @@ func (d *Daemon) finish(ctx context.Context, cur *running, j job.Job) {
 	endCommit := d.endCommit(j)
 
 	d.mu.Lock()
-	end := store.Finish{State: out.State, Question: out.Question, Summary: out.Summary, PRURL: out.PRURL, CostUSD: out.CostUSD}
+	end := store.Finish{State: out.State, Question: out.Question, Summary: out.Summary, PRURL: out.PRURL, CostUSD: out.CostUSD, TestGuide: out.TestGuide}
 	switch {
 	case out.State == store.Done:
 		// The draft PR exists; a stop or takeover that came late changes nothing.
