@@ -14,6 +14,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/yeremi777/loopgate/internal/feed"
 )
 
 const doneJSON = `{"type":"result","subtype":"success","is_error":false,"total_cost_usd":0.25,"structured_output":{"status":"done","summary":"fixed it"}}`
@@ -188,16 +190,23 @@ func TestStageLogsToolCallsAndTextAndReadsTheFinalResultLine(t *testing.T) {
 		t.Fatal(err)
 	}
 	fake := newFake(t, "cat >/dev/null; cat "+out)
-	var logged []string
-	res, err := fake.runner().Run(context.Background(), Stage{Dir: t.TempDir(), Prompt: "p", Timeout: time.Minute, Log: func(line string) { logged = append(logged, line) }})
+	var logged []feed.Step
+	res, err := fake.runner().Run(context.Background(), Stage{Dir: t.TempDir(), Prompt: "p", Timeout: time.Minute, Log: func(s feed.Step) { logged = append(logged, s) }})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if want := (Result{Status: StatusDone, Summary: "fixed it", CostUSD: 0.25}); res != want {
 		t.Fatalf("got %+v, want %+v", res, want)
 	}
-	if want := []string{"I will fix the tail.", "Read /w/job.go", "  Bash go test ./...", "TodoWrite", "Skill rubric"}; !slices.Equal(logged, want) {
-		t.Fatalf("logged %q, want %q", logged, want)
+	want := []feed.Step{
+		{Text: "I will fix the tail."},
+		{Tool: "Read", Text: "/w/job.go"},
+		{Tool: "Bash", Text: "go test ./...", Sub: true},
+		{Tool: "TodoWrite"},
+		{Tool: "Skill", Text: "rubric"},
+	}
+	if !slices.Equal(logged, want) {
+		t.Fatalf("logged %+v, want %+v", logged, want)
 	}
 }
 

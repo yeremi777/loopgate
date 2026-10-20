@@ -179,7 +179,7 @@ func run(args []string) error {
 		fmt.Println()
 		width := termWidth()
 		end, err := c.Follow(ctx, log.Job.ID, func(e feed.Event) {
-			fmt.Println(cut(e.Time.Local().Format("15:04:05")+" "+e.Stage+"  "+printable(e.Text), width))
+			fmt.Println(cut(e.Time.Local().Format("15:04:05")+" "+e.Stage+"  "+printable(e.Line()), width))
 		})
 		if err != nil {
 			return err

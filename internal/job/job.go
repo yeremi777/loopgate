@@ -266,7 +266,7 @@ func (r *jobRun) runStage(ctx context.Context, name, prompt string) (runner.Resu
 		Timeout:   remaining(ctx),
 		Network:   r.job.Loop.Network,
 		DenyWrite: r.guard,
-		Log:       func(line string) { r.job.Feed.Line(name, line) },
+		Log:       func(s feed.Step) { r.job.Feed.Step(name, s) },
 	})
 	r.cost += res.CostUSD
 	if err != nil {

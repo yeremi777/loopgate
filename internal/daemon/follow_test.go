@@ -22,7 +22,7 @@ func TestFollowStreamsTheRunningJobAndEndsOnceItsOutcomeIsStored(t *testing.T) {
 	followed := make(chan error)
 	go func() {
 		followed <- r.d.Follow(context.Background(), started.ID, func(e feed.Event) error {
-			if got = append(got, e.Stage+" | "+e.Text); len(got) == 1 {
+			if got = append(got, e.Stage+" | "+e.Line()); len(got) == 1 {
 				close(attached)
 			}
 			return nil

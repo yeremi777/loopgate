@@ -67,7 +67,7 @@ func TestEventsShowEachStageEachGateAndThePublishInOrder(t *testing.T) {
 	f := &fakeStages{t: t, steps: []step{
 		func(s runner.Stage) (runner.Result, error) {
 			<-attached
-			s.Log("Read docs/specs/x.md")
+			s.Log(feed.Step{Tool: "Read", Text: "docs/specs/x.md"})
 			return runner.Result{Status: runner.StatusDone, Summary: "done, trust me", CostUSD: 0.1}, nil
 		},
 		commits(j, "ok.txt"),
@@ -78,7 +78,7 @@ func TestEventsShowEachStageEachGateAndThePublishInOrder(t *testing.T) {
 	followed := make(chan error)
 	go func() {
 		followed <- j.Feed.Follow(context.Background(), func(e feed.Event) error {
-			if got = append(got, e.Stage+" | "+e.Text); len(got) == 1 {
+			if got = append(got, e.Stage+" | "+e.Line()); len(got) == 1 {
 				close(attached)
 			}
 			return nil
@@ -126,7 +126,7 @@ func TestEventsEndABlockedStageWithItsQuestion(t *testing.T) {
 	Pipeline{Stages: f, Shell: shell()}.Run(context.Background(), j)
 	j.Feed.Close()
 	var got []string
-	if err := j.Feed.Follow(context.Background(), func(e feed.Event) error { got = append(got, e.Stage+" | "+e.Text); return nil }); err != nil {
+	if err := j.Feed.Follow(context.Background(), func(e feed.Event) error { got = append(got, e.Stage+" | "+e.Line()); return nil }); err != nil {
 		t.Fatal(err)
 	}
 	if want := []string{"implement 1 | start", "implement 1 | blocked $0.20: which db?"}; !slices.Equal(got, want) {
