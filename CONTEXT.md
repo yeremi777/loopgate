@@ -48,6 +48,10 @@ _Avoid_: stuck, failed
 A choice a Job made on its own and reported at the top of its draft PR for the human to accept or reject.
 _Avoid_: warning, note, assumption
 
+**Test guide**:
+A Job's own instructions for running what it built by hand: how to start the app, and what to call or open for each endpoint, screen or command it added or changed.
+_Avoid_: demo, try-it steps
+
 ## Relationships
 
 - A **Loop** has any number of **Jobs**; at most one **Job** of a **Loop** runs at a time
@@ -55,6 +59,7 @@ _Avoid_: warning, note, assumption
 - A **Job** ends at a draft PR, **Blocked**, or bounds exhausted; only the **Verify gate** lets it reach a draft PR
 - A **Takeover** and a **Handback** move one **Job** between the human and its **Loop**
 - A **Job** that reaches a draft PR carries zero or more **Flags**; a **Blocked** **Job** has no PR
+- A done **Job** carries at most one **Test guide**
 
 ## Example dialogue
 
@@ -64,4 +69,5 @@ _Avoid_: warning, note, assumption
 ## Flagged ambiguities
 
 - "spec" meant both the loopgate design document and a work-item description. Resolved: **Spec** is only a work-item description in `docs/specs/`; the loopgate design lives in `docs/specs/loopgate.md` as one such Spec.
+- "demo" meant both a Spec's `Demo:` verification line and a Job's instructions for testing what it built. Resolved: a Spec's line stays a demo; the Job's instructions are its **Test guide**, which starts from that line.
 - "resume" meant both un-pausing a Loop and returning a Job. Resolved: `resume` applies to a **Loop**; **Handback** applies to a **Job**.
