@@ -29,7 +29,7 @@ func TestTakeoverThenHandbackShipsTheHumansWork(t *testing.T) {
 	claude, started := hangFirst(t)
 	e.timerLoop(t, "work", claude)
 	out := e.mustLoopctl("run", "work")
-	id := regexp.MustCompile(`job (\d+) running`).FindStringSubmatch(out)[1]
+	id := regexp.MustCompile(`job ([0-9a-f]{12}) running`).FindStringSubmatch(out)[1]
 	started()
 
 	taken := e.mustLoopctl("takeover", id)
@@ -60,7 +60,7 @@ func TestStopEndsARunningJob(t *testing.T) {
 	e := newEnv(t, "exit 0")
 	claude, started := hangFirst(t)
 	e.timerLoop(t, "work", claude)
-	id := regexp.MustCompile(`job (\d+) running`).FindStringSubmatch(e.mustLoopctl("run", "work"))[1]
+	id := regexp.MustCompile(`job ([0-9a-f]{12}) running`).FindStringSubmatch(e.mustLoopctl("run", "work"))[1]
 	started()
 	e.mustLoopctl("stop", "work")
 	e.waitState(t, id, "failed")

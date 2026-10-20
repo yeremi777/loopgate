@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"syscall"
@@ -194,6 +195,16 @@ func (e env) startLoopd() *exec.Cmd {
 	}
 	e.t.Fatalf("loopd did not answer: %s", stderr.String())
 	return nil
+}
+
+// jobIDs are the job ids that loopctl list shows, in its order.
+func (e env) jobIDs() []string {
+	e.t.Helper()
+	var ids []string
+	for _, m := range regexp.MustCompile(`(?m)^  ([0-9a-f]{12}) `).FindAllStringSubmatch(e.mustLoopctl("list"), -1) {
+		ids = append(ids, m[1])
+	}
+	return ids
 }
 
 func hasRow(out, name, state string) bool {

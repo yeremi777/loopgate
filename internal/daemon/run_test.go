@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -24,8 +25,11 @@ func TestRunCarriesSpecJobToDraftPRAndNotifies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if started.State != store.Running || !strings.HasPrefix(started.Branch, "loop/deps-") {
+	if started.State != store.Running || !regexp.MustCompile(`^loop/deps-\d{8}-\d{6}-`+started.ID+`$`).MatchString(started.Branch) {
 		t.Fatalf("started %+v", started)
+	}
+	if want := filepath.Join(r.d.home, "jobs", started.ID, "worktree"); started.Worktree != want {
+		t.Fatalf("worktree %s, want %s", started.Worktree, want)
 	}
 	if got := readFile(t, filepath.Join(started.Worktree, "docs/specs/x.md")); got != "the spec" {
 		t.Fatalf("spec in worktree %q", got)
@@ -166,7 +170,7 @@ func (r *runEnv) notes() []string {
 	return append([]string{}, r.notified...)
 }
 
-func (r *runEnv) waitDone(t *testing.T, id int64) store.Job {
+func (r *runEnv) waitDone(t *testing.T, id string) store.Job {
 	t.Helper()
 	for deadline := time.Now().Add(20 * time.Second); time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
 		j, err := r.st.Job(id)
@@ -177,7 +181,7 @@ func (r *runEnv) waitDone(t *testing.T, id int64) store.Job {
 			return j
 		}
 	}
-	t.Fatalf("job %d never finished", id)
+	t.Fatalf("job %s never finished", id)
 	return store.Job{}
 }
 

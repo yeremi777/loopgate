@@ -54,7 +54,7 @@ printf '%s\n' "$@" > `+rec+`/notify
 	e.startLoopd()
 
 	out := e.mustLoopctl("run", "deps")
-	m := regexp.MustCompile(`job (\d+) running on (loop/deps-\S+)`).FindStringSubmatch(out)
+	m := regexp.MustCompile(`job ([0-9a-f]{12}) running on (loop/deps-\S+)`).FindStringSubmatch(out)
 	if m == nil {
 		t.Fatalf("run output %q", out)
 	}
@@ -162,10 +162,10 @@ func TestTimerLoopFiresWithoutRun(t *testing.T) {
 	e.load(file)
 	e.startLoopd()
 	for deadline := time.Now().Add(40 * time.Second); time.Now().Before(deadline); time.Sleep(250 * time.Millisecond) {
-		if out, code := e.loopctl("logs", "1"); code == 0 && field(out, "state") == "done" {
+		if out, code := e.loopctl("list"); code == 0 && strings.Contains(out, " done ") {
 			return
 		}
 	}
-	out, _ := e.loopctl("logs", "1")
+	out, _ := e.loopctl("list")
 	t.Fatalf("timer loop never ran a job to done:\n%s", out)
 }

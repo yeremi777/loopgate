@@ -17,12 +17,12 @@ func TestPollRunsLowestUnclaimedIssueOnce(t *testing.T) {
 	r.release()
 	r.d.Tick(t0)
 	r.d.Tick(t0.Add(10 * time.Minute))
-	first := r.waitDone(t, 1)
+	first := r.waitDone(t, r.nth(t, 1))
 	if !strings.HasPrefix(first.Branch, "loop/issues-3-") || first.State != store.Done {
 		t.Fatalf("first issue job %+v", first)
 	}
 	r.d.Tick(t0.Add(20 * time.Minute))
-	second := r.waitDone(t, 2)
+	second := r.waitDone(t, r.nth(t, 2))
 	if !strings.HasPrefix(second.Branch, "loop/issues-9-") {
 		t.Fatalf("second issue job %+v", second)
 	}
@@ -47,9 +47,9 @@ func TestPollWhileBusyLeavesIssueUnclaimed(t *testing.T) {
 		t.Fatalf("%d jobs while busy", n)
 	}
 	r.release()
-	r.waitDone(t, 1)
+	r.waitDone(t, r.nth(t, 1))
 	r.d.Tick(t0.Add(20 * time.Minute))
-	if j := r.waitDone(t, 2); !strings.HasPrefix(j.Branch, "loop/issues-3-") {
+	if j := r.waitDone(t, r.nth(t, 2)); !strings.HasPrefix(j.Branch, "loop/issues-3-") {
 		t.Fatalf("issue skipped while busy was lost: %+v", j)
 	}
 }
@@ -60,12 +60,12 @@ func TestRequeueRunsAnIssueAgain(t *testing.T) {
 	r.release()
 	r.d.Tick(t0)
 	r.d.Tick(t0.Add(10 * time.Minute))
-	r.waitDone(t, 1)
+	r.waitDone(t, r.nth(t, 1))
 	if err := r.d.Requeue("issues", 3); err != nil {
 		t.Fatal(err)
 	}
 	r.d.Tick(t0.Add(20 * time.Minute))
-	if j := r.waitDone(t, 2); !strings.HasPrefix(j.Branch, "loop/issues-3-") {
+	if j := r.waitDone(t, r.nth(t, 2)); !strings.HasPrefix(j.Branch, "loop/issues-3-") {
 		t.Fatalf("requeued issue job %+v", j)
 	}
 }
@@ -77,7 +77,7 @@ func TestBlockedIssueGetsQuestionAndLabel(t *testing.T) {
 	r.release()
 	r.d.Tick(t0)
 	r.d.Tick(t0.Add(10 * time.Minute))
-	if j := r.waitDone(t, 1); j.State != store.Blocked {
+	if j := r.waitDone(t, r.nth(t, 1)); j.State != store.Blocked {
 		t.Fatalf("job %+v", j)
 	}
 	if got := r.issues.said(4); len(got) != 1 || !strings.Contains(got[0], "which db?") {

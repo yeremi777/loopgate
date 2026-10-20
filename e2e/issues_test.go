@@ -49,14 +49,24 @@ esac
 	if got := readFile(t, comment); !strings.Contains(got, "https://github.com/me/app/pull/11") {
 		t.Fatalf("issue comment %q", got)
 	}
-	logs := e.mustLoopctl("logs", "1")
-	if field(logs, "state") != "done" || !strings.HasPrefix(field(logs, "branch"), "loop/issues-5-") {
+	ids := e.jobIDs()
+	if len(ids) != 1 {
+		t.Fatalf("job ids %v, want one", ids)
+	}
+	logs := e.mustLoopctl("logs", ids[0])
+	if field(logs, "state") != "done" || field(logs, "branch") != "loop/issues-5-"+ids[0] {
 		t.Fatalf("logs:\n%s", logs)
 	}
 	time.Sleep(2500 * time.Millisecond)
-	if out, code := e.loopctl("logs", "2"); code == 0 {
-		t.Fatalf("issue 5 ran twice:\n%s", out)
+	if ids := e.jobIDs(); len(ids) != 1 {
+		t.Fatalf("issue 5 ran twice: job ids %v", ids)
 	}
 	e.mustLoopctl("requeue", "issues", "5")
-	e.waitState(t, "2", "done")
+	for deadline := time.Now().Add(30 * time.Second); len(ids) < 2; time.Sleep(100 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("requeued issue 5 never ran again")
+		}
+		ids = e.jobIDs()
+	}
+	e.waitState(t, ids[0], "done")
 }

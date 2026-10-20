@@ -28,7 +28,7 @@ func (Spec) isWork() {}
 func (Task) isWork() {}
 
 type Job struct {
-	ID            int64
+	ID            string
 	Loop          config.Loop
 	Work          Work
 	Dir           string

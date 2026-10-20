@@ -2,7 +2,9 @@
 package store
 
 import (
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 
@@ -22,7 +24,7 @@ const (
 )
 
 type Job struct {
-	ID       int64
+	ID       string
 	Loop     string
 	State    JobState
 	Work     string
@@ -49,7 +51,11 @@ type Finish struct {
 
 var ErrNotFound = errors.New("not found")
 
-type Store struct{ db *sql.DB }
+type Store struct {
+	db *sql.DB
+	// newID makes a candidate id for a new Job.
+	newID func() string
+}
 
 const schema = `
 CREATE TABLE IF NOT EXISTS loops (
@@ -57,7 +63,8 @@ CREATE TABLE IF NOT EXISTS loops (
 	paused INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS jobs (
-	id       INTEGER PRIMARY KEY AUTOINCREMENT,
+	seq      INTEGER PRIMARY KEY AUTOINCREMENT,
+	id       TEXT NOT NULL UNIQUE,
 	loop     TEXT NOT NULL,
 	state    TEXT NOT NULL,
 	work     TEXT NOT NULL DEFAULT '',
@@ -87,7 +94,7 @@ func Open(path string) (*Store, error) {
 	if _, err := db.Exec(schema); err != nil {
 		return nil, errors.Join(fmt.Errorf("create schema: %w", err), db.Close())
 	}
-	return &Store{db: db}, nil
+	return &Store{db: db, newID: newID}, nil
 }
 
 func (s *Store) Close() error { return s.db.Close() }
@@ -107,19 +114,36 @@ func (s *Store) Paused(loop string) (bool, error) {
 	return paused, err
 }
 
+// maxIDTries bounds how many stored ids CreateJob draws before it gives up.
+const maxIDTries = 10
+
+// CreateJob stores a queued Job under a new id that no stored Job has.
 func (s *Store) CreateJob(loop string) (Job, error) {
-	res, err := s.db.Exec(`INSERT INTO jobs (loop, state) VALUES (?, ?)`, loop, Queued)
-	if err != nil {
-		return Job{}, err
+	for range maxIDTries {
+		id := s.newID()
+		res, err := s.db.Exec(`INSERT INTO jobs (id, loop, state) VALUES (?, ?, ?) ON CONFLICT (id) DO NOTHING`, id, loop, Queued)
+		if err != nil {
+			return Job{}, err
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return Job{}, err
+		}
+		if n == 1 {
+			return Job{ID: id, Loop: loop, State: Queued}, nil
+		}
 	}
-	id, err := res.LastInsertId()
-	if err != nil {
-		return Job{}, err
-	}
-	return Job{ID: id, Loop: loop, State: Queued}, nil
+	return Job{}, fmt.Errorf("no unused job id after %d tries", maxIDTries)
 }
 
-func (s *Store) SetJobState(id int64, state JobState) error {
+// newID is 12 lowercase hex characters from crypto/rand.
+func newID() string {
+	b := make([]byte, 6)
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
+}
+
+func (s *Store) SetJobState(id string, state JobState) error {
 	return s.updateJob(id, `UPDATE jobs SET state = ? WHERE id = ?`, state, id)
 }
 
@@ -134,12 +158,12 @@ type Start struct {
 }
 
 // StartJob marks a Job running in its worktree.
-func (s *Store) StartJob(id int64, st Start) error {
+func (s *Store) StartJob(id string, st Start) error {
 	return s.updateJob(id, `UPDATE jobs SET state = ?, work = ?, branch = ?, worktree = ?, base = ?, issue = ? WHERE id = ?`,
 		Running, st.Work, st.Branch, st.Worktree, st.Base, st.Issue, id)
 }
 
-func (s *Store) FinishJob(id int64, f Finish) error {
+func (s *Store) FinishJob(id string, f Finish) error {
 	return s.updateJob(id, `UPDATE jobs SET state = ?, question = ?, summary = ?, pr_url = ?, cost_usd = cost_usd + ?, error = ? WHERE id = ?`,
 		f.State, f.Question, f.Summary, f.PRURL, f.CostUSD, f.Error, id)
 }
@@ -150,13 +174,13 @@ func (s *Store) InterruptRunning(reason string) error {
 	return err
 }
 
-func (s *Store) updateJob(id int64, query string, args ...any) error {
+func (s *Store) updateJob(id string, query string, args ...any) error {
 	res, err := s.db.Exec(query, args...)
 	if err != nil {
 		return err
 	}
 	if n, err := res.RowsAffected(); err != nil || n == 0 {
-		return errors.Join(err, fmt.Errorf("job %d: %w", id, ErrNotFound))
+		return errors.Join(err, fmt.Errorf("job %s: %w", id, ErrNotFound))
 	}
 	return nil
 }
@@ -169,20 +193,21 @@ func scanJob(row interface{ Scan(...any) error }) (Job, error) {
 	return job, err
 }
 
-func (s *Store) Job(id int64) (Job, error) {
+func (s *Store) Job(id string) (Job, error) {
 	job, err := scanJob(s.db.QueryRow(`SELECT `+jobColumns+` FROM jobs WHERE id = ?`, id))
 	if errors.Is(err, sql.ErrNoRows) {
-		return Job{}, fmt.Errorf("job %d: %w", id, ErrNotFound)
+		return Job{}, fmt.Errorf("job %s: %w", id, ErrNotFound)
 	}
 	return job, err
 }
 
 // Jobs are every Job in progress, that is queued, running, Blocked or
-// manual, and the five newest that ended done, failed or exhausted, newest first.
+// manual, and the five newest that ended done, failed or exhausted, newest
+// first by creation.
 func (s *Store) Jobs() ([]Job, error) {
 	rows, err := s.db.Query(`SELECT `+jobColumns+` FROM jobs
-		WHERE state IN (?, ?, ?, ?) OR id IN (SELECT id FROM jobs WHERE state IN (?, ?, ?) ORDER BY id DESC LIMIT 5)
-		ORDER BY id DESC`, Queued, Running, Blocked, Manual, Done, Failed, Exhausted)
+		WHERE state IN (?, ?, ?, ?) OR seq IN (SELECT seq FROM jobs WHERE state IN (?, ?, ?) ORDER BY seq DESC LIMIT 5)
+		ORDER BY seq DESC`, Queued, Running, Blocked, Manual, Done, Failed, Exhausted)
 	if err != nil {
 		return nil, err
 	}

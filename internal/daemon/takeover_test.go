@@ -75,7 +75,7 @@ func TestHandbackRunsTheLoopAgainOnTheHumansCommits(t *testing.T) {
 	gittest.Run(t, started.Worktree, "add", "human.txt")
 	gittest.Run(t, started.Worktree, "commit", "-q", "-m", "human work")
 
-	if _, err := r.d.Handback(started.ID + 100); !errors.Is(err, store.ErrNotFound) {
+	if _, err := r.d.Handback("999999999999"); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("handback of unknown job: %v", err)
 	}
 	r.release()
@@ -146,16 +146,16 @@ func TestHandbackOfAnIssueJobStillAnswersTheIssue(t *testing.T) {
 	r.release()
 	r.d.Tick(t0)
 	r.d.Tick(t0.Add(10 * time.Minute))
-	if j := r.waitDone(t, 1); j.State != store.Blocked || j.Issue != 6 {
+	if j := r.waitDone(t, r.nth(t, 1)); j.State != store.Blocked || j.Issue != 6 {
 		t.Fatalf("job %+v", j)
 	}
-	if _, err := r.d.Takeover(1); err != nil {
+	if _, err := r.d.Takeover(r.nth(t, 1)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.d.Handback(1); err != nil {
+	if _, err := r.d.Handback(r.nth(t, 1)); err != nil {
 		t.Fatal(err)
 	}
-	if j := r.waitDone(t, 1); j.State != store.Done {
+	if j := r.waitDone(t, r.nth(t, 1)); j.State != store.Done {
 		t.Fatalf("after handback %+v", j)
 	}
 	said := r.issues.said(6)

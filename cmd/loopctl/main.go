@@ -116,7 +116,7 @@ func run(args []string) error {
 		if err != nil {
 			return err
 		}
-		fmt.Printf("job %d running on %s in %s\n", j.ID, j.Branch, j.Worktree)
+		fmt.Printf("job %s running on %s in %s\n", j.ID, j.Branch, j.Worktree)
 		return nil
 	case cmd == "requeue" && len(rest) == 2:
 		n, err := strconv.Atoi(rest[1])
@@ -127,51 +127,35 @@ func run(args []string) error {
 	case cmd == "stop" && len(rest) == 1:
 		return c.Stop(ctx, rest[0])
 	case cmd == "takeover" && len(rest) == 1:
-		id, err := jobID(rest[0])
+		j, err := c.Takeover(ctx, rest[0])
 		if err != nil {
 			return err
 		}
-		j, err := c.Takeover(ctx, id)
-		if err != nil {
-			return err
-		}
-		fmt.Printf("job %d is yours on %s; the loop stays off it until handback.\n  cd %s\n", j.ID, j.Branch, j.Worktree)
+		fmt.Printf("job %s is yours on %s; the loop stays off it until handback.\n  cd %s\n", j.ID, j.Branch, j.Worktree)
 		return nil
 	case cmd == "handback" && len(rest) == 1:
-		id, err := jobID(rest[0])
+		j, err := c.Handback(ctx, rest[0])
 		if err != nil {
 			return err
 		}
-		j, err := c.Handback(ctx, id)
-		if err != nil {
-			return err
-		}
-		fmt.Printf("job %d is back with the loop on %s\n", j.ID, j.Branch)
+		fmt.Printf("job %s is back with the loop on %s\n", j.ID, j.Branch)
 		return nil
 	case cmd == "logs" && len(rest) == 1:
-		id, err := jobID(rest[0])
-		if err != nil {
-			return err
-		}
-		log, err := c.Job(ctx, id)
+		log, err := c.Job(ctx, rest[0])
 		if err != nil {
 			return err
 		}
 		printLog(log)
 		return nil
 	case cmd == "logs" && len(rest) == 2 && rest[0] == "-f":
-		id, err := jobID(rest[1])
-		if err != nil {
-			return err
-		}
-		log, err := c.Job(ctx, id)
+		log, err := c.Job(ctx, rest[1])
 		if err != nil {
 			return err
 		}
 		printLog(log)
 		fmt.Println()
 		width := termWidth()
-		end, err := c.Follow(ctx, id, func(e feed.Event) {
+		end, err := c.Follow(ctx, log.Job.ID, func(e feed.Event) {
 			fmt.Println(cut(e.Time.Local().Format("15:04:05")+" "+e.Stage+"  "+printable(e.Text), width))
 		})
 		if err != nil {
@@ -192,14 +176,6 @@ func version() string {
 		return "(unknown)"
 	}
 	return info.Main.Version
-}
-
-func jobID(s string) (int64, error) {
-	id, err := strconv.ParseInt(s, 10, 64)
-	if err != nil {
-		return 0, fmt.Errorf("job id %q is not a number", s)
-	}
-	return id, nil
 }
 
 // install refuses until the stage skills that every job calls are installed,
@@ -346,7 +322,7 @@ func printLog(log daemon.JobLog) {
 			_, _ = fmt.Fprintf(w, "%s:\t%s\n", name, value)
 		}
 	}
-	row("job", fmt.Sprintf("%d of loop %s", j.ID, j.Loop))
+	row("job", fmt.Sprintf("%s of loop %s", j.ID, j.Loop))
 	row("state", string(j.State))
 	row("work", j.Work)
 	row("branch", j.Branch)
@@ -368,7 +344,7 @@ func printLog(log daemon.JobLog) {
 // first line of its summary.
 func printEnd(j store.Job) {
 	summary, _, _ := strings.Cut(j.Summary, "\n")
-	line := fmt.Sprintf("job %d %s", j.ID, j.State)
+	line := fmt.Sprintf("job %s %s", j.ID, j.State)
 	for _, detail := range []string{j.PRURL, j.Question, j.Error, summary} {
 		if detail != "" {
 			line += ": " + detail
@@ -442,7 +418,7 @@ func printList(loops []daemon.LoopStatus, jobs []store.Job, color bool) {
 		}
 		rows := [][]string{{"JOB", "STATE", "WORK", "RESULT"}}
 		for _, j := range b.jobs {
-			rows = append(rows, []string{strconv.FormatInt(j.ID, 10), string(j.State), cell(j.Work), cell(result(j))})
+			rows = append(rows, []string{j.ID, string(j.State), cell(j.Work), cell(result(j))})
 		}
 		widths := make([]int, len(rows[0]))
 		for _, row := range rows {

@@ -2,7 +2,9 @@ package store
 
 import (
 	"errors"
+	"fmt"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"testing"
 )
@@ -65,23 +67,26 @@ func TestNewJobIsQueuedAndIssuesAreClaimedPerLoop(t *testing.T) {
 
 func TestUnknownJob(t *testing.T) {
 	st := open(t, filepath.Join(t.TempDir(), "state.db"))
-	if _, err := st.Job(99); !errors.Is(err, ErrNotFound) {
+	if _, err := st.Job("999999999999"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("want ErrNotFound, got %v", err)
 	}
-	if err := st.SetJobState(99, Running); !errors.Is(err, ErrNotFound) {
+	if err := st.SetJobState("999999999999", Running); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("want ErrNotFound, got %v", err)
 	}
 }
 
-func TestJobsAreTheOnesInProgressAndTheFiveNewestEndedNewestFirst(t *testing.T) {
+func TestJobsOrderTheOnesInProgressAndTheFiveNewestEndedNewestFirstByCreation(t *testing.T) {
 	st := open(t, filepath.Join(t.TempDir(), "state.db"))
+	ids := []string{"00000000000a", "ffffffffffff", "000000000001", "777777777777", "aaaaaaaaaaaa", "100000000000", "fffffffffffe", "000000000002", "555555555555", "333333333333"}
+	next := 0
+	st.newID = func() string { next++; return ids[next-1] }
 	states := []JobState{Blocked, Failed, Exhausted, Manual, Done, Done, Failed, Done, Done, Running}
-	for _, state := range states {
+	for i, state := range states {
 		j, err := st.CreateJob("fix")
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := st.StartJob(j.ID, Start{Work: "issue 42 Fix login"}); err != nil {
+		if err := st.StartJob(j.ID, Start{Work: fmt.Sprintf("job %d", i+1)}); err != nil {
 			t.Fatal(err)
 		}
 		if err := st.FinishJob(j.ID, Finish{State: state, PRURL: "https://github.com/me/app/pull/1"}); err != nil {
@@ -92,15 +97,50 @@ func TestJobsAreTheOnesInProgressAndTheFiveNewestEndedNewestFirst(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	var ids []int64
+	var works []string
 	for _, j := range jobs {
-		ids = append(ids, j.ID)
+		works = append(works, j.Work)
 	}
-	if want := []int64{10, 9, 8, 7, 6, 5, 4, 1}; !slices.Equal(ids, want) {
-		t.Fatalf("jobs %v, want %v", ids, want)
+	if want := []string{"job 10", "job 9", "job 8", "job 7", "job 6", "job 5", "job 4", "job 1"}; !slices.Equal(works, want) {
+		t.Fatalf("jobs %v, want %v", works, want)
 	}
-	if j := jobs[1]; j.Loop != "fix" || j.State != Done || j.Work != "issue 42 Fix login" || j.PRURL != "https://github.com/me/app/pull/1" {
+	if j := jobs[1]; j.ID != "555555555555" || j.Loop != "fix" || j.State != Done || j.PRURL != "https://github.com/me/app/pull/1" {
 		t.Fatalf("job 9 read back as %+v", j)
+	}
+}
+
+func TestNewIDIsTwelveHexCharactersAndNeverOneAlreadyStored(t *testing.T) {
+	st := open(t, filepath.Join(t.TempDir(), "state.db"))
+	seen := map[string]bool{}
+	for range 50 {
+		j, err := st.CreateJob("fix")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !regexp.MustCompile(`^[0-9a-f]{12}$`).MatchString(j.ID) || seen[j.ID] {
+			t.Fatalf("new id %q: want 12 lowercase hex characters, never repeated", j.ID)
+		}
+		seen[j.ID] = true
+	}
+
+	stored, err := st.CreateJob("fix")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetJobState(stored.ID, Blocked); err != nil {
+		t.Fatal(err)
+	}
+	candidates := []string{stored.ID, stored.ID, "0123456789ab"}
+	st.newID = func() string { id := candidates[0]; candidates = candidates[1:]; return id }
+	fresh, err := st.CreateJob("docs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fresh.ID != "0123456789ab" {
+		t.Fatalf("new job got id %q, want the first id not stored", fresh.ID)
+	}
+	if got, _ := st.Job(stored.ID); got.Loop != "fix" || got.State != Blocked {
+		t.Fatalf("stored job changed to %+v", got)
 	}
 }
 
@@ -161,16 +201,16 @@ func TestInterruptFailsJobsLeftRunning(t *testing.T) {
 	if err := st.InterruptRunning("loopd restarted"); err != nil {
 		t.Fatal(err)
 	}
-	for id, want := range map[int64]JobState{running.ID: Failed, queued.ID: Failed, blocked.ID: Blocked} {
+	for id, want := range map[string]JobState{running.ID: Failed, queued.ID: Failed, blocked.ID: Blocked} {
 		job, err := st.Job(id)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if job.State != want {
-			t.Fatalf("job %d: state %s, want %s", id, job.State, want)
+			t.Fatalf("job %s: state %s, want %s", id, job.State, want)
 		}
 		if want == Failed && job.Error != "loopd restarted" {
-			t.Fatalf("job %d: error %q", id, job.Error)
+			t.Fatalf("job %s: error %q", id, job.Error)
 		}
 	}
 }
