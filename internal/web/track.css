@@ -84,7 +84,7 @@ main.wrap { padding-top: 32px; padding-bottom: 32px; display: flex; flex-directi
   flex-direction: column;
   gap: 24px;
 }
-.card.stale { --c: var(--muted); --accent: var(--muted); }
+.card.stale { --c: var(--muted); --accent: var(--muted); --success: var(--muted); --attention: var(--muted); --danger: var(--muted); }
 .card-top { display: flex; gap: 24px; align-items: flex-start; }
 .state-icon {
   flex: none;

@@ -305,7 +305,7 @@ function gateDetail(row) {
 function stagesTable() {
   const rows = view.track.stages.slice();
   const cur = current();
-  if (cur) rows.push({ stage: cur.stage, status: "running", start: cur.start, cost_usd: 0 });
+  if (cur && !view.stoppedAt) rows.push({ stage: cur.stage, status: "running", start: cur.start, cost_usd: 0 });
   const table = el("div", "panel stages",
     el("div", "stages-row stages-head", el("span", null, "Status"), el("span", null, "Stage"), el("span", "num started", "Started"), el("span", "num", "Took"), el("span", "num cost", "Cost"), el("span")));
   rows.forEach((row, i) => {
@@ -339,14 +339,15 @@ function render() {
   document.getElementById("loop").textContent = job.Loop;
   const open = new Set([...document.querySelectorAll(".stages details[open]")].map((d) => d.dataset.row));
   const log = document.querySelector(".log");
-  const atBottom = !log || log.scrollTop + log.clientHeight >= log.scrollHeight - 4;
+  const scrolled = log ? log.scrollTop : 0;
+  const atBottom = !log || scrolled + log.clientHeight >= log.scrollHeight - 4;
   const parts = [notice(), card(job), meta(job)];
   if (view.following && isLive()) parts.push(live());
   parts.push(stagesTable());
   page.replaceChildren(...parts.filter(Boolean));
   for (const d of document.querySelectorAll(".stages details")) d.open = open.has(d.dataset.row);
   const newLog = document.querySelector(".log");
-  if (newLog && atBottom) newLog.scrollTop = newLog.scrollHeight;
+  if (newLog) newLog.scrollTop = atBottom ? newLog.scrollHeight : scrolled;
 }
 
 // renderSoon draws the page once per frame however many events arrive in it.

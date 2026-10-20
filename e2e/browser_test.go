@@ -48,8 +48,8 @@ func TestTrackPageSaysLoopdStoppedWhenLoopdStops(t *testing.T) {
 		t.Fatal(err)
 	}
 	page.waitFor(t, `document.querySelector(".notice strong")?.textContent`, "loopd stopped")
-	if got := page.eval(t, `document.querySelector(".state-label").textContent`); got != "last seen running" {
-		t.Fatalf("card label %q once loopd stopped", got)
+	if got := page.eval(t, `document.querySelector(".state-label").textContent + " | " + document.querySelectorAll(".stages .s-running, .live").length`); got != "last seen running | 0" {
+		t.Fatalf("once loopd stopped: %q, want a stale card and no running row or live section", got)
 	}
 }
 
