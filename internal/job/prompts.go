@@ -119,6 +119,11 @@ func report(j Job, out Outcome, drill string, cost float64) string {
 			fmt.Fprintf(&b, "  - `%s` (%s)\n", c.Path, c.Kind)
 		}
 	}
+	guide := out.TestGuide
+	if guide == "" {
+		guide = "The job wrote no test guide."
+	}
+	fmt.Fprintf(&b, "\n### Try it\n\nRun `loopctl try %s`, then:\n\n%s\n", j.ID, guide)
 	if drill != "" {
 		fmt.Fprintf(&b, "\n### Drill: the plan and the choices it made on its own\n\n%s\n", drill)
 	}
