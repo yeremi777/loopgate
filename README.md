@@ -146,6 +146,7 @@ A timer loop replaces `github` with `timer: { every: 6h }` or `timer: { cron: "0
 | See a job | `loopctl logs [-f] <job>`: state, branch, PR, cost, progress. With `-f`, then each stage and verify gate as it starts and ends, one line per tool call and Claude message, then the outcome. Ctrl-C leaves the job running. The live lines last only while the job runs. |
 | Take a job back | `loopctl takeover <job>`, then work in the worktree it prints |
 | Give it back | Commit, then `loopctl handback <job>` |
+| Try a done job by hand | `loopctl try <job>`: copies the gitignored files that the checkout's `.worktreeinclude` names, such as `.env`, into the job's own worktree, then prints that worktree, the names of the files it copied, and the job's test guide: how to start the app and what to call or open. The PR's `Try it` section carries the same guide. |
 | Clean up an ended job | `loopctl rm <job>`: removes a done, failed, exhausted or blocked job's worktree, directory and entry in `loopctl list`, and prints its PR link. It deletes the job's local branch only while the branch points where the job ended; otherwise it keeps the branch and says so. The remote branch, the PR and the issue stay. |
 | End the running job | `loopctl stop <loop>` (the loop keeps its trigger) |
 | Silence a loop's trigger | `loopctl pause <loop>`, later `loopctl resume <loop>` |

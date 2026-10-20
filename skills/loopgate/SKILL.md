@@ -9,6 +9,7 @@ description: Hand work to the loopgate loop, check on it, or take it back into t
 2. Hand over a settled spec with `loopctl run <loop> --spec docs/specs/<slug>.md`. A spec that still has `## Open decisions` is a draft: run `drill` on it first. The spec need not be committed; loopd commits it on the job branch.
 3. Tell the user the job id and branch, and that the result arrives as a draft PR and a macOS notification. Show `loopctl logs <job>` for status.
 4. To take a job back, run `loopctl takeover <job>`. Continue in the worktree path that it prints, with the usual `implement` and `verify` flow. To return it, commit, then run `loopctl handback <job>`.
+5. To test a done job by hand before the user accepts its PR, run `loopctl try <job>`. Start the app from the worktree it prints, as the test guide it prints says.
 
 Rules:
 
