@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"time"
 
 	_ "modernc.org/sqlite"
 )
@@ -44,6 +45,10 @@ type Job struct {
 	EndCommit string
 	// TestGuide is how to run a done Job's work by hand, or empty.
 	TestGuide string
+	// Started is when the Job's worktree was ready, and Ended when it last
+	// ended; each is zero until then.
+	Started time.Time `json:",omitzero"`
+	Ended   time.Time `json:",omitzero"`
 }
 
 // Finish is how one run of a Job ended. CostUSD adds to the cost of earlier runs.
@@ -86,7 +91,9 @@ const jobsTable = `(
 	cost_usd   REAL NOT NULL DEFAULT 0,
 	error      TEXT NOT NULL DEFAULT '',
 	end_commit TEXT NOT NULL DEFAULT '',
-	test_guide TEXT NOT NULL DEFAULT ''
+	test_guide TEXT NOT NULL DEFAULT '',
+	started_ms INTEGER NOT NULL DEFAULT 0,
+	ended_ms   INTEGER NOT NULL DEFAULT 0
 )`
 
 const schema = `
@@ -116,6 +123,9 @@ func Open(path string) (*Store, error) {
 	}
 	if err := addTestGuide(db); err != nil {
 		return nil, errors.Join(fmt.Errorf("add the test guide column: %w", err), db.Close())
+	}
+	if err := addTimeColumns(db); err != nil {
+		return nil, errors.Join(fmt.Errorf("add job time columns: %w", err), db.Close())
 	}
 	return &Store{db: db, newID: newID}, nil
 }
@@ -187,6 +197,18 @@ func addTestGuide(db *sql.DB) error {
 	return err
 }
 
+// addTimeColumns gives a jobs table from before Job times its start and end
+// columns, which stay 0 for the Jobs already stored.
+func addTimeColumns(db *sql.DB) error {
+	var has bool
+	if err := db.QueryRow(`SELECT count(*) FROM pragma_table_info('jobs') WHERE name = 'started_ms'`).Scan(&has); err != nil || has {
+		return err
+	}
+	_, err := db.Exec(`ALTER TABLE jobs ADD COLUMN started_ms INTEGER NOT NULL DEFAULT 0;
+		ALTER TABLE jobs ADD COLUMN ended_ms INTEGER NOT NULL DEFAULT 0`)
+	return err
+}
+
 func (s *Store) Close() error { return s.db.Close() }
 
 func (s *Store) SetPaused(loop string, paused bool) error {
@@ -247,15 +269,16 @@ type Start struct {
 	Issue    int
 }
 
-// StartJob marks a Job running in its worktree.
+// StartJob marks a Job running in its worktree from now.
 func (s *Store) StartJob(id string, st Start) error {
-	return s.updateJob(id, `UPDATE jobs SET state = ?, work = ?, branch = ?, worktree = ?, base = ?, issue = ? WHERE id = ?`,
-		Running, st.Work, st.Branch, st.Worktree, st.Base, st.Issue, id)
+	return s.updateJob(id, `UPDATE jobs SET state = ?, work = ?, branch = ?, worktree = ?, base = ?, issue = ?, started_ms = ? WHERE id = ?`,
+		Running, st.Work, st.Branch, st.Worktree, st.Base, st.Issue, time.Now().UnixMilli(), id)
 }
 
+// FinishJob stores how a run of a Job ended, now.
 func (s *Store) FinishJob(id string, f Finish) error {
-	return s.updateJob(id, `UPDATE jobs SET state = ?, question = ?, summary = ?, pr_url = ?, cost_usd = cost_usd + ?, error = ?, end_commit = ?, test_guide = ? WHERE id = ?`,
-		f.State, f.Question, f.Summary, f.PRURL, f.CostUSD, f.Error, f.EndCommit, f.TestGuide, id)
+	return s.updateJob(id, `UPDATE jobs SET state = ?, question = ?, summary = ?, pr_url = ?, cost_usd = cost_usd + ?, error = ?, end_commit = ?, test_guide = ?, ended_ms = ? WHERE id = ?`,
+		f.State, f.Question, f.Summary, f.PRURL, f.CostUSD, f.Error, f.EndCommit, f.TestGuide, time.Now().UnixMilli(), id)
 }
 
 // InterruptRunning fails every queued or running Job, which a dead loopd left behind.
@@ -275,12 +298,22 @@ func (s *Store) updateJob(id string, query string, args ...any) error {
 	return nil
 }
 
-const jobColumns = `id, loop, state, work, branch, worktree, base, issue, question, summary, pr_url, cost_usd, error, end_commit, test_guide`
+const jobColumns = `id, loop, state, work, branch, worktree, base, issue, question, summary, pr_url, cost_usd, error, end_commit, test_guide, started_ms, ended_ms`
 
 func scanJob(row interface{ Scan(...any) error }) (Job, error) {
 	var job Job
-	err := row.Scan(&job.ID, &job.Loop, &job.State, &job.Work, &job.Branch, &job.Worktree, &job.Base, &job.Issue, &job.Question, &job.Summary, &job.PRURL, &job.CostUSD, &job.Error, &job.EndCommit, &job.TestGuide)
+	var started, ended int64
+	err := row.Scan(&job.ID, &job.Loop, &job.State, &job.Work, &job.Branch, &job.Worktree, &job.Base, &job.Issue, &job.Question, &job.Summary, &job.PRURL, &job.CostUSD, &job.Error, &job.EndCommit, &job.TestGuide, &started, &ended)
+	job.Started, job.Ended = fromMilli(started), fromMilli(ended)
 	return job, err
+}
+
+// fromMilli is the time of a stored Unix millisecond, or zero for 0.
+func fromMilli(ms int64) time.Time {
+	if ms == 0 {
+		return time.Time{}
+	}
+	return time.UnixMilli(ms)
 }
 
 func (s *Store) Job(id string) (Job, error) {
