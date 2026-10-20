@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"os"
 	"os/exec"
@@ -20,6 +21,7 @@ import (
 	"github.com/yeremi777/loopgate/internal/job"
 	"github.com/yeremi777/loopgate/internal/runner"
 	"github.com/yeremi777/loopgate/internal/store"
+	"github.com/yeremi777/loopgate/internal/web"
 )
 
 func main() {
@@ -81,6 +83,20 @@ func run() error {
 	}
 	defer d.Close()
 
+	pagesLn, pages, err := web.Listen(home)
+	if err != nil {
+		return err
+	}
+	go func() {
+		<-ctx.Done()
+		_ = pagesLn.Close()
+	}()
+	go func() {
+		if err := web.Serve(pagesLn, d, pages); !errors.Is(err, net.ErrClosed) {
+			log.Printf("loopd: tracking pages: %v", err)
+		}
+	}()
+
 	sock := daemon.Socket(home)
 	if err := os.Remove(sock); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
@@ -97,7 +113,7 @@ func run() error {
 		_ = ln.Close()
 	}()
 	go tick(ctx, d)
-	if err := ipc.Serve(ln, d); !errors.Is(err, net.ErrClosed) {
+	if err := ipc.Serve(ln, d, func(id string) string { return pages.URL("/jobs/" + id) }); !errors.Is(err, net.ErrClosed) {
 		return err
 	}
 	return nil

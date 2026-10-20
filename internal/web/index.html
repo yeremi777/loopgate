@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>loopgate</title>
+<link rel="stylesheet" href="/track.css?token={{.Token}}">
+</head>
+<body>
+<header class="bar"><div class="wrap"><span class="brand">loopgate</span></div></header>
+<main class="wrap">
+{{- range .Loops}}
+<section class="loop">
+  <div class="loop-head">
+    <h2>{{.Name}}</h2>
+    <span class="chip s-{{.State}}">{{.State}}</span>
+    {{- if .Trigger}}<span class="muted">{{.Trigger}}</span>{{end}}
+  </div>
+  {{- if .Checkout}}<p class="checkout mono muted">{{.Checkout}}</p>{{end}}
+  {{- if .Jobs}}
+  <div class="panel jobs">
+    <div class="jobs-row jobs-head"><span>Job</span><span>State</span><span>Work</span><span>Result</span></div>
+    {{- range .Jobs}}
+    <div class="jobs-row">
+      <a class="mono" href="/jobs/{{.ID}}?token={{$.Token}}">{{.ID}}</a>
+      <span><span class="chip s-{{.State}}">{{.State}}</span></span>
+      <span class="clip">{{.Work}}</span>
+      {{- if .PR}}<a class="clip" href="{{.PR}}" target="_blank" rel="noopener noreferrer">{{.PR}}</a>{{else}}<span class="clip muted">{{.Result}}</span>{{end}}
+    </div>
+    {{- end}}
+  </div>
+  {{- else}}
+  <p class="muted">no jobs</p>
+  {{- end}}
+</section>
+{{- else}}
+<p class="muted">no loops; add one with <code class="mono">loopctl add &lt;loop.yaml&gt;</code></p>
+{{- end}}
+</main>
+</body>
+</html>

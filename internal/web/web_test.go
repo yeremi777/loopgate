@@ -2,6 +2,8 @@ package web
 
 import (
 	"bytes"
+	"encoding/json"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -146,7 +148,23 @@ func listen(t *testing.T, home string) (net.Listener, Pages) {
 // serve answers the pages of a loopd with no Loops and no Jobs.
 func serve(t *testing.T) Pages {
 	t.Helper()
+	p, _ := serveJobs(t, nil)
+	return p
+}
+
+// pagesEnv is a loopd home whose store the test fills before it reads the pages.
+type pagesEnv struct {
+	home string
+	st   *store.Store
+}
+
+// serveJobs answers the pages of a loopd with the given Loop files, by name.
+func serveJobs(t *testing.T, loops map[string]string) (Pages, pagesEnv) {
+	t.Helper()
 	home := t.TempDir()
+	for name, loop := range loops {
+		write(t, filepath.Join(home, "loops", name+".yaml"), loop)
+	}
 	st, err := store.Open(filepath.Join(home, "state.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -159,7 +177,121 @@ func serve(t *testing.T) Pages {
 	t.Cleanup(d.Close)
 	ln, p := listen(t, home)
 	go func() { _ = Serve(ln, d, p) }()
-	return p
+	return p, pagesEnv{home: home, st: st}
+}
+
+// job stores a Job of loop that started in its directory and ended as end.
+func (e pagesEnv) job(t *testing.T, loop, work string, end store.Finish) store.Job {
+	t.Helper()
+	j, err := e.st.CreateJob(loop)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(e.home, "jobs", j.ID)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.st.StartJob(j.ID, store.Start{Work: work, Branch: "loop/" + loop + "-1-" + j.ID, Worktree: filepath.Join(dir, "worktree")}); err != nil {
+		t.Fatal(err)
+	}
+	if end.State != "" {
+		if err := e.st.FinishJob(j.ID, end); err != nil {
+			t.Fatal(err)
+		}
+	}
+	j, err = e.st.Job(j.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return j
+}
+
+func timerLoop(name string) string {
+	return "name: " + name + "\ncheckout: /src/app\ntrigger:\n  timer: { every: 1h }\ntask: tidy\nverify: \"true\"\nbounds: { max_iterations: 4, timeout: 1m }\n"
+}
+
+func TestIndexListsEachLoopWithItsJobsLinkingToTheirPages(t *testing.T) {
+	p, e := serveJobs(t, map[string]string{"deps": timerLoop("deps"), "idle": timerLoop("idle")})
+	done := e.job(t, "deps", "task tidy", store.Finish{State: store.Done, PRURL: "https://github.com/me/app/pull/9"})
+	blocked := e.job(t, "deps", "task <b>bold</b>", store.Finish{State: store.Blocked, Question: "<script>alert(1)</script>"})
+	orphan := e.job(t, "gone", "task old", store.Finish{State: store.Failed, Error: "fetch failed"})
+
+	res := get(t, p.URL("/"), "")
+	body := readBody(t, res)
+	if res.StatusCode != http.StatusOK || !strings.HasPrefix(res.Header.Get("Content-Type"), "text/html") {
+		t.Fatalf("GET /: %d %s", res.StatusCode, res.Header.Get("Content-Type"))
+	}
+	for _, want := range []string{
+		">deps<", ">idle<", ">gone<", "removed", "no jobs", "timer", "/src/app",
+		`href="/jobs/` + done.ID + `?token=` + p.Token + `"`, ">" + done.ID + "<", "https://github.com/me/app/pull/9",
+		`href="/jobs/` + blocked.ID + `?token=` + p.Token + `"`, "&lt;b&gt;bold&lt;/b&gt;", "&lt;script&gt;alert(1)&lt;/script&gt;",
+		`href="/jobs/` + orphan.ID + `?token=` + p.Token + `"`, "fetch failed",
+		`href="/track.css?token=` + p.Token + `"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("index lacks %q", want)
+		}
+	}
+	if strings.Contains(body, "<script>alert") || strings.Contains(body, "<b>bold") {
+		t.Fatalf("index put a job's text in as markup:\n%s", body)
+	}
+	if i, j := strings.Index(body, ">deps<"), strings.Index(body, ">gone<"); i > j {
+		t.Fatalf("loops not sorted by name:\n%s", body)
+	}
+}
+
+func TestJobPageIsTheShellThatLoadsTheScriptAndStyleWithTheToken(t *testing.T) {
+	p, e := serveJobs(t, nil)
+	j := e.job(t, "deps", "task tidy", store.Finish{})
+	res := get(t, p.URL("/jobs/"+strings.ToUpper(j.ID[:5])), "")
+	body := readBody(t, res)
+	if res.StatusCode != http.StatusOK || !strings.HasPrefix(res.Header.Get("Content-Type"), "text/html") {
+		t.Fatalf("job page: %d %s", res.StatusCode, res.Header.Get("Content-Type"))
+	}
+	for _, want := range []string{`data-job="` + j.ID + `"`, `src="/track.js?token=` + p.Token + `"`, `href="/track.css?token=` + p.Token + `"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("job page lacks %q:\n%s", want, body)
+		}
+	}
+	for path, kind := range map[string]string{"/track.js": "javascript", "/track.css": "text/css"} {
+		res := get(t, p.URL(path), "")
+		if res.StatusCode != http.StatusOK || !strings.Contains(res.Header.Get("Content-Type"), kind) || len(readBody(t, res)) == 0 {
+			t.Errorf("%s: %d %s", path, res.StatusCode, res.Header.Get("Content-Type"))
+		}
+	}
+	if code := get(t, p.URL("/jobs/ffffffffffff"), "").StatusCode; code != http.StatusNotFound {
+		t.Fatalf("page of no job: %d, want 404", code)
+	}
+}
+
+func TestJobDataHasTheJobItsTimesItsLoopsBoundAndItsStages(t *testing.T) {
+	p, e := serveJobs(t, map[string]string{"deps": timerLoop("deps")})
+	j := e.job(t, "deps", "task tidy", store.Finish{State: store.Exhausted, Summary: "4 implement runs did not pass the checks"})
+	write(t, filepath.Join(e.home, "jobs", j.ID, "stages.jsonl"),
+		`{"stage":"implement 1","start":"2026-10-20T10:00:00Z","end":"2026-10-20T10:03:00Z","status":"done","cost_usd":0.5}`+"\n")
+	res := get(t, p.URL("/jobs/"+j.ID+"/data"), "")
+	var tr daemon.Track
+	if err := json.Unmarshal([]byte(readBody(t, res)), &tr); err != nil || res.StatusCode != http.StatusOK {
+		t.Fatalf("data: %d, %v", res.StatusCode, err)
+	}
+	if tr.Job.ID != j.ID || tr.Job.State != store.Exhausted || tr.Job.Started.IsZero() || tr.Job.Ended.IsZero() || tr.MaxIterations != 4 {
+		t.Fatalf("data %+v", tr)
+	}
+	if len(tr.Stages) != 1 || tr.Stages[0].Stage != "implement 1" || tr.Stages[0].CostUSD != 0.5 || tr.Stages[0].End.Sub(tr.Stages[0].Start) != 3*time.Minute {
+		t.Fatalf("stages %+v", tr.Stages)
+	}
+}
+
+func TestEventsOfAnEndedJobEndAtOnceWithTheJob(t *testing.T) {
+	p, e := serveJobs(t, nil)
+	j := e.job(t, "deps", "task tidy", store.Finish{State: store.Done, PRURL: "https://github.com/me/app/pull/9"})
+	body := readBody(t, get(t, p.URL("/jobs/"+j.ID+"/events"), ""))
+	var line struct {
+		Job *store.Job `json:"job"`
+	}
+	if err := json.Unmarshal([]byte(body), &line); err != nil || line.Job == nil || line.Job.State != store.Done {
+		t.Fatalf("events of a done job: %q, %v", body, err)
+	}
 }
 
 func get(t *testing.T, url, host string) *http.Response {
@@ -182,6 +314,25 @@ func do(t *testing.T, req *http.Request) *http.Response {
 	}
 	t.Cleanup(func() { _ = res.Body.Close() })
 	return res
+}
+
+func readBody(t *testing.T, res *http.Response) string {
+	t.Helper()
+	data, err := io.ReadAll(res.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
+func write(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func readFile(t *testing.T, path string) string {

@@ -1,8 +1,6 @@
 package daemon
 
 import (
-	"errors"
-
 	"github.com/yeremi777/loopgate/internal/job"
 	"github.com/yeremi777/loopgate/internal/store"
 )
@@ -16,4 +14,21 @@ type Track struct {
 }
 
 // Track is the tracking page's view of Job id.
-func (d *Daemon) Track(id string) (Track, error) { return Track{}, errors.New("not implemented") }
+func (d *Daemon) Track(id string) (Track, error) {
+	j, err := d.st.Job(id)
+	if err != nil {
+		return Track{}, err
+	}
+	stages, err := job.ReadStages(d.dirOf(j))
+	if err != nil {
+		return Track{}, err
+	}
+	d.mu.Lock()
+	loop, ok := d.loops[j.Loop]
+	d.mu.Unlock()
+	tr := Track{Job: j, Stages: stages}
+	if ok {
+		tr.MaxIterations = loop.Bounds.MaxIterations
+	}
+	return tr, nil
+}

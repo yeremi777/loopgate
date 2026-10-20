@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime/debug"
 	"slices"
@@ -36,6 +37,7 @@ usage:
   loopctl run <loop> [--spec <path>]   start a job now on --spec, or a timer loop's own task or spec
   loopctl stop <loop>                  end the loop's running job; the loop stays
   loopctl logs [-f] <job>              show a job's state, branch, PR, cost and progress; -f then follows the running job until it ends, and Ctrl-C leaves it running
+  loopctl track <job>                  open the job's live tracking page in a browser tab
   loopctl takeover <job>               take a job, stopping it if it runs, and hand its worktree to you
   loopctl handback <job>               give a taken-over job back to its loop
   loopctl try <job>                    copy the checkout's .worktreeinclude files into a done job's worktree, then print its path and test guide
@@ -142,6 +144,16 @@ func run(args []string) error {
 			return err
 		}
 		fmt.Printf("job %s is back with the loop on %s\n", j.ID, j.Branch)
+		return nil
+	case cmd == "track" && len(rest) == 1:
+		page, err := c.Page(ctx, rest[0])
+		if err != nil {
+			return err
+		}
+		fmt.Printf("tracking job %s at %s\n", page.ID, page.URL)
+		if out, err := exec.Command("open", page.URL).CombinedOutput(); err != nil {
+			fmt.Printf("open failed (%v: %s); open %s in a browser\n", err, strings.TrimSpace(string(out)), page.URL)
+		}
 		return nil
 	case cmd == "rm" && len(rest) == 1:
 		removed, err := c.RemoveJob(ctx, rest[0])

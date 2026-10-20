@@ -2,21 +2,28 @@
 package web
 
 import (
+	"bytes"
 	"crypto/rand"
 	"crypto/subtle"
+	"embed"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"html/template"
 	"log"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/yeremi777/loopgate/internal/daemon"
+	"github.com/yeremi777/loopgate/internal/ipc"
+	"github.com/yeremi777/loopgate/internal/store"
 )
 
 // Pages is where loopd serves the tracking pages: a port on 127.0.0.1, and
@@ -141,10 +148,152 @@ func guard(p Pages, next http.Handler) http.Handler {
 	})
 }
 
+//go:embed index.html job.html track.css track.js
+var files embed.FS
+
+var pages = template.Must(template.ParseFS(files, "index.html", "job.html"))
+
 func routes(d *daemon.Daemon, p Pages) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
+		loops, err := d.List()
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		jobs, err := d.Jobs()
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		render(w, "index.html", indexPage{Token: p.Token, Loops: blocks(loops, jobs)})
 	})
+	mux.HandleFunc("GET /jobs/{id}", func(w http.ResponseWriter, r *http.Request) {
+		id, err := d.Resolve(r.PathValue("id"))
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		render(w, "job.html", jobPage{Token: p.Token, ID: id})
+	})
+	mux.HandleFunc("GET /jobs/{id}/data", func(w http.ResponseWriter, r *http.Request) {
+		id, err := d.Resolve(r.PathValue("id"))
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		tr, err := d.Track(id)
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(tr)
+	})
+	mux.Handle("GET /jobs/{id}/events", ipc.Events(d))
+	mux.Handle("GET /track.css", http.FileServerFS(files))
+	mux.Handle("GET /track.js", http.FileServerFS(files))
 	return mux
+}
+
+func render(w http.ResponseWriter, name string, data any) {
+	var page bytes.Buffer
+	if err := pages.ExecuteTemplate(&page, name, data); err != nil {
+		fail(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = page.WriteTo(w)
+}
+
+func fail(w http.ResponseWriter, err error) {
+	code := http.StatusInternalServerError
+	if errors.Is(err, store.ErrNotFound) {
+		code = http.StatusNotFound
+	}
+	http.Error(w, err.Error(), code)
+}
+
+type jobPage struct {
+	Token string
+	ID    string
+}
+
+type indexPage struct {
+	Token string
+	Loops []*loopBlock
+}
+
+// loopBlock is one Loop of the index with its Jobs, newest first.
+type loopBlock struct {
+	Name, State, Trigger, Checkout string
+	Jobs                           []jobRow
+}
+
+type jobRow struct {
+	ID, State, Work, Result, PR string
+}
+
+// blocks groups jobs under their Loops, sorted by name, as loopctl list
+// does; a Job whose Loop was removed gets a block of its own.
+func blocks(loops []daemon.LoopStatus, jobs []store.Job) []*loopBlock {
+	var out []*loopBlock
+	byName := map[string]*loopBlock{}
+	for _, l := range loops {
+		b := &loopBlock{Name: l.Name, State: "active", Trigger: l.Trigger, Checkout: tilde(l.Checkout)}
+		if l.Paused {
+			b.State = "paused"
+		}
+		out = append(out, b)
+		byName[l.Name] = b
+	}
+	for _, j := range jobs {
+		b, ok := byName[j.Loop]
+		if !ok {
+			b = &loopBlock{Name: j.Loop, State: "removed"}
+			out = append(out, b)
+			byName[j.Loop] = b
+		}
+		row := jobRow{ID: j.ID, State: string(j.State), Work: firstLine(j.Work), Result: firstLine(result(j))}
+		if j.State == store.Done {
+			row.PR = j.PRURL
+		}
+		b.Jobs = append(b.Jobs, row)
+	}
+	slices.SortFunc(out, func(a, b *loopBlock) int { return strings.Compare(a.Name, b.Name) })
+	return out
+}
+
+// result is how a Job stands: its PR, question, error or summary.
+func result(j store.Job) string {
+	switch j.State {
+	case store.Done:
+		return j.PRURL
+	case store.Blocked:
+		return j.Question
+	case store.Failed:
+		return j.Error
+	case store.Exhausted:
+		return j.Summary
+	case store.Manual:
+		return "taken over"
+	}
+	return ""
+}
+
+func firstLine(s string) string {
+	line, _, _ := strings.Cut(s, "\n")
+	return line
+}
+
+// tilde writes path with the user's home as ~.
+func tilde(path string) string {
+	user, err := os.UserHomeDir()
+	if err != nil {
+		return path
+	}
+	if rel, ok := strings.CutPrefix(path, filepath.Clean(user)+"/"); ok {
+		return "~/" + rel
+	}
+	return path
 }
