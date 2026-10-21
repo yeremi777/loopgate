@@ -256,7 +256,7 @@ func blocks(loops []daemon.LoopStatus, jobs []store.Job) []*loopBlock {
 	var out []*loopBlock
 	byName := map[string]*loopBlock{}
 	for _, l := range loops {
-		b := &loopBlock{Name: l.Name, State: "active", Trigger: l.Trigger, Checkout: tilde(l.Checkout)}
+		b := &loopBlock{Name: l.Name, State: "active", Trigger: l.Trigger, Checkout: daemon.Tilde(l.Checkout)}
 		if l.Paused {
 			b.State = "paused"
 		}
@@ -301,16 +301,4 @@ func result(j store.Job) string {
 func firstLine(s string) string {
 	line, _, _ := strings.Cut(s, "\n")
 	return line
-}
-
-// tilde writes path with the user's home as ~.
-func tilde(path string) string {
-	user, err := os.UserHomeDir()
-	if err != nil {
-		return path
-	}
-	if rel, ok := strings.CutPrefix(path, filepath.Clean(user)+"/"); ok {
-		return "~/" + rel
-	}
-	return path
 }
