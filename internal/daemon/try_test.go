@@ -35,7 +35,7 @@ func TestTryCopiesTheIncludedIgnoredFilesIntoTheDoneJobsOwnWorktree(t *testing.T
 	if want := []string{".env", "config/local.json"}; !slices.Equal(tried.Copied, want) {
 		t.Fatalf("copied %q, want %q", tried.Copied, want)
 	}
-	if tried.Job.ID != j.ID || tried.Job.Worktree != j.Worktree || tried.Job.TestGuide != "go run ./cmd/app, then GET /ok" {
+	if tried.Job.ID != j.ID || tried.Job.Worktree != j.Worktree || tried.Job.TestGuide != "go run ./cmd/app, then GET /ok" || tried.Checkout != r.checkout {
 		t.Fatalf("tried job %+v", tried.Job)
 	}
 	if got := readFile(t, filepath.Join(j.Worktree, "config/local.json")); got != `{"db":"x"}` {

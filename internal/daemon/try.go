@@ -16,11 +16,12 @@ import (
 // ErrNotDone refuses try of a Job that did not end done.
 var ErrNotDone = errors.New("only a done job can be tried")
 
-// Tried is a done Job readied to run by hand, and the paths, relative to its
-// worktree, of the files copied into it.
+// Tried is a done Job readied to run by hand, its Loop's checkout, and the
+// paths, relative to its worktree, of the files copied into it.
 type Tried struct {
-	Job    store.Job `json:"job"`
-	Copied []string  `json:"copied"`
+	Job      store.Job `json:"job"`
+	Checkout string    `json:"checkout"`
+	Copied   []string  `json:"copied"`
 }
 
 // Try copies into a done Job's own worktree each regular file of its Loop's
@@ -75,7 +76,7 @@ func (d *Daemon) Try(id string) (Tried, error) {
 			return Tried{}, fmt.Errorf("copy %s into job %s's worktree: %w", f, id, err)
 		}
 	}
-	return Tried{Job: j, Copied: files}, nil
+	return Tried{Job: j, Checkout: loop.Checkout, Copied: files}, nil
 }
 
 // included is the regular files of checkout, relative to it, that its

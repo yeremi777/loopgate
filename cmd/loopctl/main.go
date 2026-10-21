@@ -367,7 +367,7 @@ func printLog(log daemon.JobLog) {
 // and its Test guide.
 func printTry(t daemon.Tried) {
 	fmt.Println("worktree: " + printable(daemon.Tilde(t.Job.Worktree)))
-	copied := "nothing; list the gitignored files the app needs, such as .env, in .worktreeinclude"
+	copied := "nothing; list the gitignored files the app needs, such as .env, in " + daemon.Tilde(filepath.Join(t.Checkout, ".worktreeinclude"))
 	if len(t.Copied) > 0 {
 		copied = strings.Join(t.Copied, ", ")
 	}
@@ -376,7 +376,7 @@ func printTry(t daemon.Tried) {
 	if guide == "" {
 		guide = "The job wrote no test guide."
 	}
-	fmt.Println()
+	fmt.Println("\ntest guide:")
 	for line := range strings.Lines(guide) {
 		fmt.Println(printable(strings.TrimSuffix(line, "\n")))
 	}

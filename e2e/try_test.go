@@ -42,9 +42,13 @@ func TestTryCopiesTheIncludedFilesAndPrintsTheTestGuide(t *testing.T) {
 		return string(out)
 	}
 	worktree := "worktree: ~/" + filepath.Base(e.home) + "/jobs/" + id + "/worktree\n"
-	guide := "\nStart it with make run; it needs DATABASE_URL.\n�[2JGET /ok answers ok.\n"
+	include, ok := strings.CutPrefix(filepath.Join(checkout, ".worktreeinclude"), filepath.Dir(e.home)+"/")
+	if !ok {
+		t.Fatalf("checkout %s is not under %s", checkout, filepath.Dir(e.home))
+	}
+	guide := "\ntest guide:\nStart it with make run; it needs DATABASE_URL.\n�[2JGET /ok answers ok.\n"
 
-	if out, want := try(), worktree+"copied: nothing; list the gitignored files the app needs, such as .env, in .worktreeinclude\n"+guide; out != want {
+	if out, want := try(), worktree+"copied: nothing; list the gitignored files the app needs, such as .env, in ~/"+include+"\n"+guide; out != want {
 		t.Fatalf("try without .worktreeinclude:\n%q\nwant\n%q", out, want)
 	}
 
