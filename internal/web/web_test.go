@@ -79,6 +79,29 @@ func TestTrackTokenIsRandomKeptPrivateAndReused(t *testing.T) {
 	}
 }
 
+func TestTrackTokenIsRenewedWhenTheKeptPortIsTakenAndKeptWhenItBinds(t *testing.T) {
+	home := t.TempDir()
+	file := filepath.Join(home, "track.token")
+	_, first := listen(t, home)
+	moved, p := listen(t, home)
+	if p.Port == first.Port || p.Token == first.Token {
+		t.Fatalf("taken port %d moved to %+v; want a new port and a new token", first.Port, p)
+	}
+	info, err := os.Stat(file)
+	if err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("token file %v, %v; want mode 0600", info, err)
+	}
+	if kept := readFile(t, file); strings.TrimSpace(kept) != p.Token || !regexp.MustCompile(`^[0-9a-f]{64}$`).MatchString(p.Token) {
+		t.Fatalf("kept token %q, pages' token %q; want the new 256-bit token kept", kept, p.Token)
+	}
+	if err := moved.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, again := listen(t, home); again.Port != p.Port || again.Token != p.Token {
+		t.Fatalf("start on the free kept port has %+v, want the kept %+v", again, p)
+	}
+}
+
 func TestTrackTokenIsRequiredOnEveryRequest(t *testing.T) {
 	p := serve(t)
 	base := "http://127.0.0.1:" + strconv.Itoa(p.Port)

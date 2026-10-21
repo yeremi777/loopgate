@@ -15,7 +15,7 @@
 
 ## Acceptance criteria
 - AC-1: `loopd` serves the tracking pages on `127.0.0.1` at a port it picks free on its first start and keeps in `$LOOPD_HOME`; a later start reuses that port, and when it is taken `loopd` picks a free one, keeps it, logs it, and starts anyway.
-- AC-2: `loopd` creates a token of at least 128 random bits on its first start and keeps it in `$LOOPD_HOME` with mode `0600`; every request without that token, or with a `Host` other than `127.0.0.1:<port>`, gets 403; the listener answers only `GET`, and its responses carry a Content-Security-Policy that lets a page load and connect only to the listener.
+- AC-2: `loopd` creates a token of at least 128 random bits on its first start and keeps it in `$LOOPD_HOME` with mode `0600`; a later start that binds the kept port keeps the token, and a start that picks a new port writes a new token with it, so a URL to the old port carries a token that no longer opens a page; every request without that token, or with a `Host` other than `127.0.0.1:<port>`, gets 403; the listener answers only `GET`, and its responses carry a Content-Security-Policy that lets a page load and connect only to the listener.
 - AC-3: `loopctl track <job>` resolves the Job, prints `tracking job <id> at <url>`, opens the URL with `open` in a new tab, and exits 0; when `open` fails it prints the URL and exits 0; a second `loopctl track` on another Job opens that Job's page on the same port.
 - AC-4: `/` lists each Loop with its Jobs as `loopctl list` does, each Job linking to its page at `/jobs/<id>`.
 - AC-5: `loopd` stores a Job's start and end time, and a Job's page has them and its Loop's `max_iterations`.
@@ -36,6 +36,7 @@
 - `go test -race ./...`
 - `golangci-lint run`
 - `go test ./... -run 'TestTrackPort|TestTrackToken|TestTrackHost|TestTrackOnlyGet|TestTrackCSP'` (AC-1, AC-2)
+- `go test ./internal/web/ -run 'TestTrackTokenIsRenewedWhenTheKeptPortIsTakenAndKeptWhenItBinds'` (AC-2)
 - `go test ./internal/store/ -run 'TestJobTimes'` (AC-5)
 - `go test ./internal/job/ -run 'TestStageRows'` (AC-6)
 - `go test ./e2e/ -run 'TestTrack|TestHelp'` (AC-3, AC-4, AC-11, AC-12, AC-15)

@@ -40,14 +40,12 @@ func (p Pages) URL(path string) string {
 
 func (p Pages) host() string { return "127.0.0.1:" + strconv.Itoa(p.Port) }
 
-// Listen opens the pages' listener on the port kept in home, or on a free
-// port that it keeps when that one is taken or none is kept yet, with the
-// token kept in home, which it makes on the first start.
+// Listen opens the pages' listener on the port kept in home with the token
+// kept there, or, when that port is taken or none is kept yet, on a free port
+// that it keeps with a new token, so a page left open on the old port never
+// sends the token to whatever listens there now.
 func Listen(home string) (net.Listener, Pages, error) {
-	token, err := keptToken(filepath.Join(home, "track.token"))
-	if err != nil {
-		return nil, Pages{}, err
-	}
+	tokenFile := filepath.Join(home, "track.token")
 	portFile := filepath.Join(home, "track.port")
 	kept, err := keptPort(portFile)
 	if err != nil {
@@ -56,12 +54,20 @@ func Listen(home string) (net.Listener, Pages, error) {
 	if kept != 0 {
 		ln, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(kept)))
 		if err == nil {
+			token, err := keptToken(tokenFile)
+			if err != nil {
+				return nil, Pages{}, errors.Join(err, ln.Close())
+			}
 			return ln, Pages{Port: kept, Token: token}, nil
 		}
 	}
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return nil, Pages{}, err
+	}
+	token, err := newToken(tokenFile)
+	if err != nil {
+		return nil, Pages{}, errors.Join(err, ln.Close())
 	}
 	p := Pages{Port: ln.Addr().(*net.TCPAddr).Port, Token: token}
 	if err := os.WriteFile(portFile, []byte(strconv.Itoa(p.Port)+"\n"), 0o600); err != nil {
@@ -89,22 +95,31 @@ func keptPort(file string) (int, error) {
 	return port, nil
 }
 
-// keptToken is the token in file, made from 256 random bits on first use.
+// keptToken is the token in file, or a new one when file holds none.
 func keptToken(file string) (string, error) {
 	data, err := os.ReadFile(file)
-	if err == nil {
-		token := strings.TrimSpace(string(data))
-		if len(token) < 32 {
-			return "", fmt.Errorf("%s holds a token shorter than 128 bits; remove it to make a new one", file)
-		}
-		return token, nil
+	if errors.Is(err, os.ErrNotExist) {
+		return newToken(file)
 	}
-	if !errors.Is(err, os.ErrNotExist) {
+	if err != nil {
 		return "", err
 	}
+	token := strings.TrimSpace(string(data))
+	if len(token) < 32 {
+		return "", fmt.Errorf("%s holds a token shorter than 128 bits; remove it to make a new one", file)
+	}
+	return token, nil
+}
+
+// newToken replaces file with a token made from 256 random bits, readable
+// only by its owner.
+func newToken(file string) (string, error) {
 	b := make([]byte, 32)
 	_, _ = rand.Read(b)
 	token := hex.EncodeToString(b)
+	if err := os.Remove(file); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return "", err
+	}
 	f, err := os.OpenFile(file, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return "", err
