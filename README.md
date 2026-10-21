@@ -153,7 +153,7 @@ A timer loop replaces `github` with `timer: { every: 6h }` or `timer: { cron: "0
 
 One job runs at a time. A job ends `done` with a draft PR, `blocked` with a question, `exhausted` when its bounds run out, `failed`, or `manual` after a takeover. An ended job keeps its worktree until `loopctl rm <job>`. A job from an issue answers on the issue: the PR link, or the blocking question with the `needs-drill` label.
 
-The draft PR opens with loopgate's report: the commit that passed the gate and the review, the changed tests, the cost, drill's plan, and the final implement run's summary, which lists its Flags: choices the Job made on its own, for you to accept or reject.
+The draft PR opens with loopgate's report: the commit that passed the gate and the review, the changed tests, the cost, a Try it section with the job's test guide, drill's plan, and the final implement run's summary, which lists its Flags: choices the Job made on its own, for you to accept or reject.
 
 ### From a Claude Code session
 

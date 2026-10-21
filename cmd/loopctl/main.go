@@ -38,7 +38,7 @@ usage:
   loopctl logs [-f] <job>              show a job's state, branch, PR, cost and progress; -f then follows the running job until it ends, and Ctrl-C leaves it running
   loopctl takeover <job>               take a job, stopping it if it runs, and hand its worktree to you
   loopctl handback <job>               give a taken-over job back to its loop
-  loopctl try <job>                    copy the gitignored files that .worktreeinclude names into a done job's worktree, and print it and the job's test guide
+  loopctl try <job>                    copy the checkout's .worktreeinclude files into a done job's worktree, then print its path and test guide
   loopctl rm <job>                     remove an ended job with its worktree, and its branch unless it has commits the job did not end at
   loopctl requeue <loop> <issue>       let a github loop run an issue again
   loopctl install                      start loopd now and at login, and add the Claude Code skill
