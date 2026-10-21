@@ -19,7 +19,7 @@ Every done Job carries a Test guide, and `loopctl try <job>` readies the Job's o
 - AC-4: `loopctl try <job>` on a done Job copies each regular file of the Loop's checkout that the checkout's `.worktreeinclude` matches, in gitignore syntax, and that git ignores, to the same relative path in the Job's worktree, creating parent directories and overwriting an earlier copy.
 - AC-5: `try` prints `worktree: <path>` with the home written as `~`, then `copied: <path>, <path>` or, when nothing was copied, `copied: nothing; list the gitignored files the app needs, such as .env, in .worktreeinclude`, then the Test guide or `The job wrote no test guide.`, with control characters replaced.
 - AC-6: After `try`, the Job's worktree has the same commit and `git status --porcelain` prints nothing.
-- AC-7: `try` refuses a Job that is not done, naming its state, and for a Blocked, failed or exhausted Job names `loopctl takeover <id>`; it fails naming the Loop when the Job's Loop was removed, and naming the path when the Job's worktree is gone.
+- AC-7: `try` refuses a Job that is not done, naming its state, and for a Blocked, failed or exhausted Job names `loopctl takeover <id>`; it fails naming the Loop and `loopctl add <loop.yaml>` when the Job's Loop was removed, and naming the path, with the home written as `~`, and `loopctl rm <id>` when the Job's worktree is gone.
 - AC-8: `takeover` of a done Job fails naming `loopctl try <id>`.
 - AC-9: `loopctl help` has a `loopctl try <job>` line, the README's commands table has a row for trying a done Job that names `.worktreeinclude`, `docs/specs/loopgate.md` AC-5 lists `try <job>`, and the loopgate skill names `loopctl try <job>` for testing a done Job.
 

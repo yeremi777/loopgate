@@ -35,7 +35,7 @@ func (d *Daemon) Try(id string) (Tried, error) {
 	switch j.State {
 	case store.Done:
 	case store.Blocked, store.Failed, store.Exhausted:
-		return Tried{}, fmt.Errorf("job %s is %s: %w; to work in it, run loopctl takeover %s", id, j.State, ErrNotDone, id)
+		return Tried{}, fmt.Errorf("job %s is %s: %w; to work in it, run `loopctl takeover %s`", id, j.State, ErrNotDone, id)
 	default:
 		return Tried{}, fmt.Errorf("job %s is %s: %w", id, j.State, ErrNotDone)
 	}
@@ -43,10 +43,10 @@ func (d *Daemon) Try(id string) (Tried, error) {
 	loop, ok := d.loops[j.Loop]
 	d.mu.Unlock()
 	if !ok {
-		return Tried{}, fmt.Errorf("job %s: loop %s: %w", id, j.Loop, ErrUnknownLoop)
+		return Tried{}, fmt.Errorf("job %s: loop %s: %w; to try the job, add the loop again with `loopctl add <loop.yaml>`", id, j.Loop, ErrUnknownLoop)
 	}
-	if _, err := os.Stat(j.Worktree); err != nil {
-		return Tried{}, fmt.Errorf("job %s: its worktree %s is gone: %w", id, j.Worktree, err)
+	if _, err := os.Stat(j.Worktree); errors.Is(err, os.ErrNotExist) {
+		return Tried{}, fmt.Errorf("job %s: its worktree %s is gone; to remove the job, run `loopctl rm %s`", id, Tilde(j.Worktree), id)
 	}
 	files, err := d.included(loop.Checkout)
 	if err != nil {
@@ -63,7 +63,7 @@ func (d *Daemon) Try(id string) (Tried, error) {
 		}
 	}
 	if tracked != nil {
-		return Tried{}, fmt.Errorf("job %s: its branch does not ignore %s, so a copy could be committed; nothing was copied", id, strings.Join(tracked, ", "))
+		return Tried{}, fmt.Errorf("job %s: its branch %s does not ignore %s, so a copy could be committed, and nothing was copied; to copy these files, ignore them in that branch's .gitignore", id, j.Branch, strings.Join(tracked, ", "))
 	}
 	root, err := os.OpenRoot(j.Worktree)
 	if err != nil {

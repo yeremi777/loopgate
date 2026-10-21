@@ -61,8 +61,9 @@ func TestTakeoverDoneNamesTry(t *testing.T) {
 	r.release()
 	started, _ := r.d.Run("deps", "")
 	r.waitDone(t, started.ID)
-	if _, err := r.d.Takeover(started.ID); !errors.Is(err, ErrNotTakeable) || !strings.Contains(err.Error(), "loopctl try "+started.ID) {
-		t.Fatalf("want ErrNotTakeable naming loopctl try %s, got %v", started.ID, err)
+	want := "job " + started.ID + " is done: this job cannot be taken over; to run it by hand, run `loopctl try " + started.ID + "`"
+	if _, err := r.d.Takeover(started.ID); !errors.Is(err, ErrNotTakeable) || err.Error() != want {
+		t.Fatalf("got %v, want ErrNotTakeable as %q", err, want)
 	}
 }
 

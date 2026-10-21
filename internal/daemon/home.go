@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // maxSocketPath is macOS's limit on a Unix socket path, terminating NUL included.
@@ -27,3 +28,19 @@ func Home() (string, error) {
 }
 
 func Socket(home string) string { return filepath.Join(home, "loopd.sock") }
+
+// Tilde writes path with the user's home as ~.
+func Tilde(path string) string {
+	user, err := os.UserHomeDir()
+	if err != nil {
+		return path
+	}
+	user = filepath.Clean(user)
+	if path == user {
+		return "~"
+	}
+	if rel, ok := strings.CutPrefix(path, user+"/"); ok {
+		return "~/" + rel
+	}
+	return path
+}

@@ -366,7 +366,7 @@ func printLog(log daemon.JobLog) {
 // printTry prints a tried Job's worktree, the files try copied into it,
 // and its Test guide.
 func printTry(t daemon.Tried) {
-	fmt.Println("worktree: " + printable(home(t.Job.Worktree)))
+	fmt.Println("worktree: " + printable(daemon.Tilde(t.Job.Worktree)))
 	copied := "nothing; list the gitignored files the app needs, such as .env, in .worktreeinclude"
 	if len(t.Copied) > 0 {
 		copied = strings.Join(t.Copied, ", ")
@@ -411,7 +411,7 @@ func printList(loops []daemon.LoopStatus, jobs []store.Job, color bool) {
 	var blocks []*listBlock
 	byName := map[string]*listBlock{}
 	for _, l := range loops {
-		b := &listBlock{name: l.Name, state: "active", trigger: l.Trigger, checkout: home(l.Checkout)}
+		b := &listBlock{name: l.Name, state: "active", trigger: l.Trigger, checkout: daemon.Tilde(l.Checkout)}
 		if l.Paused {
 			b.state = "paused"
 		}
@@ -511,22 +511,6 @@ func result(j store.Job) string {
 		return "taken over"
 	}
 	return ""
-}
-
-// home writes path with the user's home as ~.
-func home(path string) string {
-	user, err := os.UserHomeDir()
-	if err != nil {
-		return path
-	}
-	user = filepath.Clean(user)
-	if path == user {
-		return "~"
-	}
-	if rel, ok := strings.CutPrefix(path, user+"/"); ok {
-		return "~/" + rel
-	}
-	return path
 }
 
 // cell is the first line of s as one table cell of at most 60 characters.

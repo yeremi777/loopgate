@@ -1,11 +1,11 @@
 package daemon
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
 	"slices"
-	"strings"
 	"testing"
 
 	"github.com/yeremi777/loopgate/internal/gittest"
@@ -85,13 +85,20 @@ func TestTryRefusesFilesTheJobsBranchDoesNotIgnore(t *testing.T) {
 	gittest.Run(t, j.Worktree, "commit", "-q", "-am", "track .env")
 
 	_, err := r.d.Try(j.ID)
-	if err == nil || !strings.Contains(err.Error(), ".env") || strings.Contains(err.Error(), "SECRET") {
-		t.Fatalf("err %v, want it to name .env and not its contents", err)
+	want := "job " + j.ID + ": its branch " + j.Branch + " does not ignore .env, so a copy could be committed, and nothing was copied; to copy these files, ignore them in that branch's .gitignore"
+	if err == nil || err.Error() != want {
+		t.Fatalf("err %v, want %q", err, want)
 	}
 	for _, name := range []string{".env", "config/local.json"} {
 		if _, err := os.Stat(filepath.Join(j.Worktree, name)); !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("%s reached the worktree: %v", name, err)
 		}
+	}
+
+	writeFile(filepath.Join(j.Worktree, ".gitignore"), "config/local.json\n.env\n")
+	gittest.Run(t, j.Worktree, "commit", "-q", "-am", "ignore .env")
+	if tried, err := r.d.Try(j.ID); err != nil || !slices.Equal(tried.Copied, []string{".env", "config/local.json"}) {
+		t.Fatalf("try once the branch ignores .env: %+v, %v", tried, err)
 	}
 }
 
@@ -114,12 +121,12 @@ func TestTryRefusesAJobThatIsNotDoneNamingItsState(t *testing.T) {
 		if err := r.st.SetJobState(j.ID, tc.state); err != nil {
 			t.Fatal(err)
 		}
-		_, err = r.d.Try(j.ID)
-		if !errors.Is(err, ErrNotDone) || !strings.Contains(err.Error(), "job "+j.ID+" is "+string(tc.state)) {
-			t.Fatalf("try of a %s job: %v", tc.state, err)
+		want := "job " + j.ID + " is " + string(tc.state) + ": only a done job can be tried"
+		if tc.takeover {
+			want += "; to work in it, run `loopctl takeover " + j.ID + "`"
 		}
-		if got := strings.Contains(err.Error(), "loopctl takeover "+j.ID); got != tc.takeover {
-			t.Fatalf("try of a %s job names loopctl takeover: %v, want %v: %v", tc.state, got, tc.takeover, err)
+		if _, err := r.d.Try(j.ID); !errors.Is(err, ErrNotDone) || err.Error() != want {
+			t.Fatalf("try of a %s job: %v, want %q", tc.state, err, want)
 		}
 	}
 	if _, err := r.d.Try("999999999999"); !errors.Is(err, store.ErrNotFound) {
@@ -132,8 +139,17 @@ func TestTryOfAJobWhoseLoopWasRemovedNamesTheLoop(t *testing.T) {
 	if err := r.d.Remove("deps"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.d.Try(j.ID); !errors.Is(err, ErrUnknownLoop) || !strings.Contains(err.Error(), "loop deps") {
-		t.Fatalf("try of a removed loop's job: %v", err)
+	want := "job " + j.ID + ": loop deps: unknown loop; to try the job, add the loop again with `loopctl add <loop.yaml>`"
+	if _, err := r.d.Try(j.ID); !errors.Is(err, ErrUnknownLoop) || err.Error() != want {
+		t.Fatalf("try of a removed loop's job: %v, want %q", err, want)
+	}
+
+	loop := "name: deps\ncheckout: " + r.checkout + "\ntrigger:\n  timer: { every: 1h }\ntask: bump go dependencies\nverify: \"true\"\nbounds: { max_iterations: 3, timeout: 1m }\n"
+	if _, err := r.d.Add(context.Background(), []byte(loop)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.d.Try(j.ID); err != nil {
+		t.Fatalf("try once loop deps is added again: %v", err)
 	}
 }
 
@@ -142,9 +158,16 @@ func TestTryOfAJobWhoseWorktreeIsGoneNamesThePath(t *testing.T) {
 	if err := os.RemoveAll(j.Worktree); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.d.Try(j.ID); err == nil || !strings.Contains(err.Error(), j.Worktree) {
-		t.Fatalf("try of a job with no worktree: %v", err)
+	t.Setenv("HOME", filepath.Dir(j.Worktree))
+	want := "job " + j.ID + ": its worktree ~/" + filepath.Base(j.Worktree) + " is gone; to remove the job, run `loopctl rm " + j.ID + "`"
+	if _, err := r.d.Try(j.ID); err == nil || err.Error() != want {
+		t.Fatalf("try of a job with no worktree: %v, want %q", err, want)
 	}
+
+	if _, err := r.d.RemoveJob(j.ID); err != nil {
+		t.Fatalf("rm of a job with no worktree: %v", err)
+	}
+	assertRemoved(t, r, j)
 }
 
 // triedEnv runs a deps Job to done on a checkout whose origin ignores .env,
