@@ -1,6 +1,6 @@
 # Design
 
-loopgate's one web page, the live tracking page of a Job, uses GitHub Primer's dark tokens: neutral, plain, and read at a glance, like the terminal it sits beside. It has one theme, dark, and loads no web font and no external asset.
+loopgate's web pages, the index of the Loops and the tracking page of each Job, use GitHub Primer's dark tokens: neutral, plain, and read at a glance, like the terminal it sits beside. They have one theme, dark, and load no web font and no external asset.
 
 ## Typography
 - Sans: `-apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif`

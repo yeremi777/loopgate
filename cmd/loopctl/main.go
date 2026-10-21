@@ -37,7 +37,7 @@ usage:
   loopctl run <loop> [--spec <path>]   start a job now on --spec, or a timer loop's own task or spec
   loopctl stop <loop>                  end the loop's running job; the loop stays
   loopctl logs [-f] <job>              show a job's state, branch, PR, cost and progress; -f then follows the running job until it ends, and Ctrl-C leaves it running
-  loopctl track <job>                  open the job's live tracking page in a browser tab
+  loopctl track <job>                  open a job's tracking page in a browser tab
   loopctl takeover <job>               take a job, stopping it if it runs, and hand its worktree to you
   loopctl handback <job>               give a taken-over job back to its loop
   loopctl try <job>                    copy the checkout's .worktreeinclude files into a done job's worktree, then print its path and test guide

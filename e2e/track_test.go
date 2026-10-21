@@ -143,7 +143,7 @@ func TestTrackEventsEndWithoutTheJobWhenLoopdStopsAndTheURLWorksAfterItStarts(t 
 
 func TestHelpNamesTrackOnItsOwnLine(t *testing.T) {
 	out, code := newEnv(t, "exit 0").loopctl("help")
-	if code != 0 || strings.Count(out, "loopctl track") != 1 || !strings.Contains(out, "\n  loopctl track <job> ") {
+	if code != 0 || strings.Count(out, "loopctl track") != 1 || !strings.Contains(out, "\n  loopctl track <job>                  open a job's tracking page in a browser tab\n") {
 		t.Fatalf("help lacks one loopctl track <job> line:\n%s", out)
 	}
 }
