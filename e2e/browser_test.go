@@ -64,6 +64,29 @@ func TestTrackPageOfAHandedBackJobNamesTheStageItRunsAgain(t *testing.T) {
 	page.waitFor(t, `document.querySelector(".live .section-head .muted")?.textContent`, "Implement 1")
 }
 
+func TestTrackPageKeepsVerifyPendingWhileARetryRunsAndFailsItOnlyWhenTheJobEndsThere(t *testing.T) {
+	claude := strings.Replace(streamClaude, "sleep STAGE_SLEEP",
+		`case "$prompt" in *"did not pass"*) sleep 4;; esac; result "missed ok.txt"; exit 0`, 1)
+	e, id := startJobOf(t, claude)
+	fakeOpen(t, e.env, "")
+	page := openPage(t, e.track(t, id, id))
+	verify := `document.querySelectorAll(".step")[2]`
+	step := verify + `.className + " | " + ` + verify + `.querySelector(".step-note").textContent + " | " + ` + verify + `.querySelectorAll(".node svg").length`
+
+	page.waitFor(t, `document.querySelector(".headline")?.textContent`, "Implementing, run 2 of 2")
+	if got := page.eval(t, step); got != "step st-pending | run 1 failed | 0" {
+		t.Fatalf("verify step while implement 2 runs: %q, want a pending node noting run 1 failed", got)
+	}
+	if got := page.eval(t, `getComputedStyle(`+verify+`.querySelector(".step-note")).color`); got != "rgb(248, 81, 73)" {
+		t.Fatalf("run 1 failed note color %s, want --danger", got)
+	}
+
+	page.waitFor(t, `document.querySelector(".headline")?.textContent`, "Out of attempts")
+	if got := page.eval(t, step); got != "step st-failed | verify 2 failed | 1" {
+		t.Fatalf("verify step once the job ended at verify: %q, want a failed node with its x", got)
+	}
+}
+
 // page is one tab of a headless Chrome driven over its DevTools pipe.
 type page struct {
 	in      *os.File

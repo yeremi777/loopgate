@@ -179,6 +179,7 @@ function figure(label, value, cls) {
   return el("div", "figure", el("span", "label", label), el("span", "value " + (cls || ""), value));
 }
 
+const endedInFailure = new Set(["failed", "exhausted"]);
 const steps = [["drill", "Drill"], ["implement", "Implement"], ["verify", "Verify"], ["rubric", "Rubric"], ["land", "Land"], ["publish", "PR"]];
 
 function stepper(job, cur) {
@@ -198,11 +199,16 @@ function stepper(job, cur) {
       state = { done: "done", pass: "done", blocked: "blocked" }[last.status] || "failed";
       if (job.State === "blocked" && last === lastRow) state = "blocked";
     }
+    // a failed verify stays pending while a later run can still pass it
+    const retried = kind === "verify" && state === "failed" && !(endedInFailure.has(job.State) && last === lastRow);
+    if (retried) state = "pending";
     const runs = mine.length + (state === "current" ? 1 : 0);
     if (state === "skipped") {
       note = "skipped";
     } else if (kind === "verify" && state === "failed") {
       note = "verify " + numOf(last.stage) + " failed";
+    } else if (retried) {
+      note = "run " + numOf(last.stage) + " failed";
     } else if (kind === "publish") {
       note = prNumber(job) ? "#" + prNumber(job) : "";
     } else if (runs) {
@@ -212,7 +218,7 @@ function stepper(job, cur) {
     if (state === "done") node.append(icon("check"));
     if (state === "failed") node.append(icon("x"));
     if (state === "blocked") node.append(icon("pause"));
-    list.append(el("li", "step st-" + state, node, el("span", "step-name", name), el("span", "step-note", note || " ")));
+    list.append(el("li", "step st-" + state, node, el("span", "step-name", name), el("span", "step-note" + (retried ? " note-failed" : ""), note || " ")));
   }
   return list;
 }
