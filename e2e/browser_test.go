@@ -38,6 +38,9 @@ func TestTrackPageFollowsTheJobLiveAndMovesToItsEndWithoutAReload(t *testing.T) 
 	if got := page.eval(t, `document.querySelector(".pr-link").textContent + " | " + document.querySelectorAll(".live").length`); got != "Open PR #9 | 0" {
 		t.Fatalf("done page: %q, want the PR link and no live section", got)
 	}
+	if got := page.eval(t, `[...document.querySelectorAll(".stages-row:last-child > span")].slice(0, 2).map(e => e.textContent).join(" ")`); got != "done PR" {
+		t.Fatalf("last stages row %q, want the publish stage named PR as in the stepper", got)
+	}
 	page.noEmDash(t)
 }
 
@@ -49,7 +52,7 @@ func TestTrackPageSaysLoopdStoppedWhenLoopdStops(t *testing.T) {
 	if err := e.loopd.Process.Signal(syscall.SIGTERM); err != nil {
 		t.Fatal(err)
 	}
-	page.waitFor(t, `document.querySelector(".notice strong")?.textContent`, "loopd stopped")
+	page.waitFor(t, `document.querySelector(".notice")?.textContent`, "loopd stopped · run loopctl install to start it, then reload this page")
 	if got := page.eval(t, `document.querySelector(".state-label").textContent + " | " + document.querySelectorAll(".stages .s-running, .live").length`); got != "last seen running | 0" {
 		t.Fatalf("once loopd stopped: %q, want a stale card and no running row or live section", got)
 	}
@@ -89,6 +92,25 @@ func TestTrackPageKeepsVerifyPendingWhileARetryRunsAndFailsItOnlyWhenTheJobEndsT
 		t.Fatalf("verify step once the job ended at verify: %q, want a failed node with its x", got)
 	}
 	page.noEmDash(t)
+}
+
+func TestTrackPageWaitsForTheFirstToolCallOfTheRunningStage(t *testing.T) {
+	e, id := startJobOf(t, "#!/bin/sh\nsleep 5\nexit 1\n")
+	fakeOpen(t, e.env, "")
+	page := openPage(t, e.track(t, id, id))
+	page.waitFor(t, `document.querySelector(".live .empty")?.textContent`, "Waiting for the first tool call of Implement 1")
+	page.noEmDash(t)
+}
+
+func TestTrackPageShowsTheErrorLoopdReturned(t *testing.T) {
+	e, id := startStreamJob(t, "0")
+	fakeOpen(t, e.env, "")
+	e.waitEnded(t, id)
+	page := openPage(t, e.track(t, id, id))
+	page.waitFor(t, `document.querySelector(".headline")?.textContent`, "Draft PR opened")
+	e.mustLoopctl("rm", id)
+	page.eval(t, `load().then(render, fail)`)
+	page.waitFor(t, `document.querySelector(".notice")?.textContent`, "loopd returned an error · job "+id+": not found")
 }
 
 // page is one tab of a headless Chrome driven over its DevTools pipe.
@@ -217,6 +239,7 @@ func (p *page) waitFor(t *testing.T, expr, want string) {
 	for deadline := time.Now().Add(20 * time.Second); time.Now().Before(deadline); time.Sleep(100 * time.Millisecond) {
 		if got = p.eval(t, expr); got == want {
 			return
-		}	}
+		}
+	}
 	t.Fatalf("%s is %q, want %q", expr, got, want)
 }

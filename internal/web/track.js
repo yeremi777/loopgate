@@ -49,7 +49,7 @@ function icon(name, cls) {
 const kindOf = (stage) => stage.split(" ")[0];
 const numOf = (stage) => Number(stage.split(" ")[1] || 0);
 const stageTitle = (stage) => {
-  if (stage === "publish") return "Open PR";
+  if (stage === "publish") return "PR";
   return stage.charAt(0).toUpperCase() + stage.slice(1);
 };
 
@@ -278,7 +278,7 @@ function live() {
   const entries = first < 0 ? [] : view.events.slice(first).filter((e) => e.stage === stage && !(e.bound && e.text === "start"));
   const log = el("div", "log");
   entries.forEach((e, i) => log.append(logEntry(e, i === entries.length - 1)));
-  if (!entries.length) log.append(el("p", "empty", stage ? "Waiting for the first step of " + stage : "Waiting for the first stage"));
+  if (!entries.length) log.append(el("p", "empty", stage ? "Waiting for the first tool call of " + stageTitle(stage) : "Waiting for the first stage"));
   return el("section", "section live",
     el("div", "section-head", el("h2", null, "Live"), el("span", "muted", stage ? stageTitle(stage) : "")),
     log);
@@ -330,8 +330,8 @@ function stagesTable() {
 }
 
 function notice() {
-  if (view.problem) return el("div", "notice", el("strong", null, "loopd answered an error"), el("span", "muted", " · " + view.problem));
-  if (view.stoppedAt) return el("div", "notice", el("strong", null, "loopd stopped"), el("span", "muted", " · start loopd again, then reload this page"));
+  if (view.problem) return el("div", "notice", el("strong", null, "loopd returned an error"), el("span", "muted", " · " + view.problem));
+  if (view.stoppedAt) return el("div", "notice", el("strong", null, "loopd stopped"), el("span", "muted", " · run loopctl install to start it, then reload this page"));
   return null;
 }
 
@@ -374,7 +374,7 @@ function fail(err) {
 
 async function load() {
   const res = await fetch(url("/data"));
-  if (!res.ok) throw new Answered(res.status + " " + (await res.text()).trim());
+  if (!res.ok) throw new Answered((await res.text()).trim());
   const track = await res.json();
   track.stages = track.stages || [];
   view.track = track;
@@ -396,7 +396,7 @@ async function follow() {
   let error = "";
   try {
     const res = await fetch(url("/events"));
-    if (!res.ok) throw new Answered(res.status + " " + (await res.text()).trim());
+    if (!res.ok) throw new Answered((await res.text()).trim());
     const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
     let buf = "";
     for (;;) {
