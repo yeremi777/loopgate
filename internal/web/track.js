@@ -165,9 +165,9 @@ function detail(job) {
 
 function elapsed(job) {
   const started = time(job.Started);
-  if (!started) return "—";
+  if (!started) return "";
   const end = view.stoppedAt || (isLive() ? new Date() : time(job.Ended));
-  return end ? duration(end - started) : "—";
+  return end ? duration(end - started) : "";
 }
 
 function cost(job) {
@@ -236,7 +236,7 @@ function card(job) {
   const figures = el("div", "figures",
     figure("Elapsed", elapsed(job), "elapsed"),
     figure("Cost", cost(job)),
-    figure("Run", n ? runOf(n) : "—"));
+    figure("Run", n ? runOf(n) : ""));
   return el("section", "card s-" + state + (view.stoppedAt ? " stale" : ""),
     el("div", "card-top", el("div", "state-icon", icon(stateIcon[state] || "hollow")), text, figures),
     stepper(job, cur));
@@ -247,7 +247,7 @@ function meta(job) {
   const label = { spec: "Spec", task: "Task", issue: "Issue" }[kind] || "Work";
   let value = rest.join(" ");
   if (kind === "issue") value = "#" + value;
-  const pair = (l, v) => el("div", null, el("span", "label", l), el("span", "value", v || "—"));
+  const pair = (l, v) => el("div", null, el("span", "label", l), el("span", "value", v));
   return el("div", "meta", pair(label, value), pair("Branch", job.Branch));
 }
 
@@ -292,7 +292,7 @@ function cells(row, end) {
     el("span", null, stageTitle(row.stage)),
     el("span", "num started", clock(start)),
     el("span", "num", duration((end || new Date()) - start)),
-    el("span", "num cost", noCost ? "—" : money(row.cost_usd)),
+    el("span", "num cost", noCost ? "" : money(row.cost_usd)),
   ];
 }
 

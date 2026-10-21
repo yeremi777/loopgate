@@ -305,6 +305,17 @@ func TestJobDataHasTheJobItsTimesItsLoopsBoundAndItsStages(t *testing.T) {
 	}
 }
 
+func TestPagesAndTheirScriptCarryNoEmDash(t *testing.T) {
+	p, e := serveJobs(t, map[string]string{"deps": timerLoop("deps")})
+	j := e.job(t, "deps", "task tidy", store.Finish{})
+	e.job(t, "deps", "task ship", store.Finish{State: store.Done, PRURL: "https://github.com/me/app/pull/9"})
+	for _, path := range []string{"/", "/jobs/" + j.ID, "/track.js", "/track.css"} {
+		if body := readBody(t, get(t, p.URL(path), "")); strings.ContainsRune(body, '\u2014') {
+			t.Errorf("%s carries an em dash, which DESIGN.md leaves off the pages", path)
+		}
+	}
+}
+
 func TestEventsOfAnEndedJobEndAtOnceWithTheJob(t *testing.T) {
 	p, e := serveJobs(t, nil)
 	j := e.job(t, "deps", "task tidy", store.Finish{State: store.Done, PRURL: "https://github.com/me/app/pull/9"})

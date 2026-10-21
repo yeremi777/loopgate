@@ -32,11 +32,13 @@ func TestTrackPageFollowsTheJobLiveAndMovesToItsEndWithoutAReload(t *testing.T) 
 	if got := page.eval(t, `[...document.querySelectorAll(".stages-row:last-child > span")].slice(0, 2).map(e => e.textContent).join(" ")`); got != "running Implement 1" {
 		t.Fatalf("last stages row %q, want the running stage", got)
 	}
+	page.noEmDash(t)
 
 	page.waitFor(t, `document.querySelector(".headline")?.textContent`, "Draft PR opened")
 	if got := page.eval(t, `document.querySelector(".pr-link").textContent + " | " + document.querySelectorAll(".live").length`); got != "Open PR #9 | 0" {
 		t.Fatalf("done page: %q, want the PR link and no live section", got)
 	}
+	page.noEmDash(t)
 }
 
 func TestTrackPageSaysLoopdStoppedWhenLoopdStops(t *testing.T) {
@@ -80,11 +82,13 @@ func TestTrackPageKeepsVerifyPendingWhileARetryRunsAndFailsItOnlyWhenTheJobEndsT
 	if got := page.eval(t, `getComputedStyle(`+verify+`.querySelector(".step-note")).color`); got != "rgb(248, 81, 73)" {
 		t.Fatalf("run 1 failed note color %s, want --danger", got)
 	}
+	page.noEmDash(t)
 
 	page.waitFor(t, `document.querySelector(".headline")?.textContent`, "Out of attempts")
 	if got := page.eval(t, step); got != "step st-failed | verify 2 failed | 1" {
 		t.Fatalf("verify step once the job ended at verify: %q, want a failed node with its x", got)
 	}
+	page.noEmDash(t)
 }
 
 // page is one tab of a headless Chrome driven over its DevTools pipe.
@@ -196,6 +200,14 @@ func (p *page) eval(t *testing.T, expr string) string {
 	}
 	p.call(t, "Runtime.evaluate", map[string]any{"expression": "String(" + expr + ")", "returnByValue": true}, &res)
 	return fmt.Sprint(res.Result.Value)
+}
+
+// noEmDash fails t when the page shows an em dash, which DESIGN.md leaves off it.
+func (p *page) noEmDash(t *testing.T) {
+	t.Helper()
+	if got := p.eval(t, `document.body.innerText.includes("\u2014")`); got != "false" {
+		t.Fatalf("page shows an em dash:\n%s", p.eval(t, `document.body.innerText`))
+	}
 }
 
 // waitFor fails t unless expr becomes want within 20 seconds.
