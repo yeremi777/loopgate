@@ -243,6 +243,7 @@ func TestIndexListsEachLoopWithItsJobsLinkingToTheirPages(t *testing.T) {
 	done := e.job(t, "deps", "task tidy", store.Finish{State: store.Done, PRURL: "https://github.com/me/app/pull/9"})
 	blocked := e.job(t, "deps", "task <b>bold</b>", store.Finish{State: store.Blocked, Question: "<script>alert(1)</script>"})
 	orphan := e.job(t, "gone", "task old", store.Finish{State: store.Failed, Error: "fetch failed"})
+	e.job(t, "deps", "task mine", store.Finish{State: store.Manual})
 
 	res := get(t, p.URL("/"), "")
 	body := readBody(t, res)
@@ -255,10 +256,14 @@ func TestIndexListsEachLoopWithItsJobsLinkingToTheirPages(t *testing.T) {
 		`href="/jobs/` + blocked.ID + `?token=` + p.Token + `"`, "&lt;b&gt;bold&lt;/b&gt;", "&lt;script&gt;alert(1)&lt;/script&gt;",
 		`href="/jobs/` + orphan.ID + `?token=` + p.Token + `"`, "fetch failed",
 		`href="/track.css?token=` + p.Token + `"`,
+		`<span class="chip s-manual">taken over</span>`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("index lacks %q", want)
 		}
+	}
+	if n := strings.Count(body, "taken over"); n != 1 {
+		t.Errorf("index says taken over %d times, want once, in the job's chip", n)
 	}
 	if strings.Contains(body, "<script>alert") || strings.Contains(body, "<b>bold") {
 		t.Fatalf("index put a job's text in as markup:\n%s", body)

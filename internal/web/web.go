@@ -245,8 +245,9 @@ type loopBlock struct {
 	Jobs                           []jobRow
 }
 
+// jobRow is one Job of the index; Label is its State as the Job's page names it.
 type jobRow struct {
-	ID, State, Work, Result, PR string
+	ID, State, Label, Work, Result, PR string
 }
 
 // blocks groups jobs under their Loops, sorted by name, as loopctl list
@@ -269,7 +270,10 @@ func blocks(loops []daemon.LoopStatus, jobs []store.Job) []*loopBlock {
 			out = append(out, b)
 			byName[j.Loop] = b
 		}
-		row := jobRow{ID: j.ID, State: string(j.State), Work: firstLine(j.Work), Result: firstLine(result(j))}
+		row := jobRow{ID: j.ID, State: string(j.State), Label: string(j.State), Work: firstLine(j.Work), Result: firstLine(result(j))}
+		if j.State == store.Manual {
+			row.Label = "taken over"
+		}
 		if j.State == store.Done {
 			row.PR = j.PRURL
 		}
@@ -290,8 +294,6 @@ func result(j store.Job) string {
 		return j.Error
 	case store.Exhausted:
 		return j.Summary
-	case store.Manual:
-		return "taken over"
 	}
 	return ""
 }
