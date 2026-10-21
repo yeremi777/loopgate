@@ -109,6 +109,7 @@ func (p Pipeline) Run(ctx context.Context, j Job) Outcome {
 	switch {
 	case errors.Is(err, context.DeadlineExceeded):
 		out = Outcome{State: store.Exhausted, Summary: "timeout of " + j.Loop.Bounds.Timeout.String() + " reached", Err: err}
+		r.markBound("timeout")
 	case err != nil:
 		out = Outcome{State: store.Failed, Err: err}
 	}
@@ -208,6 +209,7 @@ func (r *jobRun) iterate(ctx context.Context) (Outcome, error) {
 			TestChanges: verify.TestChanges(changes, j.Loop.Tests),
 		})
 	}
+	r.markBound("iterations")
 	return Outcome{State: store.Exhausted, Summary: fmt.Sprintf("%d implement runs did not pass the checks", j.Loop.Bounds.MaxIterations)}, nil
 }
 
@@ -322,6 +324,14 @@ func (r *jobRun) gate(ctx context.Context, i int) (verify.Outcome, error) {
 	row.End = time.Now()
 	r.record(row)
 	return gate, err
+}
+
+// markBound names the bound that ran out on the Job's last stage row, logged
+// and lost when it cannot be written, as record's rows are.
+func (r *jobRun) markBound(bound string) {
+	if err := markBound(r.job.Dir, bound); err != nil {
+		log.Printf("loopd: job %s: stage rows bound %s: %v", r.job.ID, bound, err)
+	}
 }
 
 // record adds row to the Job's stage rows. A row that cannot be written is

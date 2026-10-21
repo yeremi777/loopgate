@@ -144,6 +144,12 @@ func startStreamJob(t *testing.T, sleep string) (streamEnv, string) {
 // and returns its id.
 func startJobOf(t *testing.T, claude string) (streamEnv, string) {
 	t.Helper()
+	return startJobWithin(t, claude, "1m")
+}
+
+// startJobWithin is startJobOf on a Loop whose bounds.timeout is timeout.
+func startJobWithin(t *testing.T, claude, timeout string) (streamEnv, string) {
+	t.Helper()
 	e := newEnv(t, "exit 0")
 	fakes := strings.SplitN(e.path, ":", 2)[0]
 	writeExec(t, filepath.Join(fakes, "claude"), claude)
@@ -159,7 +165,7 @@ func startJobOf(t *testing.T, claude string) (streamEnv, string) {
 	gitIn(t, checkout, "push", "-q", "origin", "HEAD:main")
 	gitIn(t, checkout, "remote", "set-head", "origin", "main")
 	file := filepath.Join(root, "deps.yaml")
-	loop := "name: deps\ncheckout: " + checkout + "\ntrigger:\n  timer: { every: 1h }\ntask: add ok.txt\nverify: test -f ok.txt\nbounds: { max_iterations: 2, timeout: 1m }\n"
+	loop := "name: deps\ncheckout: " + checkout + "\ntrigger:\n  timer: { every: 1h }\ntask: add ok.txt\nverify: test -f ok.txt\nbounds: { max_iterations: 2, timeout: " + timeout + " }\n"
 	if err := os.WriteFile(file, []byte(loop), 0o600); err != nil {
 		t.Fatal(err)
 	}

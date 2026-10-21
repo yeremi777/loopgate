@@ -123,7 +123,7 @@ function headline(state, cur) {
     case "done": return "Draft PR opened";
     case "blocked": return "Waiting for your answer";
     case "failed": return "Job failed";
-    case "exhausted": return "Out of attempts";
+    case "exhausted": return view.track.stages.at(-1)?.bound === "timeout" ? "Out of time" : "Out of attempts";
     case "manual": return "Taken over";
   }
   if (!cur) return "Starting";

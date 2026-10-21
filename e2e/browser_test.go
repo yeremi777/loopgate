@@ -108,7 +108,7 @@ func TestTrackPageKeepsARetriedGatePendingWhileARetryRunsAndFailsItOnlyWhenTheJo
 }
 
 func TestTrackPageOfAFailedJobWaitsForTheStagesFirstToolCallThenShowsTheErrorAndTakeover(t *testing.T) {
-	e, id := startJobOf(t, "#!/bin/sh\nsleep 5\nexit 1\n")
+	e, id := startJobOf(t, "#!/bin/sh\nsleep 15\nexit 1\n")
 	fakeOpen(t, e.env, "")
 	page := openPage(t, e.track(t, id, id))
 	page.waitFor(t, `document.querySelector(".live .empty")?.textContent`, "Waiting for the first tool call of Implement 1")
@@ -116,6 +116,14 @@ func TestTrackPageOfAFailedJobWaitsForTheStagesFirstToolCallThenShowsTheErrorAnd
 	if got := page.eval(t, `document.querySelector(".detail .cmd")?.textContent`); got != "loopctl takeover "+id {
 		t.Fatalf("failed card command %q, want loopctl takeover %s", got, id)
 	}
+	page.noEmDash(t)
+}
+
+func TestTrackPageOfAJobThatRanOutOfTimeSaysOutOfTime(t *testing.T) {
+	e, id := startJobWithin(t, "#!/bin/sh\nsleep 30\n", "3s")
+	fakeOpen(t, e.env, "")
+	page := openPage(t, e.track(t, id, id))
+	page.waitFor(t, `document.querySelector(".headline")?.textContent`, "Out of time")
 	page.noEmDash(t)
 }
 

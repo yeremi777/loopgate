@@ -216,6 +216,7 @@ func TestExhaustedAfterMaxIterations(t *testing.T) {
 		t.Fatalf("got %+v, want exhausted", out)
 	}
 	f.wantKinds("/implement", "/implement")
+	wantBound(t, j, "iterations")
 }
 
 func TestExhaustedOnTimeout(t *testing.T) {
@@ -233,6 +234,26 @@ func TestExhaustedOnTimeout(t *testing.T) {
 	out := Pipeline{Stages: f, Shell: shell()}.Run(context.Background(), j)
 	if out.State != store.Exhausted {
 		t.Fatalf("got %+v, want exhausted", out)
+	}
+	wantBound(t, j, "timeout")
+}
+
+// wantBound fails t unless only the last stage row of j names bound as the one that ran out.
+func wantBound(t *testing.T, j Job, bound string) {
+	t.Helper()
+	rows, err := ReadStages(j.Dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var bounds []string
+	for _, row := range rows {
+		bounds = append(bounds, row.Bound)
+	}
+	if len(rows) == 0 || rows[len(rows)-1].Bound != bound || slices.ContainsFunc(bounds[:len(bounds)-1], func(b string) bool { return b != "" }) {
+		t.Fatalf("stage rows name bounds %q, want %q on the last row only", bounds, bound)
+	}
+	if info, err := os.Stat(filepath.Join(j.Dir, "stages.jsonl")); err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("stages.jsonl: %v, %v; want mode 0600", info, err)
 	}
 }
 

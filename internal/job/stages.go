@@ -14,7 +14,8 @@ import (
 
 // StageRow is one ended stage of a Job: a Claude Code stage with its
 // reported status, a Verify gate with its commands and, when it failed, the
-// tail of its output, or the publish of the draft PR.
+// tail of its output, or the publish of the draft PR. Bound is the bound
+// that ran out, iterations or timeout, on the last row of an exhausted Job.
 type StageRow struct {
 	Stage    string           `json:"stage"`
 	Start    time.Time        `json:"start"`
@@ -23,6 +24,7 @@ type StageRow struct {
 	CostUSD  float64          `json:"cost_usd"`
 	Commands []verify.Command `json:"commands,omitempty"`
 	Output   []string         `json:"output,omitempty"`
+	Bound    string           `json:"bound,omitempty"`
 }
 
 const stagesFile = "stages.jsonl"
@@ -41,6 +43,35 @@ func appendStage(dir string, row StageRow) error {
 		return errors.Join(err, f.Close())
 	}
 	return f.Close()
+}
+
+// markBound names bound on the last stage row in the Job's directory, when
+// it has one, and swaps the file in whole so a reader never sees half of it.
+func markBound(dir, bound string) error {
+	rows, err := ReadStages(dir)
+	if err != nil || len(rows) == 0 {
+		return err
+	}
+	rows[len(rows)-1].Bound = bound
+	var data []byte
+	for _, row := range rows {
+		line, err := json.Marshal(row)
+		if err != nil {
+			return err
+		}
+		data = append(append(data, line...), '\n')
+	}
+	f, err := os.CreateTemp(dir, stagesFile+".*")
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		return errors.Join(err, f.Close(), os.Remove(f.Name()))
+	}
+	if err := f.Close(); err != nil {
+		return errors.Join(err, os.Remove(f.Name()))
+	}
+	return os.Rename(f.Name(), filepath.Join(dir, stagesFile))
 }
 
 // ReadStages is the stage rows in a Job's directory, oldest first; a Job
