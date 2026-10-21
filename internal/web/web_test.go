@@ -102,12 +102,16 @@ func TestTrackTokenIsRenewedWhenTheKeptPortIsTakenAndKeptWhenItBinds(t *testing.
 	}
 }
 
+// forbidden is the body of every 403.
+const forbidden = "forbidden: run loopctl track <job> for this page's current link\n"
+
 func TestTrackTokenIsRequiredOnEveryRequest(t *testing.T) {
 	p := serve(t)
 	base := "http://127.0.0.1:" + strconv.Itoa(p.Port)
 	for _, path := range []string{"/", "/?token=", "/?token=" + strings.Repeat("0", len(p.Token)), "/track.css", "/jobs/0123456789ab", "/jobs/0123456789ab/events"} {
-		if code := get(t, base+path, "").StatusCode; code != http.StatusForbidden {
-			t.Errorf("GET %s: %d, want 403", path, code)
+		res := get(t, base+path, "")
+		if body := readBody(t, res); res.StatusCode != http.StatusForbidden || body != forbidden {
+			t.Errorf("GET %s: %d %q, want 403 %q", path, res.StatusCode, body, forbidden)
 		}
 	}
 	if code := get(t, p.URL("/"), "").StatusCode; code != http.StatusOK {
@@ -119,8 +123,9 @@ func TestTrackHostOtherThanTheListenersIsRefused(t *testing.T) {
 	p := serve(t)
 	port := strconv.Itoa(p.Port)
 	for _, host := range []string{"localhost:" + port, "127.0.0.1", "127.0.0.1:1", "evil.example:" + port} {
-		if code := get(t, p.URL("/"), host).StatusCode; code != http.StatusForbidden {
-			t.Errorf("Host %s: %d, want 403", host, code)
+		res := get(t, p.URL("/"), host)
+		if body := readBody(t, res); res.StatusCode != http.StatusForbidden || body != forbidden {
+			t.Errorf("Host %s: %d %q, want 403 %q", host, res.StatusCode, body, forbidden)
 		}
 	}
 }

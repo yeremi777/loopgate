@@ -151,7 +151,7 @@ func guard(p Pages, next http.Handler) http.Handler {
 		h.Set("Cache-Control", "no-store")
 		token := r.URL.Query().Get("token")
 		if r.Host != p.host() || subtle.ConstantTimeCompare([]byte(token), []byte(p.Token)) != 1 {
-			http.Error(w, "forbidden", http.StatusForbidden)
+			http.Error(w, "forbidden: run loopctl track <job> for this page's current link", http.StatusForbidden)
 			return
 		}
 		if r.Method != http.MethodGet {
