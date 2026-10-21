@@ -99,16 +99,23 @@ func TestTrackPageKeepsARetriedGatePendingWhileARetryRunsAndFailsItOnlyWhenTheJo
 			if got, want := page.eval(t, step), "step st-failed | "+tc.ended+" | 1"; got != want {
 				t.Fatalf("%s step once the job ended there: %q, want %q", tc.name, got, want)
 			}
+			if got := page.eval(t, `document.querySelector(".detail .cmd")?.textContent`); got != "loopctl takeover "+id {
+				t.Fatalf("exhausted card command %q, want loopctl takeover %s", got, id)
+			}
 			page.noEmDash(t)
 		})
 	}
 }
 
-func TestTrackPageWaitsForTheFirstToolCallOfTheRunningStage(t *testing.T) {
+func TestTrackPageOfAFailedJobWaitsForTheStagesFirstToolCallThenShowsTheErrorAndTakeover(t *testing.T) {
 	e, id := startJobOf(t, "#!/bin/sh\nsleep 5\nexit 1\n")
 	fakeOpen(t, e.env, "")
 	page := openPage(t, e.track(t, id, id))
 	page.waitFor(t, `document.querySelector(".live .empty")?.textContent`, "Waiting for the first tool call of Implement 1")
+	page.waitFor(t, `document.querySelector(".headline")?.textContent`, "Job failed")
+	if got := page.eval(t, `document.querySelector(".detail .cmd")?.textContent`); got != "loopctl takeover "+id {
+		t.Fatalf("failed card command %q, want loopctl takeover %s", got, id)
+	}
 	page.noEmDash(t)
 }
 

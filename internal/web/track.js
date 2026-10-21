@@ -155,8 +155,8 @@ function detail(job) {
       break;
     }
     case "blocked": box.append(el("p", "text", job.Question), command("loopctl takeover " + job.ID)); break;
-    case "failed": box.append(el("p", "text", job.Error)); break;
-    case "exhausted": box.append(el("p", "text", job.Summary)); break;
+    case "failed": box.append(el("p", "text", job.Error), command("loopctl takeover " + job.ID)); break;
+    case "exhausted": box.append(el("p", "text", job.Summary), command("loopctl takeover " + job.ID)); break;
     case "manual": box.append(command("loopctl handback " + job.ID)); break;
     default: return null;
   }
