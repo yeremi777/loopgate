@@ -152,7 +152,11 @@ func run(args []string) error {
 		}
 		fmt.Printf("tracking job %s at %s\n", page.ID, page.URL)
 		if out, err := exec.Command("open", page.URL).CombinedOutput(); err != nil {
-			fmt.Printf("open failed (%v: %s); open %s in a browser\n", err, strings.TrimSpace(string(out)), page.URL)
+			why := err.Error()
+			if said := strings.TrimSpace(string(out)); said != "" {
+				why += ": " + said
+			}
+			fmt.Printf("open failed (%s); open %s in a browser\n", why, page.URL)
 		}
 		return nil
 	case cmd == "rm" && len(rest) == 1:

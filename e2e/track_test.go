@@ -54,11 +54,13 @@ func TestTrackOpensTheJobsPageAndASecondJobsPageOnTheSamePort(t *testing.T) {
 
 func TestTrackPrintsTheURLAndExitsZeroWhenOpenFails(t *testing.T) {
 	e, id := startStreamJob(t, "0")
-	fakeOpen(t, e.env, "echo 'no browser' >&2; exit 1")
-	out := e.mustLoopctl("track", id)
-	url := regexp.MustCompile(`http://127\.0\.0\.1:\d+/jobs/` + id + `\?token=[0-9a-f]+`).FindString(out)
-	if url == "" || !strings.HasPrefix(out, "tracking job "+id+" at "+url+"\n") || strings.Count(out, url) < 2 || !strings.Contains(out, "no browser") {
-		t.Fatalf("track when open fails:\n%s", out)
+	for body, why := range map[string]string{"echo 'no browser' >&2; exit 1": "exit status 1: no browser", "exit 1": "exit status 1"} {
+		fakeOpen(t, e.env, body)
+		out := e.mustLoopctl("track", id)
+		url := regexp.MustCompile(`http://127\.0\.0\.1:\d+/jobs/` + id + `\?token=[0-9a-f]+`).FindString(out)
+		if want := "tracking job " + id + " at " + url + "\nopen failed (" + why + "); open " + url + " in a browser\n"; url == "" || out != want {
+			t.Fatalf("track when open runs %q:\n%s\nwant:\n%s", body, out, want)
+		}
 	}
 }
 
