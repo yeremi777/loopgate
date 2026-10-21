@@ -67,7 +67,7 @@ const resultSchema = `{"type":"object","properties":{` +
 	`"status":{"type":"string","enum":["done","blocked","revise"]},` +
 	`"question":{"type":"string"},` +
 	`"summary":{"type":"string"},` +
-	`"try":{"type":"string"}},` +
+	`"try":{"type":"string","description":"Land only: the test guide in Markdown, at most 40 lines; empty when the branch adds nothing a human can run."}},` +
 	`"required":["status","summary"]}`
 
 // envAllowlist holds what claude, git and ssh need; everything else stays in loopd.

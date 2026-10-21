@@ -710,7 +710,12 @@ func TestLandPromptAsksForTheTestGuideInTry(t *testing.T) {
 			f := &fakeStages{t: t, steps: []step{commits(j, "ok.txt"), reports(runner.StatusDone, "clean"), lands("t\n\nb")}}
 			Pipeline{Stages: f, Shell: shell(), Publisher: &fakePublisher{}}.Run(context.Background(), j)
 			land := f.stages[2].Prompt
-			for _, want := range []string{"Set try to", "how to start the app", "each endpoint, screen or command", "what to expect", "environment variable", "never its value"} {
+			for _, want := range []string{
+				"Set the `try` field to the test guide", "Markdown of at most 40 lines", "from the root of this worktree",
+				".worktreeinclude", "the commands that start the app", "each endpoint, screen or command", "what to expect",
+				"Name each environment variable the app needs, never its value", "no token, password or other secret",
+				"drops or resets data", "the human's choice", "Leave `try` empty when the branch adds nothing a human can run",
+			} {
 				if !strings.Contains(land, want) {
 					t.Fatalf("land prompt lacks %q:\n%s", want, land)
 				}
