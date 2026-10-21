@@ -69,29 +69,39 @@ func TestTrackPageOfAHandedBackJobNamesTheStageItRunsAgain(t *testing.T) {
 	page.waitFor(t, `document.querySelector(".live .section-head .muted")?.textContent`, "Implement 1")
 }
 
-func TestTrackPageKeepsVerifyPendingWhileARetryRunsAndFailsItOnlyWhenTheJobEndsThere(t *testing.T) {
-	claude := strings.Replace(streamClaude, "sleep STAGE_SLEEP",
-		`case "$prompt" in *"did not pass"*) sleep 4;; esac; result "missed ok.txt"; exit 0`, 1)
-	e, id := startJobOf(t, claude)
-	fakeOpen(t, e.env, "")
-	page := openPage(t, e.track(t, id, id))
-	verify := `document.querySelectorAll(".step")[2]`
-	step := verify + `.className + " | " + ` + verify + `.querySelector(".step-note").textContent + " | " + ` + verify + `.querySelectorAll(".node svg").length`
+func TestTrackPageKeepsARetriedGatePendingWhileARetryRunsAndFailsItOnlyWhenTheJobEndsThere(t *testing.T) {
+	retry := `case "$prompt" in *"did not pass"*) sleep 4; result "kept ok"; exit 0;; esac; `
+	for _, tc := range []struct {
+		name, claude   string
+		step           int
+		retried, ended string
+	}{
+		{"verify", strings.Replace(streamClaude, "sleep STAGE_SLEEP", retry+`result "missed ok.txt"; exit 0`, 1), 2, "verify 1 failed", "verify 2 failed"},
+		{"rubric", strings.NewReplacer("sleep STAGE_SLEEP", retry, `result "clean"`, `printf '{"type":"result","is_error":false,"total_cost_usd":0.1,"structured_output":{"status":"revise","summary":"fix it"}}\n'`).Replace(streamClaude), 3, "rubric 1 revise", "rubric 2 revise"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e, id := startJobOf(t, tc.claude)
+			fakeOpen(t, e.env, "")
+			page := openPage(t, e.track(t, id, id))
+			gate := fmt.Sprintf(`document.querySelectorAll(".step")[%d]`, tc.step)
+			step := gate + `.className + " | " + ` + gate + `.querySelector(".step-note").textContent + " | " + ` + gate + `.querySelectorAll(".node svg").length`
 
-	page.waitFor(t, `document.querySelector(".headline")?.textContent`, "Implementing, run 2 of 2")
-	if got := page.eval(t, step); got != "step st-pending | run 1 failed | 0" {
-		t.Fatalf("verify step while implement 2 runs: %q, want a pending node noting run 1 failed", got)
-	}
-	if got := page.eval(t, `getComputedStyle(`+verify+`.querySelector(".step-note")).color`); got != "rgb(248, 81, 73)" {
-		t.Fatalf("run 1 failed note color %s, want --danger", got)
-	}
-	page.noEmDash(t)
+			page.waitFor(t, `document.querySelector(".headline")?.textContent`, "Implementing, run 2 of 2")
+			if got, want := page.eval(t, step), "step st-pending | "+tc.retried+" | 0"; got != want {
+				t.Fatalf("%s step while implement 2 runs: %q, want %q", tc.name, got, want)
+			}
+			if got := page.eval(t, `getComputedStyle(`+gate+`.querySelector(".step-note")).color`); got != "rgb(248, 81, 73)" {
+				t.Fatalf("%s note color %s, want --danger", tc.retried, got)
+			}
+			page.noEmDash(t)
 
-	page.waitFor(t, `document.querySelector(".headline")?.textContent`, "Out of attempts")
-	if got := page.eval(t, step); got != "step st-failed | verify 2 failed | 1" {
-		t.Fatalf("verify step once the job ended at verify: %q, want a failed node with its x", got)
+			page.waitFor(t, `document.querySelector(".headline")?.textContent`, "Out of attempts")
+			if got, want := page.eval(t, step), "step st-failed | "+tc.ended+" | 1"; got != want {
+				t.Fatalf("%s step once the job ended there: %q, want %q", tc.name, got, want)
+			}
+			page.noEmDash(t)
+		})
 	}
-	page.noEmDash(t)
 }
 
 func TestTrackPageWaitsForTheFirstToolCallOfTheRunningStage(t *testing.T) {
