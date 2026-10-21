@@ -158,7 +158,7 @@ The draft PR opens with loopgate's report: the commit that passed the gate and t
 
 ### From a Claude Code session
 
-`loopctl install` adds a loopgate skill that drives `loopctl` for you. In any session, say "hand docs/specs/x.md to the loop", "loop status", or "take over job a41f".
+`loopctl install` adds a loopgate skill that drives `loopctl` for you. In any session, say "hand docs/specs/x.md to the loop", "loop status", "track job a41f", or "take over job a41f".
 
 ## Skills
 
