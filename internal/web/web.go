@@ -42,8 +42,8 @@ func (p Pages) host() string { return "127.0.0.1:" + strconv.Itoa(p.Port) }
 
 // Listen opens the pages' listener on the port kept in home with the token
 // kept there, or, when that port is taken or none is kept yet, on a free port
-// that it keeps with a new token, so a page left open on the old port never
-// sends the token to whatever listens there now.
+// that it keeps with a new token, so the token that a page left open on the
+// old port sends to whatever listens there now opens no page.
 func Listen(home string) (net.Listener, Pages, error) {
 	tokenFile := filepath.Join(home, "track.token")
 	portFile := filepath.Join(home, "track.port")
