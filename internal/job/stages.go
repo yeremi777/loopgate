@@ -71,7 +71,10 @@ func markBound(dir, bound string) error {
 	if err := f.Close(); err != nil {
 		return errors.Join(err, os.Remove(f.Name()))
 	}
-	return os.Rename(f.Name(), filepath.Join(dir, stagesFile))
+	if err := os.Rename(f.Name(), filepath.Join(dir, stagesFile)); err != nil {
+		return errors.Join(err, os.Remove(f.Name()))
+	}
+	return nil
 }
 
 // ReadStages is the stage rows in a Job's directory, oldest first; a Job
