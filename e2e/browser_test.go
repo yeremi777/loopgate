@@ -18,9 +18,12 @@ const chromePath = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome
 
 func TestTrackPageFollowsTheJobLiveAndMovesToItsEndWithoutAReload(t *testing.T) {
 	implementing, implemented := hold(t)
+	publishing, published := hold(t)
 	claude := strings.Replace(streamClaude, "sleep STAGE_SLEEP",
 		`say '{"type":"text","text":"<img src=x onerror=alert(1)><b>bold</b>"}'; `+implementing, 1)
-	e, id := startJobOf(t, claude)
+	e, _ := streamLoop(t, claude, "1m")
+	writeExec(t, filepath.Join(strings.SplitN(e.path, ":", 2)[0], "gh"), "#!/bin/sh\n[ \"$1\" = auth ] && exit 0\n"+publishing+"\ncat >/dev/null\necho https://github.com/me/app/pull/9\n")
+	id := e.runJob(t)
 	fakeOpen(t, e.env, "")
 	page := openPage(t, e.track(t, id, id))
 
@@ -38,6 +41,8 @@ func TestTrackPageFollowsTheJobLiveAndMovesToItsEndWithoutAReload(t *testing.T) 
 	page.noEmDash(t)
 	implemented()
 
+	page.waitFor(t, `document.querySelector(".live .empty")?.textContent`, "Pushing the branch and opening the draft PR")
+	published()
 	page.waitFor(t, `document.querySelector(".headline")?.textContent`, "Draft PR opened")
 	if got := page.eval(t, `document.querySelector(".pr-link").textContent + " | " + document.querySelectorAll(".live").length`); got != "Open PR #9 | 0" {
 		t.Fatalf("done page: %q, want the PR link and no live section", got)

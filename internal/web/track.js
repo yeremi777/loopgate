@@ -270,6 +270,9 @@ function logEntry(e, newest) {
   return el("div", cls + sub + (newest ? " newest" : ""), el("span", "dot"), body, el("span", "time", clock(new Date(e.time))));
 }
 
+// waiting is what a stage that runs no tool calls shows before its first line.
+const waiting = { verify: "Starting the verify gate", publish: "Pushing the branch and opening the draft PR" };
+
 function live() {
   const cur = current();
   const stage = cur ? cur.stage : null;
@@ -277,7 +280,7 @@ function live() {
   const entries = first < 0 ? [] : view.events.slice(first).filter((e) => e.stage === stage && !(e.bound && e.text === "start"));
   const log = el("div", "log");
   entries.forEach((e, i) => log.append(logEntry(e, i === entries.length - 1)));
-  if (!entries.length) log.append(el("p", "empty", stage ? "Waiting for the first tool call of " + stageTitle(stage) : "Waiting for the first stage"));
+  if (!entries.length) log.append(el("p", "empty", stage ? waiting[kindOf(stage)] || "Waiting for the first tool call of " + stageTitle(stage) : "Waiting for the first stage"));
   return el("section", "section live",
     el("div", "section-head", el("h2", null, "Live"), el("span", "muted", stage ? stageTitle(stage) : "")),
     log);
