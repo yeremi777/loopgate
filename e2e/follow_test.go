@@ -150,6 +150,14 @@ func startJobOf(t *testing.T, claude string) (streamEnv, string) {
 // startJobWithin is startJobOf on a Loop whose bounds.timeout is timeout.
 func startJobWithin(t *testing.T, claude, timeout string) (streamEnv, string) {
 	t.Helper()
+	e, _ := streamLoop(t, claude, timeout)
+	return e, e.runJob(t)
+}
+
+// streamLoop starts loopd with the timer Loop deps, whose claude is the
+// script claude, and returns it with the path of the Loop's origin.
+func streamLoop(t *testing.T, claude, timeout string) (streamEnv, string) {
+	t.Helper()
 	e := newEnv(t, "exit 0")
 	fakes := strings.SplitN(e.path, ":", 2)[0]
 	writeExec(t, filepath.Join(fakes, "claude"), claude)
@@ -170,10 +178,15 @@ func startJobWithin(t *testing.T, claude, timeout string) (streamEnv, string) {
 		t.Fatal(err)
 	}
 	e.load(file)
-	loopd := e.startLoopd()
+	return streamEnv{env: e, loopd: e.startLoopd()}, origin
+}
+
+// runJob starts a Job of deps and returns its id.
+func (e streamEnv) runJob(t *testing.T) string {
+	t.Helper()
 	m := regexp.MustCompile(`job ([0-9a-f]{12}) running`).FindStringSubmatch(e.mustLoopctl("run", "deps"))
 	if m == nil {
 		t.Fatal("run printed no job id")
 	}
-	return streamEnv{env: e, loopd: loopd}, m[1]
+	return m[1]
 }

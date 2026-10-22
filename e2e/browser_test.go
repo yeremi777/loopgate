@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 	"syscall"
 	"testing"
@@ -117,6 +118,23 @@ func TestTrackPageOfAFailedJobWaitsForTheStagesFirstToolCallThenShowsTheErrorAnd
 		t.Fatalf("failed card command %q, want loopctl takeover %s", got, id)
 	}
 	page.noEmDash(t)
+}
+
+func TestTrackPageOfAJobThatFailedBeforeItsWorktreeNamesRm(t *testing.T) {
+	e, origin := streamLoop(t, "#!/bin/sh\nexit 1\n", "1m")
+	if err := os.RemoveAll(origin); err != nil {
+		t.Fatal(err)
+	}
+	if out, code := e.loopctl("run", "deps"); code == 0 {
+		t.Fatalf("run without an origin exited 0:\n%s", out)
+	}
+	id := regexp.MustCompile(`[0-9a-f]{12}`).FindString(e.mustLoopctl("list"))
+	fakeOpen(t, e.env, "")
+	page := openPage(t, e.track(t, id, id))
+	page.waitFor(t, `document.querySelector(".headline")?.textContent`, "Job failed")
+	if got := page.eval(t, `document.querySelector(".detail .cmd")?.textContent`); got != "loopctl rm "+id {
+		t.Fatalf("failed card command %q, want loopctl rm %s for a job with no worktree", got, id)
+	}
 }
 
 func TestTrackPageOfAJobThatRanOutOfTimeSaysOutOfTime(t *testing.T) {
