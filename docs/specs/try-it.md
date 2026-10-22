@@ -29,8 +29,9 @@ Every done Job carries a Test guide, and `loopctl try <job>` readies the Job's o
 - `go test -race ./...`
 - `golangci-lint run`
 - `go test ./internal/runner/ -run TestStageTryField` (AC-1)
+- `go test ./internal/job/ -run TestLandPromptAsksForTheTestGuideInTry` (AC-1)
 - `go test ./internal/job/ -run 'TestReportTryIt|TestReportNoTestGuide|TestTestGuideCut'` (AC-2, AC-3)
-- `go test ./internal/daemon/ -run 'TestTry|TestTakeoverDoneNamesTry'` (AC-4, AC-6, AC-7, AC-8)
+- `go test ./internal/daemon/ -run 'TestTry|TestTakeoverDoneNamesTry|TestTakeoverOfAJobWithoutAWorktreeNamesRm'` (AC-4, AC-6, AC-7, AC-8)
 - `go test ./e2e/ -run 'TestTry|TestHelp'` (AC-5, AC-9)
 - `grep -n 'try <job>\|worktreeinclude' README.md cmd/loopctl/main.go docs/specs/loopgate.md skills/loopgate/SKILL.md` (AC-9)
 - Demo: a rojak-backend-api Job from a Spec with a `Demo:` line ends done; its PR shows `### Try it` with the Test guide; `loopctl try <prefix>` copies `.env` and prints the guide; starting the app from that worktree as the guide says serves the changed endpoints in Swagger.
