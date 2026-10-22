@@ -56,6 +56,21 @@ func TestTakeoverOfBlockedJob(t *testing.T) {
 	}
 }
 
+func TestTakeoverOfAJobWithoutAWorktreeNamesRm(t *testing.T) {
+	r := newRunEnv(t)
+	j, err := r.st.CreateJob("deps")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.st.SetJobState(j.ID, store.Failed); err != nil {
+		t.Fatal(err)
+	}
+	want := "job " + j.ID + " never got a worktree: this job cannot be taken over; to remove it, run `loopctl rm " + j.ID + "`"
+	if _, err := r.d.Takeover(j.ID); !errors.Is(err, ErrNotTakeable) || err.Error() != want {
+		t.Fatalf("got %v, want ErrNotTakeable as %q", err, want)
+	}
+}
+
 func TestTakeoverDoneNamesTry(t *testing.T) {
 	r := newRunEnv(t)
 	r.release()

@@ -158,7 +158,7 @@ func (d *Daemon) Takeover(id string) (store.Job, error) {
 		return j, nil
 	}
 	if j.Worktree == "" {
-		return store.Job{}, fmt.Errorf("job %s never got a worktree: %w", id, ErrNotTakeable)
+		return store.Job{}, fmt.Errorf("job %s never got a worktree: %w; to remove it, run `loopctl rm %s`", id, ErrNotTakeable, id)
 	}
 	if err := d.st.SetJobState(id, store.Manual); err != nil {
 		return store.Job{}, err

@@ -33,12 +33,16 @@ func (d *Daemon) Try(id string) (Tried, error) {
 	if err != nil {
 		return Tried{}, err
 	}
-	switch j.State {
-	case store.Done:
-	case store.Blocked, store.Failed, store.Exhausted:
-		return Tried{}, fmt.Errorf("job %s is %s: %w; to work in it, run `loopctl takeover %s`", id, j.State, ErrNotDone, id)
+	switch {
+	case j.State == store.Done:
+	case j.State == store.Queued || j.State == store.Running:
+		return Tried{}, fmt.Errorf("job %s is %s: %w; wait for it to end, following it with `loopctl logs -f %s`", id, j.State, ErrNotDone, id)
+	case j.State == store.Manual:
+		return Tried{}, fmt.Errorf("job %s is %s: %w; to try it, hand it back with `loopctl handback %s` and try it once it is done", id, j.State, ErrNotDone, id)
+	case j.Worktree == "":
+		return Tried{}, fmt.Errorf("job %s is %s: %w; it never got a worktree, so to remove it, run `loopctl rm %s`", id, j.State, ErrNotDone, id)
 	default:
-		return Tried{}, fmt.Errorf("job %s is %s: %w", id, j.State, ErrNotDone)
+		return Tried{}, fmt.Errorf("job %s is %s: %w; to work in it, run `loopctl takeover %s`", id, j.State, ErrNotDone, id)
 	}
 	d.mu.Lock()
 	loop, ok := d.loops[j.Loop]
@@ -48,6 +52,8 @@ func (d *Daemon) Try(id string) (Tried, error) {
 	}
 	if _, err := os.Stat(j.Worktree); errors.Is(err, os.ErrNotExist) {
 		return Tried{}, fmt.Errorf("job %s: its worktree %s is gone; to remove the job, run `loopctl rm %s`", id, Tilde(j.Worktree), id)
+	} else if err != nil {
+		return Tried{}, fmt.Errorf("job %s: %w", id, err)
 	}
 	files, err := d.included(loop.Checkout)
 	if err != nil {
@@ -57,14 +63,14 @@ func (d *Daemon) Try(id string) (Tried, error) {
 	if err != nil {
 		return Tried{}, err
 	}
-	var tracked []string
+	var unignored []string
 	for _, f := range files {
 		if !slices.Contains(ignored, f) {
-			tracked = append(tracked, f)
+			unignored = append(unignored, f)
 		}
 	}
-	if tracked != nil {
-		return Tried{}, fmt.Errorf("job %s: its branch %s does not ignore %s, so a copy could be committed, and nothing was copied; to copy these files, ignore them in that branch's .gitignore", id, j.Branch, strings.Join(tracked, ", "))
+	if err := d.refuseUnignored(j, loop.Checkout, unignored); err != nil {
+		return Tried{}, err
 	}
 	root, err := os.OpenRoot(j.Worktree)
 	if err != nil {
@@ -77,6 +83,27 @@ func (d *Daemon) Try(id string) (Tried, error) {
 		}
 	}
 	return Tried{Job: j, Checkout: loop.Checkout, Copied: files}, nil
+}
+
+// refuseUnignored fails when j's branch tracks or does not ignore any of
+// files, naming the remedy for each: a tracked file would be overwritten, and
+// an untracked one could be committed.
+func (d *Daemon) refuseUnignored(j store.Job, checkout string, files []string) error {
+	if files == nil {
+		return nil
+	}
+	listed, err := runner.Git(d.ctx, 30*time.Second, j.Worktree, append([]string{"--literal-pathspecs", "ls-files", "-z", "--"}, files...)...)
+	if err != nil {
+		return err
+	}
+	if tracked := strings.FieldsFunc(listed, func(r rune) bool { return r == 0 }); len(tracked) > 0 {
+		return fmt.Errorf("job %s: its branch %s tracks %s, so a copy would overwrite committed content, and nothing was copied; to try the job, remove them from %s or from that branch", j.ID, j.Branch, strings.Join(tracked, ", "), Tilde(filepath.Join(checkout, ".worktreeinclude")))
+	}
+	exclude, err := runner.Git(d.ctx, 30*time.Second, checkout, "rev-parse", "--path-format=absolute", "--git-path", "info/exclude")
+	if err != nil {
+		return err
+	}
+	return fmt.Errorf("job %s: its branch %s does not ignore %s, so a copy could be committed, and nothing was copied; to copy these files, add them to %s", j.ID, j.Branch, strings.Join(files, ", "), Tilde(exclude))
 }
 
 // included is the regular files of checkout, relative to it, that its
