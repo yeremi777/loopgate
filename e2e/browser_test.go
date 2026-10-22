@@ -73,7 +73,7 @@ func TestTrackPageOfAHandedBackJobNamesTheStageItRunsAgain(t *testing.T) {
 	page.waitFor(t, `document.querySelector(".live .section-head .muted")?.textContent`, "Implement 1")
 }
 
-func TestTrackPageKeepsARetriedGatePendingWhileARetryRunsAndFailsItOnlyWhenTheJobEndsThere(t *testing.T) {
+func TestTrackPageKeepsARetriedGatePendingWhileARetryRunsAndFailsItOnceTheJobEnds(t *testing.T) {
 	type step struct {
 		at   int
 		note string
@@ -86,6 +86,7 @@ func TestTrackPageKeepsARetriedGatePendingWhileARetryRunsAndFailsItOnlyWhenTheJo
 	}{
 		{"verify", `result "missed ok.txt"`, `result "missed ok.txt"; exit 0`, `result "clean"`, step{2, "verify 1 failed"}, []step{{2, "verify 2 failed"}}},
 		{"rubric", `result "kept ok"`, "sleep 0", revise, step{3, "rubric 1 revise"}, []step{{3, "rubric 2 revise"}}},
+		{"rubric then verify", `git rm -q ok.txt && git -c user.name=t -c user.email=t@example.com commit -q -m rm && result "removed ok"`, "sleep 0", revise, step{3, "rubric 1 revise"}, []step{{2, "verify 2 failed"}, {3, "rubric 1 revise"}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			retrying, retried := hold(t)

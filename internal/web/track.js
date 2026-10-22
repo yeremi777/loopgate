@@ -199,9 +199,9 @@ function stepper(job, cur) {
       state = { done: "done", pass: "done", blocked: "blocked" }[last.status] || "failed";
       if (job.State === "blocked" && last === lastRow) state = "blocked";
     }
-    // a failed verify or rubric stays pending while a later run can still pass it
+    // a failed verify or rubric stays pending while the Job can still run
     const gateFailed = (kind === "verify" || kind === "rubric") && state === "failed";
-    const retried = gateFailed && !(endedInFailure.has(job.State) && last === lastRow);
+    const retried = gateFailed && !endedInFailure.has(job.State);
     if (retried) state = "pending";
     const runs = mine.length + (state === "current" ? 1 : 0);
     if (state === "skipped") {
