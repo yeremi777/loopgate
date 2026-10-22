@@ -330,7 +330,7 @@ function stagesTable() {
 
 function notice() {
   if (view.problem) return el("div", "notice", el("strong", null, "loopd returned an error"), el("span", "muted", " · " + view.problem));
-  if (view.stoppedAt) return el("div", "notice", el("strong", null, "loopd stopped"), el("span", "muted", " · run loopctl install to start it, then reload this page"));
+  if (view.stoppedAt) return el("div", "notice", el("strong", null, "loopd stopped"), el("span", "muted", " · reload this page; if it does not load, run loopctl install"));
   return null;
 }
 

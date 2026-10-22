@@ -52,7 +52,7 @@ func TestTrackPageSaysLoopdStoppedWhenLoopdStops(t *testing.T) {
 	if err := e.loopd.Process.Signal(syscall.SIGTERM); err != nil {
 		t.Fatal(err)
 	}
-	page.waitFor(t, `document.querySelector(".notice")?.textContent`, "loopd stopped · run loopctl install to start it, then reload this page")
+	page.waitFor(t, `document.querySelector(".notice")?.textContent`, "loopd stopped · reload this page; if it does not load, run loopctl install")
 	if got := page.eval(t, `document.querySelector(".state-label").textContent + " | " + document.querySelectorAll(".stages .s-running, .live").length`); got != "last seen running | 0" {
 		t.Fatalf("once loopd stopped: %q, want a stale card and no running row or live section", got)
 	}
