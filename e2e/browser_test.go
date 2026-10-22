@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"syscall"
@@ -16,8 +17,9 @@ import (
 const chromePath = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 
 func TestTrackPageFollowsTheJobLiveAndMovesToItsEndWithoutAReload(t *testing.T) {
+	implementing, implemented := hold(t)
 	claude := strings.Replace(streamClaude, "sleep STAGE_SLEEP",
-		`say '{"type":"text","text":"<img src=x onerror=alert(1)><b>bold</b>"}'; sleep 4`, 1)
+		`say '{"type":"text","text":"<img src=x onerror=alert(1)><b>bold</b>"}'; `+implementing, 1)
 	e, id := startJobOf(t, claude)
 	fakeOpen(t, e.env, "")
 	page := openPage(t, e.track(t, id, id))
@@ -34,6 +36,7 @@ func TestTrackPageFollowsTheJobLiveAndMovesToItsEndWithoutAReload(t *testing.T) 
 		t.Fatalf("last stages row %q, want the running stage", got)
 	}
 	page.noEmDash(t)
+	implemented()
 
 	page.waitFor(t, `document.querySelector(".headline")?.textContent`, "Draft PR opened")
 	if got := page.eval(t, `document.querySelector(".pr-link").textContent + " | " + document.querySelectorAll(".live").length`); got != "Open PR #9 | 0" {
@@ -71,34 +74,44 @@ func TestTrackPageOfAHandedBackJobNamesTheStageItRunsAgain(t *testing.T) {
 }
 
 func TestTrackPageKeepsARetriedGatePendingWhileARetryRunsAndFailsItOnlyWhenTheJobEndsThere(t *testing.T) {
-	retry := `case "$prompt" in *"did not pass"*) sleep 4; result "kept ok"; exit 0;; esac; `
+	type step struct {
+		at   int
+		note string
+	}
+	revise := `printf '{"type":"result","is_error":false,"total_cost_usd":0.1,"structured_output":{"status":"revise","summary":"fix it"}}\n'`
 	for _, tc := range []struct {
-		name, claude   string
-		step           int
-		retried, ended string
+		name, implement2, rest, rubric string
+		retried                        step
+		ended                          []step
 	}{
-		{"verify", strings.Replace(streamClaude, "sleep STAGE_SLEEP", retry+`result "missed ok.txt"; exit 0`, 1), 2, "verify 1 failed", "verify 2 failed"},
-		{"rubric", strings.NewReplacer("sleep STAGE_SLEEP", retry, `result "clean"`, `printf '{"type":"result","is_error":false,"total_cost_usd":0.1,"structured_output":{"status":"revise","summary":"fix it"}}\n'`).Replace(streamClaude), 3, "rubric 1 revise", "rubric 2 revise"},
+		{"verify", `result "missed ok.txt"`, `result "missed ok.txt"; exit 0`, `result "clean"`, step{2, "verify 1 failed"}, []step{{2, "verify 2 failed"}}},
+		{"rubric", `result "kept ok"`, "sleep 0", revise, step{3, "rubric 1 revise"}, []step{{3, "rubric 2 revise"}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			e, id := startJobOf(t, tc.claude)
+			retrying, retried := hold(t)
+			claude := strings.NewReplacer(
+				"sleep STAGE_SLEEP", `case "$prompt" in *"did not pass"*) `+retrying+`; `+tc.implement2+`; exit 0;; esac; `+tc.rest,
+				`result "clean"`, tc.rubric).Replace(streamClaude)
+			e, id := startJobOf(t, claude)
 			fakeOpen(t, e.env, "")
 			page := openPage(t, e.track(t, id, id))
-			gate := fmt.Sprintf(`document.querySelectorAll(".step")[%d]`, tc.step)
-			step := gate + `.className + " | " + ` + gate + `.querySelector(".step-note").textContent + " | " + ` + gate + `.querySelectorAll(".node svg").length`
+			state := func(at int) string {
+				s := fmt.Sprintf(`document.querySelectorAll(".step")[%d]`, at)
+				return page.eval(t, s+`.className + " | " + `+s+`.querySelector(".step-note").textContent + " | " + `+s+`.querySelectorAll(".node svg").length + " | " + getComputedStyle(`+s+`.querySelector(".step-note")).color`)
+			}
 
 			page.waitFor(t, `document.querySelector(".headline")?.textContent`, "Implementing, run 2 of 2")
-			if got, want := page.eval(t, step), "step st-pending | "+tc.retried+" | 0"; got != want {
-				t.Fatalf("%s step while implement 2 runs: %q, want %q", tc.name, got, want)
-			}
-			if got := page.eval(t, `getComputedStyle(`+gate+`.querySelector(".step-note")).color`); got != "rgb(248, 81, 73)" {
-				t.Fatalf("%s note color %s, want --danger", tc.retried, got)
+			if got, want := state(tc.retried.at), "step st-pending | "+tc.retried.note+" | 0 | rgb(248, 81, 73)"; got != want {
+				t.Fatalf("step %d while implement 2 runs: %q, want a pending node with a red note: %q", tc.retried.at, got, want)
 			}
 			page.noEmDash(t)
+			retried()
 
 			page.waitFor(t, `document.querySelector(".headline")?.textContent`, "Out of attempts")
-			if got, want := page.eval(t, step), "step st-failed | "+tc.ended+" | 1"; got != want {
-				t.Fatalf("%s step once the job ended there: %q, want %q", tc.name, got, want)
+			for _, s := range tc.ended {
+				if got, want := state(s.at), "step st-failed | "+s.note+" | 1 | rgb(248, 81, 73)"; got != want {
+					t.Fatalf("step %d once the job ended: %q, want a failed node with its x and red note: %q", s.at, got, want)
+				}
 			}
 			if got := page.eval(t, `document.querySelector(".detail .cmd")?.textContent`); got != "loopctl takeover "+id {
 				t.Fatalf("exhausted card command %q, want loopctl takeover %s", got, id)
@@ -109,10 +122,12 @@ func TestTrackPageKeepsARetriedGatePendingWhileARetryRunsAndFailsItOnlyWhenTheJo
 }
 
 func TestTrackPageOfAFailedJobWaitsForTheStagesFirstToolCallThenShowsTheErrorAndTakeover(t *testing.T) {
-	e, id := startJobOf(t, "#!/bin/sh\nsleep 15\nexit 1\n")
+	failing, fail := hold(t)
+	e, id := startJobOf(t, "#!/bin/sh\n"+failing+"\nexit 1\n")
 	fakeOpen(t, e.env, "")
 	page := openPage(t, e.track(t, id, id))
 	page.waitFor(t, `document.querySelector(".live .empty")?.textContent`, "Waiting for the first tool call of Implement 1")
+	fail()
 	page.waitFor(t, `document.querySelector(".headline")?.textContent`, "Job failed")
 	if got := page.eval(t, `document.querySelector(".detail .cmd")?.textContent`); got != "loopctl takeover "+id {
 		t.Fatalf("failed card command %q, want loopctl takeover %s", got, id)
@@ -154,6 +169,17 @@ func TestTrackPageShowsTheErrorLoopdReturned(t *testing.T) {
 	e.mustLoopctl("rm", id)
 	page.eval(t, `load().then(render, fail)`)
 	page.waitFor(t, `document.querySelector(".notice")?.textContent`, "loopd returned an error · job "+id+": not found")
+}
+
+// hold is a shell line that waits until release runs, so a fake stays in its
+// stage until the test has looked at the page.
+func hold(t *testing.T) (wait string, release func()) {
+	file := filepath.Join(t.TempDir(), "released")
+	return "until [ -f '" + file + "' ]; do sleep 0.1; done", func() {
+		if err := os.WriteFile(file, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
 }
 
 // page is one tab of a headless Chrome driven over its DevTools pipe.
