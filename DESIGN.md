@@ -32,3 +32,6 @@ A state color's chip and icon halo use it at 15%; the status card is tinted with
 - Content width: at most 960px, 16px side gutter
 - Icons: Lucide (check, x, pause, chevron-right, external-link), inline SVG
 - No motion but the chevron's turn, no gradients, no glow
+
+## Text
+- No em dashes in page text; an empty cell stays empty
