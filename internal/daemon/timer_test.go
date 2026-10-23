@@ -1,11 +1,8 @@
 package daemon
 
 import (
-	"errors"
 	"testing"
 	"time"
-
-	"github.com/yeremi777/loopgate/internal/store"
 )
 
 var t0 = time.Date(2026, 10, 19, 9, 0, 0, 0, time.UTC)
@@ -22,7 +19,7 @@ func TestTickFiresTimerLoopOnItsSchedule(t *testing.T) {
 	if n := r.jobCount(t); n != 1 {
 		t.Fatalf("%d jobs after the fire came due, want 1", n)
 	}
-	if j := r.waitDone(t, 1); j.Work != "task bump go dependencies" {
+	if j := r.waitDone(t, r.nth(t, 1)); j.Work != "task bump go dependencies" {
 		t.Fatalf("fired job %+v", j)
 	}
 }
@@ -36,7 +33,7 @@ func TestTickSkipsFireWhileBusyWithoutCatchUp(t *testing.T) {
 		t.Fatalf("%d jobs while the first still runs, want 1", n)
 	}
 	r.release()
-	r.waitDone(t, 1)
+	r.waitDone(t, r.nth(t, 1))
 	r.d.Tick(t0.Add(2*time.Hour + time.Minute))
 	if n := r.jobCount(t); n != 1 {
 		t.Fatalf("skipped fire was caught up: %d jobs", n)
@@ -45,7 +42,7 @@ func TestTickSkipsFireWhileBusyWithoutCatchUp(t *testing.T) {
 	if n := r.jobCount(t); n != 2 {
 		t.Fatalf("%d jobs at the next fire, want 2", n)
 	}
-	r.waitDone(t, 2)
+	r.waitDone(t, r.nth(t, 2))
 }
 
 func TestTickSkipsPausedAndRemovedLoops(t *testing.T) {
@@ -72,16 +69,25 @@ func TestTickSkipsPausedAndRemovedLoops(t *testing.T) {
 	}
 }
 
-// jobCount counts stored Jobs; ids start at 1 and have no gaps.
+// jobCount counts stored Jobs, of which these tests end at most five.
 func (r *runEnv) jobCount(t *testing.T) int {
 	t.Helper()
-	n := 0
-	for {
-		if _, err := r.st.Job(int64(n + 1)); errors.Is(err, store.ErrNotFound) {
-			return n
-		} else if err != nil {
-			t.Fatal(err)
-		}
-		n++
+	jobs, err := r.st.Jobs()
+	if err != nil {
+		t.Fatal(err)
 	}
+	return len(jobs)
+}
+
+// nth is the id of the nth Job created, counting from 1.
+func (r *runEnv) nth(t *testing.T, n int) string {
+	t.Helper()
+	jobs, err := r.st.Jobs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs) < n {
+		t.Fatalf("%d jobs, want at least %d", len(jobs), n)
+	}
+	return jobs[len(jobs)-n].ID
 }

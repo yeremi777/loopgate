@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"syscall"
@@ -196,6 +197,16 @@ func (e env) startLoopd() *exec.Cmd {
 	return nil
 }
 
+// jobIDs are the job ids that loopctl list shows, in its order.
+func (e env) jobIDs() []string {
+	e.t.Helper()
+	var ids []string
+	for _, m := range regexp.MustCompile(`(?m)^  ([0-9a-f]{12}) `).FindAllStringSubmatch(e.mustLoopctl("list"), -1) {
+		ids = append(ids, m[1])
+	}
+	return ids
+}
+
 func hasRow(out, name, state string) bool {
 	for _, line := range strings.Split(out, "\n") {
 		if f := strings.Fields(line); len(f) >= 2 && f[0] == name && f[1] == state {
@@ -378,6 +389,9 @@ func TestHelpExitsZeroAndExplainsStop(t *testing.T) {
 		}
 		if !strings.Contains(out, "stop <loop>") || strings.Contains(out, "<name>") || !strings.Contains(out, "end the loop's running job") {
 			t.Fatalf("usage does not say what stop does:\n%s", out)
+		}
+		if strings.Count(out, "loopctl logs") != 1 || !strings.Contains(out, "\n  loopctl logs [-f] <job> ") || !strings.Contains(out, "\n  loopctl rm <job> ") {
+			t.Fatalf("usage lacks one logs [-f] <job> line and an rm <job> line:\n%s", out)
 		}
 	}
 }

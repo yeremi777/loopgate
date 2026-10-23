@@ -6,7 +6,7 @@ loopgate is a local macOS service, `loopd`, and its CLI, `loopctl`. It runs Clau
 ## Modules
 - **config**: parses a Loop file into a typed Loop, and refuses anything incomplete or ambiguous at load time.
 - **store**: keeps Loop, Job and claimed-issue state in SQLite, so it survives restarts.
-- **daemon**: owns the registered Loops and the single running slot: admits a Loop through `loopctl add` only after its checkout checks and Trial gate pass, starts, stops, takes over and hands back Jobs, fires timers, and polls issues.
+- **daemon**: owns the registered Loops and the single running slot: admits a Loop through `loopctl add` only after its checkout checks and Trial gate pass, starts, stops, takes over, hands back and removes Jobs, fires timers, and polls issues.
 - **job**: carries one Job through drill, implement, the Verify gate, rubric and land, within the Loop's bounds.
 - **feed**: holds the running Job's live events in memory for `loopctl logs -f`: earlier stages as their start and end, the current stage in full.
 - **verify**: decides whether a tree may ship: the Verify gate with its Setup command, protected paths, test changes, and the after-land check.

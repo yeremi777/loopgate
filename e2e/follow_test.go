@@ -158,7 +158,7 @@ func startStreamJob(t *testing.T, sleep string) (streamEnv, string) {
 	}
 	e.load(file)
 	loopd := e.startLoopd()
-	m := regexp.MustCompile(`job (\d+) running`).FindStringSubmatch(e.mustLoopctl("run", "deps"))
+	m := regexp.MustCompile(`job ([0-9a-f]{12}) running`).FindStringSubmatch(e.mustLoopctl("run", "deps"))
 	if m == nil {
 		t.Fatal("run printed no job id")
 	}

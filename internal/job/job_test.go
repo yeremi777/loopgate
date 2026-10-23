@@ -502,7 +502,7 @@ func newJob(t *testing.T, maxIterations int) Job {
 		t.Fatal(err)
 	}
 	return Job{
-		ID: 1,
+		ID: "0123456789ab",
 		Loop: config.Loop{
 			Name:     "x",
 			Verify:   `test -f ok.txt || { echo "missing ok.txt"; exit 1; }`,

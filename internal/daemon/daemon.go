@@ -190,6 +190,9 @@ func (d *Daemon) List() ([]LoopStatus, error) {
 // Jobs are the Jobs in progress and the newest that ended.
 func (d *Daemon) Jobs() ([]store.Job, error) { return d.st.Jobs() }
 
+// Resolve is the id of the one Job whose id starts with prefix, in any letter case.
+func (d *Daemon) Resolve(prefix string) (string, error) { return d.st.Resolve(prefix) }
+
 func triggerName(t config.Trigger) string {
 	if gh, ok := t.(config.GitHub); ok {
 		return "github " + gh.Repo

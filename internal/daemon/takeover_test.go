@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -75,7 +76,7 @@ func TestHandbackRunsTheLoopAgainOnTheHumansCommits(t *testing.T) {
 	gittest.Run(t, started.Worktree, "add", "human.txt")
 	gittest.Run(t, started.Worktree, "commit", "-q", "-m", "human work")
 
-	if _, err := r.d.Handback(started.ID + 100); !errors.Is(err, store.ErrNotFound) {
+	if _, err := r.d.Handback("999999999999"); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("handback of unknown job: %v", err)
 	}
 	r.release()
@@ -146,21 +147,88 @@ func TestHandbackOfAnIssueJobStillAnswersTheIssue(t *testing.T) {
 	r.release()
 	r.d.Tick(t0)
 	r.d.Tick(t0.Add(10 * time.Minute))
-	if j := r.waitDone(t, 1); j.State != store.Blocked || j.Issue != 6 {
+	if j := r.waitDone(t, r.nth(t, 1)); j.State != store.Blocked || j.Issue != 6 {
 		t.Fatalf("job %+v", j)
 	}
-	if _, err := r.d.Takeover(1); err != nil {
+	if _, err := r.d.Takeover(r.nth(t, 1)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.d.Handback(1); err != nil {
+	if _, err := r.d.Handback(r.nth(t, 1)); err != nil {
 		t.Fatal(err)
 	}
-	if j := r.waitDone(t, 1); j.State != store.Done {
+	if j := r.waitDone(t, r.nth(t, 1)); j.State != store.Done {
 		t.Fatalf("after handback %+v", j)
 	}
 	said := r.issues.said(6)
 	if len(said) != 2 || !strings.Contains(said[1], "https://github.com/me/app/pull/1") {
 		t.Fatalf("issue 6 comments %q", said)
+	}
+}
+
+func TestOldJobDirKeepsItsIntegerNameForLogsTakeoverAndHandback(t *testing.T) {
+	r := newRunEnv(t)
+	r.stages.failFirst = true
+	dir := filepath.Join(r.d.home, "jobs", "1")
+	wt := filepath.Join(dir, "worktree")
+	made, err := runner.CreateWorktree(t.Context(), runner.Worktree{Checkout: r.checkout, Path: wt, Branch: "loop/deps-20260101-000000-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(filepath.Join(dir, "progress.md"), "## iteration 1\nfrom before the upgrade\n")
+	old, err := r.st.CreateJob("deps")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.st.StartJob(old.ID, store.Start{Work: "task bump go dependencies", Branch: "loop/deps-20260101-000000-1", Worktree: wt, Base: made.Base}); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.st.FinishJob(old.ID, store.Finish{State: store.Blocked, Question: "which db?"}); err != nil {
+		t.Fatal(err)
+	}
+
+	log, err := r.d.Job(old.ID)
+	if err != nil || !strings.Contains(log.Progress, "from before the upgrade") {
+		t.Fatalf("log of an old job: %+v, %v", log, err)
+	}
+	if _, err := r.d.Takeover(old.ID); err != nil {
+		t.Fatal(err)
+	}
+	r.release()
+	if _, err := r.d.Handback(old.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got := r.waitDone(t, old.ID); got.State != store.Done {
+		t.Fatalf("old job after handback %+v", got)
+	}
+	if progress := readFile(t, filepath.Join(dir, "progress.md")); !strings.Contains(progress, "from before the upgrade") || !strings.Contains(progress, "missing ok.txt") {
+		t.Fatalf("progress of the old job:\n%s", progress)
+	}
+	if _, err := os.Stat(r.d.jobDir(old.ID)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("handback made a second directory for the old job: %v", err)
+	}
+}
+
+func TestEndCommitIsWhereTheBranchPointsWhenTheJobEnds(t *testing.T) {
+	r := newRunEnv(t)
+	r.release()
+	shipped, err := r.d.Run("deps", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := r.waitDone(t, shipped.ID)
+	if head := runGit(t, r.checkout, "rev-parse", "refs/heads/"+done.Branch); done.State != store.Done || done.EndCommit != head || head == done.Base {
+		t.Fatalf("done job %+v; want end commit %s past the base", done, head)
+	}
+
+	r.stages.blockFirst = true
+	r.stages.prompts = nil
+	blocked, err := r.d.Run("deps", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := r.waitDone(t, blocked.ID)
+	if got.State != store.Blocked || got.EndCommit != got.Base {
+		t.Fatalf("blocked job %+v; want end commit at its base", got)
 	}
 }
 

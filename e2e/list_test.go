@@ -49,6 +49,37 @@ func TestListAgainstAnOlderLoopdNamesInstallAndPrintsNothing(t *testing.T) {
 	}
 }
 
+func TestListAgainstALoopdWithIntegerJobIDsNamesInstallAndPrintsNothing(t *testing.T) {
+	e := newEnv(t, "exit 0")
+	ln, err := net.Listen("unix", filepath.Join(e.home, "loopd.sock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	job := `{"ID":1,"Loop":"fix","State":"done","Work":"task x","Branch":"loop/fix-20260101-000000-1","Worktree":"/h/jobs/1/worktree","PRURL":"https://github.com/me/app/pull/1"}`
+	old := http.NewServeMux()
+	old.HandleFunc("GET /loops", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"data":[{"name":"fix","paused":false,"trigger":"timer","checkout":"/repo"}]}`))
+	})
+	old.HandleFunc("GET /jobs", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"data":[` + job + `]}`))
+	})
+	old.HandleFunc("GET /jobs/1", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"data":{"job":` + job + `,"progress":""}}`))
+	})
+	old.HandleFunc("POST /jobs/1/takeover", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"data":` + job + `}`))
+	})
+	go func() { _ = http.Serve(ln, old) }()
+
+	for _, args := range [][]string{{"list"}, {"logs", "1"}, {"takeover", "1"}} {
+		out, code := e.loopctl(args...)
+		if code == 0 || !strings.Contains(out, "200 OK") || !strings.Contains(out, "loopctl install") || strings.Contains(out, "fix") {
+			t.Fatalf("loopctl %v against a loopd with integer job ids: exit %d\n%s", args, code, out)
+		}
+	}
+}
+
 func TestListWithoutLoopsSaysHowToAddOne(t *testing.T) {
 	e := newEnv(t, "exit 0")
 	e.startLoopd()
@@ -82,18 +113,19 @@ func TestListShowsEachLoopWithItsJobsAndColorsOnlyATerminal(t *testing.T) {
 	}
 	e.startLoopd()
 
+	id := map[string]string{}
 	for _, run := range [][2]string{{"add", "done"}, {"ask", "blocked"}, {"hand", "blocked"}, {"boom", "failed"}, {"tire", "exhausted"}} {
 		loop, state := run[0], run[1]
-		id := regexp.MustCompile(`job (\d+) running`).FindStringSubmatch(e.mustLoopctl("run", loop))[1]
-		for deadline := time.Now().Add(30 * time.Second); field(e.mustLoopctl("logs", id), "state") != state; time.Sleep(100 * time.Millisecond) {
+		id[loop] = regexp.MustCompile(`job ([0-9a-f]{12}) running`).FindStringSubmatch(e.mustLoopctl("run", loop))[1]
+		for deadline := time.Now().Add(30 * time.Second); field(e.mustLoopctl("logs", id[loop]), "state") != state; time.Sleep(100 * time.Millisecond) {
 			if time.Now().After(deadline) {
-				t.Fatalf("job %s of %s never reached %s", id, loop, state)
+				t.Fatalf("job %s of %s never reached %s", id[loop], loop, state)
 			}
 		}
 	}
-	e.mustLoopctl("takeover", "3")
+	e.mustLoopctl("takeover", id["hand"])
 	e.mustLoopctl("remove", "add")
-	e.mustLoopctl("run", "slow")
+	id["slow"] = regexp.MustCompile(`job ([0-9a-f]{12}) running`).FindStringSubmatch(e.mustLoopctl("run", "slow"))[1]
 
 	list := e.cmd("loopctl", "list")
 	list.Env = append(list.Env, "HOME="+root+"/")
@@ -101,25 +133,26 @@ func TestListShowsEachLoopWithItsJobsAndColorsOnlyATerminal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list: %v\n%s", err, plain)
 	}
+	job := "  JOB" + strings.Repeat(" ", 11)
 	want := strings.Join([]string{
 		"add   removed",
-		"  JOB  STATE  WORK             RESULT",
-		"  1    done   task add ok.txt  https://github.com/me/app/pull/9",
+		job + "STATE  WORK             RESULT",
+		"  " + id["add"] + "  done   task add ok.txt  https://github.com/me/app/pull/9",
 		"",
 		"ask   active  timer",
 		"  checkout: ~/checkout",
-		"  JOB  STATE    WORK               RESULT",
-		"  2    blocked  task ask which db  �[2Jwhich database should the new cache use, postgres in pr…",
+		job + "STATE    WORK               RESULT",
+		"  " + id["ask"] + "  blocked  task ask which db  �[2Jwhich database should the new cache use, postgres in pr…",
 		"",
 		"boom  active  timer",
 		"  checkout: ~/checkout",
-		"  JOB  STATE   WORK       RESULT",
-		"  4    failed  task boom  claude reported error: error_max_turns",
+		job + "STATE   WORK       RESULT",
+		"  " + id["boom"] + "  failed  task boom  claude reported error: error_max_turns",
 		"",
 		"hand  active  timer",
 		"  checkout: ~/checkout",
-		"  JOB  STATE   WORK       RESULT",
-		"  3    manual  task hand  taken over",
+		job + "STATE   WORK       RESULT",
+		"  " + id["hand"] + "  manual  task hand  taken over",
 		"",
 		"idle  active  timer",
 		"  checkout: ~/checkout",
@@ -127,13 +160,13 @@ func TestListShowsEachLoopWithItsJobsAndColorsOnlyATerminal(t *testing.T) {
 		"",
 		"slow  active  timer",
 		"  checkout: ~/checkout",
-		"  JOB  STATE    WORK       RESULT",
-		"  6    running  task slow",
+		job + "STATE    WORK       RESULT",
+		"  " + id["slow"] + "  running  task slow",
 		"",
 		"tire  active  timer",
 		"  checkout: ~/checkout",
-		"  JOB  STATE      WORK       RESULT",
-		"  5    exhausted  task tire  1 implement runs did not pass the checks",
+		job + "STATE      WORK       RESULT",
+		"  " + id["tire"] + "  exhausted  task tire  1 implement runs did not pass the checks",
 		"",
 	}, "\n")
 	if string(plain) != want {

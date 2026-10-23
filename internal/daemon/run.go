@@ -59,7 +59,7 @@ var (
 // running is the Job in the slot. id, cancel and feed are zero while its
 // worktree is set up.
 type running struct {
-	id        int64
+	id        string
 	loop      string
 	cancel    context.CancelFunc
 	feed      *feed.Feed
@@ -103,13 +103,13 @@ func (d *Daemon) runWork(name string, workOf func(config.Loop) (job.Work, error)
 
 // Handback returns a taken-over Job to its Loop, which runs implement again
 // in the same worktree, on top of the human's commits.
-func (d *Daemon) Handback(id int64) (store.Job, error) {
+func (d *Daemon) Handback(id string) (store.Job, error) {
 	stored, err := d.st.Job(id)
 	if err != nil {
 		return store.Job{}, err
 	}
 	if stored.State != store.Manual {
-		return store.Job{}, fmt.Errorf("job %d is %s: %w", id, stored.State, ErrNotManual)
+		return store.Job{}, fmt.Errorf("job %s is %s: %w", id, stored.State, ErrNotManual)
 	}
 	d.mu.Lock()
 	loop, ok := d.loops[stored.Loop]
@@ -133,7 +133,7 @@ func (d *Daemon) Handback(id int64) (store.Job, error) {
 
 // Takeover stops a running Job, or takes a Blocked, exhausted or failed one,
 // and marks it manual so the human works in its worktree.
-func (d *Daemon) Takeover(id int64) (store.Job, error) {
+func (d *Daemon) Takeover(id string) (store.Job, error) {
 	d.mu.Lock()
 	cur := d.current
 	if cur != nil && cur.id == id {
@@ -151,14 +151,14 @@ func (d *Daemon) Takeover(id int64) (store.Job, error) {
 	}
 	switch j.State {
 	case store.Done:
-		return store.Job{}, fmt.Errorf("job %d is done; check out %s instead: %w", id, j.Branch, ErrNotTakeable)
+		return store.Job{}, fmt.Errorf("job %s is done; check out %s instead: %w", id, j.Branch, ErrNotTakeable)
 	case store.Queued, store.Running:
-		return store.Job{}, fmt.Errorf("job %d: %w", id, ErrStarting)
+		return store.Job{}, fmt.Errorf("job %s: %w", id, ErrStarting)
 	case store.Manual:
 		return j, nil
 	}
 	if j.Worktree == "" {
-		return store.Job{}, fmt.Errorf("job %d never got a worktree: %w", id, ErrNotTakeable)
+		return store.Job{}, fmt.Errorf("job %s never got a worktree: %w", id, ErrNotTakeable)
 	}
 	if err := d.st.SetJobState(id, store.Manual); err != nil {
 		return store.Job{}, err
@@ -185,7 +185,7 @@ const followPoll = 200 * time.Millisecond
 // Follow sends the running Job's events to send until its outcome is
 // stored, waiting first while the Job starts; for a Job that is not queued
 // or running it returns at once. It fails with ErrStopped when loopd stops.
-func (d *Daemon) Follow(ctx context.Context, id int64, send func(feed.Event) error) error {
+func (d *Daemon) Follow(ctx context.Context, id string, send func(feed.Event) error) error {
 	for {
 		if d.ctx.Err() != nil {
 			return ErrStopped
@@ -259,7 +259,7 @@ func (d *Daemon) start(loop config.Loop, work job.Work) (job.Job, error) {
 	if issue, ok := work.(job.Issue); ok {
 		tag, j.Issue = strconv.Itoa(issue.Number), issue.Number
 	}
-	j.Branch = "loop/" + loop.Name + "-" + tag + "-" + strconv.FormatInt(created.ID, 10)
+	j.Branch = "loop/" + loop.Name + "-" + tag + "-" + created.ID
 	j.Worktree = filepath.Join(j.Dir, "worktree")
 	if err := os.MkdirAll(j.Dir, 0o700); err != nil {
 		return job.Job{}, d.fail(created.ID, err)
@@ -298,7 +298,7 @@ func (d *Daemon) resume(loop config.Loop, stored store.Job) (job.Job, error) {
 		ID:            stored.ID,
 		Loop:          loop,
 		Work:          work,
-		Dir:           d.jobDir(stored.ID),
+		Dir:           d.dirOf(stored),
 		Worktree:      stored.Worktree,
 		Branch:        stored.Branch,
 		DefaultBranch: strings.TrimPrefix(ref, "origin/"),
@@ -313,6 +313,7 @@ func (d *Daemon) resume(loop config.Loop, stored store.Job) (job.Job, error) {
 func (d *Daemon) finish(ctx context.Context, cur *running, j job.Job) {
 	defer d.jobs.Done()
 	out := d.deps.Pipeline.Run(ctx, j)
+	endCommit := d.endCommit(j)
 
 	d.mu.Lock()
 	end := store.Finish{State: out.State, Question: out.Question, Summary: out.Summary, PRURL: out.PRURL, CostUSD: out.CostUSD}
@@ -327,6 +328,7 @@ func (d *Daemon) finish(ctx context.Context, cur *running, j job.Job) {
 	case out.Err != nil:
 		end.Error = out.Err.Error()
 	}
+	end.EndCommit = endCommit
 	if err := d.st.FinishJob(j.ID, end); err != nil {
 		end.Error = errors.Join(out.Err, err).Error()
 	}
@@ -340,6 +342,17 @@ func (d *Daemon) finish(ctx context.Context, cur *running, j job.Job) {
 		d.deps.Notify(notice(j, end))
 		d.answerIssue(j, end)
 	}
+}
+
+// endCommit is the commit j's branch points at, or empty when git cannot
+// say, which keeps the branch from loopctl rm. It runs after loopd began
+// stopping too, so it does not use d.ctx.
+func (d *Daemon) endCommit(j job.Job) string {
+	commit, err := runner.Git(context.Background(), 30*time.Second, j.Worktree, "rev-parse", "--verify", "refs/heads/"+j.Branch)
+	if err != nil {
+		log.Printf("loopd: job %s: end commit: %v", j.ID, err)
+	}
+	return commit
 }
 
 // answerIssue tells an issue's author how its Job ended: the PR link, or the
@@ -395,7 +408,7 @@ func (d *Daemon) poll(name string, gh config.GitHub) {
 }
 
 // fail records a Job that could not start and returns its error.
-func (d *Daemon) fail(id int64, err error) error {
+func (d *Daemon) fail(id string, err error) error {
 	return errors.Join(err, d.st.FinishJob(id, store.Finish{State: store.Failed, Error: err.Error()}))
 }
 
@@ -405,8 +418,17 @@ func (d *Daemon) isBusy() bool {
 	return d.current != nil
 }
 
-func (d *Daemon) jobDir(id int64) string {
-	return filepath.Join(d.home, "jobs", strconv.FormatInt(id, 10))
+func (d *Daemon) jobDir(id string) string {
+	return filepath.Join(d.home, "jobs", id)
+}
+
+// dirOf is a stored Job's directory, the parent of its worktree, so a Job
+// from before random ids keeps its integer-named one.
+func (d *Daemon) dirOf(j store.Job) string {
+	if j.Worktree == "" {
+		return d.jobDir(j.ID)
+	}
+	return filepath.Dir(j.Worktree)
 }
 
 // Close stops the running Job and waits until its outcome is stored.
@@ -422,12 +444,12 @@ type JobLog struct {
 	Progress string    `json:"progress"`
 }
 
-func (d *Daemon) Job(id int64) (JobLog, error) {
+func (d *Daemon) Job(id string) (JobLog, error) {
 	j, err := d.st.Job(id)
 	if err != nil {
 		return JobLog{}, err
 	}
-	progress, err := os.ReadFile(filepath.Join(d.jobDir(id), "progress.md"))
+	progress, err := os.ReadFile(filepath.Join(d.dirOf(j), "progress.md"))
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return JobLog{}, err
 	}
@@ -491,7 +513,7 @@ func parseWork(s string) (job.Work, error) {
 }
 
 func notice(j job.Job, end store.Finish) (string, string) {
-	title := fmt.Sprintf("loopgate: %s job %d %s", j.Loop.Name, j.ID, end.State)
+	title := fmt.Sprintf("loopgate: %s job %s %s", j.Loop.Name, j.ID, end.State)
 	switch end.State {
 	case store.Done:
 		return title, "Draft PR ready: " + end.PRURL

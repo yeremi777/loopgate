@@ -29,7 +29,7 @@ func TestTakeoverThenHandbackShipsTheHumansWork(t *testing.T) {
 	claude, started := hangFirst(t)
 	e.timerLoop(t, "work", claude)
 	out := e.mustLoopctl("run", "work")
-	id := regexp.MustCompile(`job (\d+) running`).FindStringSubmatch(out)[1]
+	id := regexp.MustCompile(`job ([0-9a-f]{12}) running`).FindStringSubmatch(out)[1]
 	started()
 
 	taken := e.mustLoopctl("takeover", id)
@@ -56,11 +56,87 @@ func TestTakeoverThenHandbackShipsTheHumansWork(t *testing.T) {
 	}
 }
 
+func TestPrefixOfAJobIDInAnyCaseNamesTheJobInEveryJobCommand(t *testing.T) {
+	e := newEnv(t, "exit 0")
+	claude, started := hangFirst(t)
+	e.timerLoop(t, "work", claude)
+	out := e.mustLoopctl("run", "work")
+	m := regexp.MustCompile(`job ([0-9a-f]{12}) running on (\S+)`).FindStringSubmatch(out)
+	if m == nil {
+		t.Fatalf("run output %q", out)
+	}
+	id, branch := m[1], m[2]
+	if !strings.HasSuffix(branch, "-"+id) {
+		t.Fatalf("branch %s does not end in the job id %s", branch, id)
+	}
+	if want := filepath.Join(e.home, "jobs", id, "worktree"); !strings.HasSuffix(out, " in "+want+"\n") {
+		t.Fatalf("run output %q; want the worktree %s", out, want)
+	}
+	prefix := strings.ToUpper(id[:4])
+	started()
+
+	if got := field(e.mustLoopctl("logs", prefix), "job"); got != id+" of loop work" {
+		t.Fatalf("logs %s shows job %q", prefix, got)
+	}
+	if taken := e.mustLoopctl("takeover", prefix); !strings.HasPrefix(taken, "job "+id+" is yours") {
+		t.Fatalf("takeover %s: %q", prefix, taken)
+	}
+	if back := e.mustLoopctl("handback", id[:6]); !strings.HasPrefix(back, "job "+id+" is back") {
+		t.Fatalf("handback %s: %q", id[:6], back)
+	}
+	if followed := e.mustLoopctl("logs", "-f", prefix); !strings.HasSuffix(followed, "job "+id+" done: https://github.com/me/app/pull/5\n") {
+		t.Fatalf("logs -f %s:\n%s", prefix, followed)
+	}
+	for _, unknown := range []string{"zz", id + "0"} {
+		if out, code := e.loopctl("logs", unknown); code == 0 || !strings.Contains(out, "not found") {
+			t.Fatalf("logs %s: exit %d, %q", unknown, code, out)
+		}
+	}
+}
+
+func TestRemoveRefusesAJobInProgressThenRemovesTheEndedJobAndPrintsItsPR(t *testing.T) {
+	e := newEnv(t, "exit 0")
+	claude, started := hangFirst(t)
+	checkout := e.timerLoop(t, "work", claude)
+	m := regexp.MustCompile(`job ([0-9a-f]{12}) running on (\S+) in (\S+)`).FindStringSubmatch(e.mustLoopctl("run", "work"))
+	id, branch, wt := m[1], m[2], m[3]
+	started()
+	if out, code := e.loopctl("rm", id[:5]); code == 0 || !strings.Contains(out, "job "+id+" is running") {
+		t.Fatalf("rm of a running job: exit %d, %q", code, out)
+	}
+	e.mustLoopctl("takeover", id)
+	if out, code := e.loopctl("rm", id); code == 0 || !strings.Contains(out, "job "+id+" is manual") {
+		t.Fatalf("rm of a manual job: exit %d, %q", code, out)
+	}
+	e.mustLoopctl("handback", id)
+	e.waitState(t, id, "done")
+
+	out := e.mustLoopctl("rm", strings.ToUpper(id[:5]))
+	if want := "removed job " + id + " of loop work\npr: https://github.com/me/app/pull/5\n"; out != want {
+		t.Fatalf("rm output %q, want %q", out, want)
+	}
+	if _, err := os.Stat(filepath.Dir(wt)); !os.IsNotExist(err) {
+		t.Fatalf("job directory stays: %v", err)
+	}
+	if list := gitIn(t, checkout, "worktree", "list"); strings.Contains(list, id) {
+		t.Fatalf("worktree still registered:\n%s", list)
+	}
+	if heads := gitIn(t, checkout, "branch", "--list", branch); heads != "" {
+		t.Fatalf("branch %s stays: %q", branch, heads)
+	}
+	if out, code := e.loopctl("logs", id); code == 0 || !strings.Contains(out, "not found") {
+		t.Fatalf("logs of a removed job: exit %d, %q", code, out)
+	}
+	if ids := e.jobIDs(); len(ids) != 0 {
+		t.Fatalf("list still shows %v", ids)
+	}
+}
+
 func TestStopEndsARunningJob(t *testing.T) {
 	e := newEnv(t, "exit 0")
 	claude, started := hangFirst(t)
 	e.timerLoop(t, "work", claude)
-	id := regexp.MustCompile(`job (\d+) running`).FindStringSubmatch(e.mustLoopctl("run", "work"))[1]
+	id := regexp.MustCompile(`job ([0-9a-f]{12}) running`).FindStringSubmatch(e.mustLoopctl("run", "work"))[1]
 	started()
 	e.mustLoopctl("stop", "work")
 	e.waitState(t, id, "failed")

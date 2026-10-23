@@ -79,7 +79,7 @@ func TestFollowOfAJobThatIsNotRunningReturnsAtOnce(t *testing.T) {
 	if err := r.d.Follow(context.Background(), started.ID, func(feed.Event) error { sent++; return nil }); err != nil || sent != 0 {
 		t.Fatalf("follow of a done job: %v, %d events", err, sent)
 	}
-	if err := r.d.Follow(context.Background(), 99, func(feed.Event) error { return nil }); !errors.Is(err, store.ErrNotFound) {
+	if err := r.d.Follow(context.Background(), "999999999999", func(feed.Event) error { return nil }); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("follow of an unknown job: %v", err)
 	}
 }

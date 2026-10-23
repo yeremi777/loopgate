@@ -63,22 +63,29 @@ func Serve(ln net.Listener, d *daemon.Daemon) error {
 		reply(w, jobs, err)
 	})
 	mux.HandleFunc("GET /jobs/{id}", func(w http.ResponseWriter, r *http.Request) {
-		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		id, err := d.Resolve(r.PathValue("id"))
 		if err != nil {
-			reply(w, daemon.JobLog{}, fmt.Errorf("job id %q: %w", r.PathValue("id"), store.ErrNotFound))
+			reply(w, daemon.JobLog{}, err)
 			return
 		}
 		log, err := d.Job(id)
 		reply(w, log, err)
 	})
+	mux.HandleFunc("DELETE /jobs/{id}", func(w http.ResponseWriter, r *http.Request) {
+		id, err := d.Resolve(r.PathValue("id"))
+		if err != nil {
+			reply(w, daemon.Removal{}, err)
+			return
+		}
+		removed, err := d.RemoveJob(id)
+		reply(w, removed, err)
+	})
 	mux.HandleFunc("GET /jobs/{id}/events", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/x-ndjson")
 		enc := json.NewEncoder(w)
 		rc := http.NewResponseController(w)
-		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-		if err != nil {
-			err = fmt.Errorf("job id %q: %w", r.PathValue("id"), store.ErrNotFound)
-		} else {
+		id, err := d.Resolve(r.PathValue("id"))
+		if err == nil {
 			err = d.Follow(r.Context(), id, func(e feed.Event) error {
 				if err := enc.Encode(followLine{Event: &e}); err != nil {
 					return err
@@ -108,11 +115,11 @@ func Serve(ln net.Listener, d *daemon.Daemon) error {
 	mux.HandleFunc("POST /loops/{name}/stop", func(w http.ResponseWriter, r *http.Request) {
 		reply(w, struct{}{}, d.Stop(r.PathValue("name")))
 	})
-	for action, do := range map[string]func(int64) (store.Job, error){"takeover": d.Takeover, "handback": d.Handback} {
+	for action, do := range map[string]func(string) (store.Job, error){"takeover": d.Takeover, "handback": d.Handback} {
 		mux.HandleFunc("POST /jobs/{id}/"+action, func(w http.ResponseWriter, r *http.Request) {
-			id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+			id, err := d.Resolve(r.PathValue("id"))
 			if err != nil {
-				reply(w, store.Job{}, fmt.Errorf("job id %q: %w", r.PathValue("id"), store.ErrNotFound))
+				reply(w, store.Job{}, err)
 				return
 			}
 			j, err := do(id)
@@ -155,7 +162,8 @@ func statusOf(err error) int {
 	case errors.Is(err, daemon.ErrUnknownLoop), errors.Is(err, store.ErrNotFound):
 		return http.StatusNotFound
 	case errors.Is(err, daemon.ErrLoopExists), errors.Is(err, daemon.ErrBusy), errors.Is(err, daemon.ErrNotTakeable),
-		errors.Is(err, daemon.ErrNotManual), errors.Is(err, daemon.ErrNothingRunning), errors.Is(err, daemon.ErrStarting):
+		errors.Is(err, daemon.ErrNotManual), errors.Is(err, daemon.ErrNothingRunning), errors.Is(err, daemon.ErrStarting),
+		errors.Is(err, store.ErrNotEnded):
 		return http.StatusConflict
 	default:
 		return http.StatusBadRequest
@@ -219,10 +227,18 @@ func (c *Client) Jobs(ctx context.Context) ([]store.Job, error) {
 	return jobs, err
 }
 
-func (c *Client) Job(ctx context.Context, id int64) (daemon.JobLog, error) {
+func (c *Client) Job(ctx context.Context, id string) (daemon.JobLog, error) {
 	var log daemon.JobLog
-	err := call(ctx, c.http, http.MethodGet, "/jobs/"+strconv.FormatInt(id, 10), nil, &log)
+	err := call(ctx, c.http, http.MethodGet, "/jobs/"+url.PathEscape(id), nil, &log)
 	return log, err
+}
+
+// RemoveJob removes a Job that ended, with its worktree, directory and,
+// unless someone committed on it since, its branch.
+func (c *Client) RemoveJob(ctx context.Context, id string) (daemon.Removal, error) {
+	var removed daemon.Removal
+	err := call(ctx, c.http, http.MethodDelete, "/jobs/"+url.PathEscape(id), nil, &removed)
+	return removed, err
 }
 
 func (c *Client) Requeue(ctx context.Context, name string, issue int) error {
@@ -233,23 +249,23 @@ func (c *Client) Stop(ctx context.Context, name string) error {
 	return call[struct{}](ctx, c.http, http.MethodPost, "/loops/"+url.PathEscape(name)+"/stop", nil, nil)
 }
 
-func (c *Client) Takeover(ctx context.Context, id int64) (store.Job, error) {
+func (c *Client) Takeover(ctx context.Context, id string) (store.Job, error) {
 	var j store.Job
-	err := call(ctx, c.http, http.MethodPost, "/jobs/"+strconv.FormatInt(id, 10)+"/takeover", nil, &j)
+	err := call(ctx, c.http, http.MethodPost, "/jobs/"+url.PathEscape(id)+"/takeover", nil, &j)
 	return j, err
 }
 
-func (c *Client) Handback(ctx context.Context, id int64) (store.Job, error) {
+func (c *Client) Handback(ctx context.Context, id string) (store.Job, error) {
 	var j store.Job
-	err := call(ctx, c.http, http.MethodPost, "/jobs/"+strconv.FormatInt(id, 10)+"/handback", nil, &j)
+	err := call(ctx, c.http, http.MethodPost, "/jobs/"+url.PathEscape(id)+"/handback", nil, &j)
 	return j, err
 }
 
 // Follow shows each event of the running Job as it happens and returns the
 // Job once its outcome is stored; it fails with daemon.ErrStopped when loopd
 // goes away.
-func (c *Client) Follow(ctx context.Context, id int64, show func(feed.Event)) (store.Job, error) {
-	res, err := send(ctx, c.untimed, http.MethodGet, "/jobs/"+strconv.FormatInt(id, 10)+"/events", nil)
+func (c *Client) Follow(ctx context.Context, id string, show func(feed.Event)) (store.Job, error) {
+	res, err := send(ctx, c.untimed, http.MethodGet, "/jobs/"+url.PathEscape(id)+"/events", nil)
 	if err != nil {
 		return store.Job{}, err
 	}
@@ -282,10 +298,7 @@ func call[T any](ctx context.Context, client *http.Client, method, path string, 
 	defer func() { _ = res.Body.Close() }()
 	var resp response[T]
 	if err := json.NewDecoder(res.Body).Decode(&resp); err != nil {
-		if res.StatusCode != http.StatusOK {
-			return olderLoopd(res)
-		}
-		return fmt.Errorf("loopd reply: %w", err)
+		return olderLoopd(res)
 	}
 	if resp.Error != "" {
 		return errors.New(resp.Error)
@@ -297,7 +310,7 @@ func call[T any](ctx context.Context, client *http.Client, method, path string, 
 }
 
 // olderLoopd is the error for a reply that is not loopd's own, as from a
-// loopd that has no route for the request.
+// loopd that has no route for the request or answers in an older shape.
 func olderLoopd(res *http.Response) error {
 	return fmt.Errorf("loopd answered %s; it may be older than loopctl, so run loopctl install", res.Status)
 }

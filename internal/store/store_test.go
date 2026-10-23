@@ -1,9 +1,16 @@
 package store
 
 import (
+	"bytes"
+	"database/sql"
 	"errors"
+	"fmt"
+	"log"
+	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -65,23 +72,26 @@ func TestNewJobIsQueuedAndIssuesAreClaimedPerLoop(t *testing.T) {
 
 func TestUnknownJob(t *testing.T) {
 	st := open(t, filepath.Join(t.TempDir(), "state.db"))
-	if _, err := st.Job(99); !errors.Is(err, ErrNotFound) {
+	if _, err := st.Job("999999999999"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("want ErrNotFound, got %v", err)
 	}
-	if err := st.SetJobState(99, Running); !errors.Is(err, ErrNotFound) {
+	if err := st.SetJobState("999999999999", Running); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("want ErrNotFound, got %v", err)
 	}
 }
 
-func TestJobsAreTheOnesInProgressAndTheFiveNewestEndedNewestFirst(t *testing.T) {
+func TestJobsOrderTheOnesInProgressAndTheFiveNewestEndedNewestFirstByCreation(t *testing.T) {
 	st := open(t, filepath.Join(t.TempDir(), "state.db"))
+	ids := []string{"00000000000a", "ffffffffffff", "000000000001", "777777777777", "aaaaaaaaaaaa", "100000000000", "fffffffffffe", "000000000002", "555555555555", "333333333333"}
+	next := 0
+	st.newID = func() string { next++; return ids[next-1] }
 	states := []JobState{Blocked, Failed, Exhausted, Manual, Done, Done, Failed, Done, Done, Running}
-	for _, state := range states {
+	for i, state := range states {
 		j, err := st.CreateJob("fix")
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := st.StartJob(j.ID, Start{Work: "issue 42 Fix login"}); err != nil {
+		if err := st.StartJob(j.ID, Start{Work: fmt.Sprintf("job %d", i+1)}); err != nil {
 			t.Fatal(err)
 		}
 		if err := st.FinishJob(j.ID, Finish{State: state, PRURL: "https://github.com/me/app/pull/1"}); err != nil {
@@ -92,15 +102,75 @@ func TestJobsAreTheOnesInProgressAndTheFiveNewestEndedNewestFirst(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	var ids []int64
+	var works []string
 	for _, j := range jobs {
-		ids = append(ids, j.ID)
+		works = append(works, j.Work)
 	}
-	if want := []int64{10, 9, 8, 7, 6, 5, 4, 1}; !slices.Equal(ids, want) {
-		t.Fatalf("jobs %v, want %v", ids, want)
+	if want := []string{"job 10", "job 9", "job 8", "job 7", "job 6", "job 5", "job 4", "job 1"}; !slices.Equal(works, want) {
+		t.Fatalf("jobs %v, want %v", works, want)
 	}
-	if j := jobs[1]; j.Loop != "fix" || j.State != Done || j.Work != "issue 42 Fix login" || j.PRURL != "https://github.com/me/app/pull/1" {
+	if j := jobs[1]; j.ID != "555555555555" || j.Loop != "fix" || j.State != Done || j.PRURL != "https://github.com/me/app/pull/1" {
 		t.Fatalf("job 9 read back as %+v", j)
+	}
+}
+
+func TestResolvePrefixFindsTheOneJobWhoseIDStartsWithIt(t *testing.T) {
+	st := open(t, filepath.Join(t.TempDir(), "state.db"))
+	ids := []string{"abc123000001", "abc123000002", "def456000000"}
+	next := 0
+	st.newID = func() string { next++; return ids[next-1] }
+	for range ids {
+		if _, err := st.CreateJob("fix"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for prefix, want := range map[string]string{"abc123000001": "abc123000001", "ABC123000002": "abc123000002", "d": "def456000000", "De": "def456000000"} {
+		if got, err := st.Resolve(prefix); err != nil || got != want {
+			t.Fatalf("resolve %q: %q, %v; want %q", prefix, got, err, want)
+		}
+	}
+	if _, err := st.Resolve("ABC1"); err == nil || err.Error() != "job prefix abc1 matches abc123000001, abc123000002" {
+		t.Fatalf("resolve of a prefix of two jobs: %v", err)
+	}
+	for _, prefix := range []string{"e", "abc123000001f", "", "%", "_"} {
+		if got, err := st.Resolve(prefix); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("resolve %q: %q, %v; want ErrNotFound", prefix, got, err)
+		}
+	}
+}
+
+func TestNewIDIsTwelveHexCharactersAndNeverOneAlreadyStored(t *testing.T) {
+	st := open(t, filepath.Join(t.TempDir(), "state.db"))
+	seen := map[string]bool{}
+	for range 50 {
+		j, err := st.CreateJob("fix")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !regexp.MustCompile(`^[0-9a-f]{12}$`).MatchString(j.ID) || seen[j.ID] {
+			t.Fatalf("new id %q: want 12 lowercase hex characters, never repeated", j.ID)
+		}
+		seen[j.ID] = true
+	}
+
+	stored, err := st.CreateJob("fix")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetJobState(stored.ID, Blocked); err != nil {
+		t.Fatal(err)
+	}
+	candidates := []string{stored.ID, stored.ID, "0123456789ab"}
+	st.newID = func() string { id := candidates[0]; candidates = candidates[1:]; return id }
+	fresh, err := st.CreateJob("docs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fresh.ID != "0123456789ab" {
+		t.Fatalf("new job got id %q, want the first id not stored", fresh.ID)
+	}
+	if got, _ := st.Job(stored.ID); got.Loop != "fix" || got.State != Blocked {
+		t.Fatalf("stored job changed to %+v", got)
 	}
 }
 
@@ -161,16 +231,16 @@ func TestInterruptFailsJobsLeftRunning(t *testing.T) {
 	if err := st.InterruptRunning("loopd restarted"); err != nil {
 		t.Fatal(err)
 	}
-	for id, want := range map[int64]JobState{running.ID: Failed, queued.ID: Failed, blocked.ID: Blocked} {
+	for id, want := range map[string]JobState{running.ID: Failed, queued.ID: Failed, blocked.ID: Blocked} {
 		job, err := st.Job(id)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if job.State != want {
-			t.Fatalf("job %d: state %s, want %s", id, job.State, want)
+			t.Fatalf("job %s: state %s, want %s", id, job.State, want)
 		}
 		if want == Failed && job.Error != "loopd restarted" {
-			t.Fatalf("job %d: error %q", id, job.Error)
+			t.Fatalf("job %s: error %q", id, job.Error)
 		}
 	}
 }
@@ -199,5 +269,103 @@ func TestUnclaimLetsAnIssueRunAgain(t *testing.T) {
 	}
 	if fresh, _ := st.ClaimIssue("fix", 3); !fresh {
 		t.Fatal("claim after unclaim not fresh")
+	}
+}
+
+// integerSchema is a state database from before random ids, with three Jobs.
+const integerSchema = `
+CREATE TABLE loops (name TEXT PRIMARY KEY, paused INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE jobs (
+	id       INTEGER PRIMARY KEY AUTOINCREMENT,
+	loop     TEXT NOT NULL,
+	state    TEXT NOT NULL,
+	work     TEXT NOT NULL DEFAULT '',
+	branch   TEXT NOT NULL DEFAULT '',
+	worktree TEXT NOT NULL DEFAULT '',
+	base     TEXT NOT NULL DEFAULT '',
+	issue    INTEGER NOT NULL DEFAULT 0,
+	question TEXT NOT NULL DEFAULT '',
+	summary  TEXT NOT NULL DEFAULT '',
+	pr_url   TEXT NOT NULL DEFAULT '',
+	cost_usd REAL NOT NULL DEFAULT 0,
+	error    TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE issues (loop TEXT NOT NULL, number INTEGER NOT NULL, PRIMARY KEY (loop, number));
+INSERT INTO loops (name, paused) VALUES ('fix', 1);
+INSERT INTO issues (loop, number) VALUES ('fix', 42);
+INSERT INTO jobs (id, loop, state, work, branch, worktree, base, issue, question, summary, pr_url, cost_usd, error) VALUES
+	(1, 'fix', 'done', 'issue 42 Fix login', 'loop/fix-42-1', '/h/jobs/1/worktree', 'abc', 42, '', 'fixed', 'https://github.com/me/app/pull/1', 1.5, ''),
+	(2, 'fix', 'blocked', 'task x', 'loop/fix-20260101-000000-2', '/h/jobs/2/worktree', 'def', 0, 'which db?', '', '', 0.25, ''),
+	(10, 'docs', 'failed', 'spec docs/specs/d.md', '', '', '', 0, '', '', '', 0, 'fetch failed');`
+
+func TestConvertIntegerIDsGivesEachOldJobANewIDOnceAndKeepsEverythingElse(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.db")
+	db, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(integerSchema); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	var logged bytes.Buffer
+	log.SetOutput(&logged)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+	st := open(t, path)
+	jobs, err := st.Jobs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []Job{
+		{Loop: "docs", State: Failed, Work: "spec docs/specs/d.md", Error: "fetch failed"},
+		{Loop: "fix", State: Blocked, Work: "task x", Branch: "loop/fix-20260101-000000-2", Worktree: "/h/jobs/2/worktree", Base: "def", Question: "which db?", CostUSD: 0.25},
+		{Loop: "fix", State: Done, Work: "issue 42 Fix login", Branch: "loop/fix-42-1", Worktree: "/h/jobs/1/worktree", Base: "abc", Issue: 42, Summary: "fixed", PRURL: "https://github.com/me/app/pull/1", CostUSD: 1.5},
+	}
+	if len(jobs) != len(want) {
+		t.Fatalf("jobs %+v, want %d", jobs, len(want))
+	}
+	for i, n := range []int{10, 2, 1} {
+		id := jobs[i].ID
+		if !regexp.MustCompile(`^[0-9a-f]{12}$`).MatchString(id) {
+			t.Fatalf("job %d got id %q", n, id)
+		}
+		if line := fmt.Sprintf("job %d is now %s\n", n, id); !strings.Contains(logged.String(), line) {
+			t.Fatalf("log lacks %q:\n%s", line, logged.String())
+		}
+		want[i].ID = id
+		if jobs[i] != want[i] {
+			t.Fatalf("job %d read back as %+v\nwant %+v", n, jobs[i], want[i])
+		}
+	}
+	if paused, _ := st.Paused("fix"); !paused {
+		t.Fatal("conversion lost the paused loop")
+	}
+	if fresh, _ := st.ClaimIssue("fix", 42); fresh {
+		t.Fatal("conversion lost the claimed issue")
+	}
+	next, err := st.CreateJob("fix")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if jobs, _ := st.Jobs(); jobs[0].ID != next.ID {
+		t.Fatalf("a job created after conversion is not the newest: %+v", jobs)
+	}
+	if err := st.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	logged.Reset()
+	again, err := open(t, path).Jobs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(again) != 4 || again[0].ID != next.ID || again[1] != want[0] || again[2] != want[1] || again[3] != want[2] {
+		t.Fatalf("second open changed the jobs: %+v", again)
+	}
+	if logged.Len() != 0 {
+		t.Fatalf("second open logged %q", logged.String())
 	}
 }

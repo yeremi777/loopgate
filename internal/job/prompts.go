@@ -107,7 +107,7 @@ func report(j Job, out Outcome, drill string, cost float64) string {
 	if j.Issue != 0 {
 		fmt.Fprintf(&b, "Closes #%d.\n\n", j.Issue)
 	}
-	fmt.Fprintf(&b, "- Job %d of loop `%s` passed `%s` and a rubric review at %s.\n", j.ID, j.Loop.Name, j.Loop.Verify, out.Gated)
+	fmt.Fprintf(&b, "- Job %s of loop `%s` passed `%s` and a rubric review at %s.\n", j.ID, j.Loop.Name, j.Loop.Verify, out.Gated)
 	fmt.Fprintf(&b, "- Cost so far: $%.2f.\n", cost)
 	if len(out.TestChanges) == 0 {
 		b.WriteString("- Changed or deleted tests: none.\n")
