@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime/debug"
 	"slices"
@@ -36,6 +37,7 @@ usage:
   loopctl run <loop> [--spec <path>]   start a job now on --spec, or a timer loop's own task or spec
   loopctl stop <loop>                  end the loop's running job; the loop stays
   loopctl logs [-f] <job>              show a job's state, branch, PR, cost and progress; -f then follows the running job until it ends, and Ctrl-C leaves it running
+  loopctl track <job>                  open a job's tracking page in a browser tab
   loopctl takeover <job>               take a job, stopping it if it runs, and hand its worktree to you
   loopctl handback <job>               give a taken-over job back to its loop
   loopctl try <job>                    copy the checkout's .worktreeinclude files into a done job's worktree, then print its path and test guide
@@ -143,6 +145,20 @@ func run(args []string) error {
 		}
 		fmt.Printf("job %s is back with the loop on %s\n", j.ID, j.Branch)
 		return nil
+	case cmd == "track" && len(rest) == 1:
+		page, err := c.Page(ctx, rest[0])
+		if err != nil {
+			return err
+		}
+		fmt.Printf("tracking job %s at %s\n", page.ID, page.URL)
+		if out, err := exec.Command("open", page.URL).CombinedOutput(); err != nil {
+			why := err.Error()
+			if said := strings.TrimSpace(string(out)); said != "" {
+				why += ": " + said
+			}
+			fmt.Printf("open failed (%s); open %s in a browser\n", why, page.URL)
+		}
+		return nil
 	case cmd == "rm" && len(rest) == 1:
 		removed, err := c.RemoveJob(ctx, rest[0])
 		if err != nil {
@@ -179,7 +195,7 @@ func run(args []string) error {
 		fmt.Println()
 		width := termWidth()
 		end, err := c.Follow(ctx, log.Job.ID, func(e feed.Event) {
-			fmt.Println(cut(e.Time.Local().Format("15:04:05")+" "+e.Stage+"  "+printable(e.Text), width))
+			fmt.Println(cut(e.Time.Local().Format("15:04:05")+" "+e.Stage+"  "+printable(e.Line()), width))
 		})
 		if err != nil {
 			return err

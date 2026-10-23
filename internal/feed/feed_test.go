@@ -2,6 +2,7 @@ package feed
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"slices"
 	"strconv"
@@ -19,14 +20,15 @@ func TestFollowReplaysEarlierStagesAsBoundsAndTheCurrentStageFromItsStart(t *tes
 	f.Bound("verify 1", "FAIL verify command exited 1")
 	f.Line("verify 1", "│ --- FAIL: TestX")
 	f.Bound("implement 2", "start")
-	f.Line("implement 2", "Edit job.go")
+	f.Step("implement 2", Step{Tool: "Edit", Text: "job.go"})
+	f.Step("implement 2", Step{Text: "Now the test.", Sub: true})
 	f.Close()
 
 	got := follow(t, f)
 	want := []string{
 		"implement 1 start", "implement 1 done $0.10",
 		"verify 1 verify: go test ./...", "verify 1 FAIL verify command exited 1",
-		"implement 2 start", "implement 2 Edit job.go",
+		"implement 2 start", "implement 2 Edit job.go", "implement 2   Now the test.",
 	}
 	if !slices.Equal(got, want) {
 		t.Fatalf("replay %q, want %q", got, want)
@@ -126,8 +128,50 @@ func TestFollowEndsWithItsContext(t *testing.T) {
 func follow(t *testing.T, f *Feed) []string {
 	t.Helper()
 	var got []string
-	if err := f.Follow(context.Background(), func(e Event) error { got = append(got, e.Stage+" "+e.Text); return nil }); err != nil {
+	if err := f.Follow(context.Background(), func(e Event) error { got = append(got, e.Stage+" "+e.Line()); return nil }); err != nil {
 		t.Fatal(err)
 	}
 	return got
+}
+
+func TestStepEventsNameTheToolAndTheSubagentForThePage(t *testing.T) {
+	f := New()
+	f.Bound("implement 1", "start")
+	f.Step("implement 1", Step{Tool: "Bash", Text: "go test ./...", Sub: true})
+	f.Step("implement 1", Step{Text: "Done."})
+	f.Close()
+	var got []string
+	if err := f.Follow(context.Background(), func(e Event) error {
+		data, err := json.Marshal(Event{Stage: e.Stage, Text: e.Text, Bound: e.Bound, Tool: e.Tool, Sub: e.Sub})
+		got = append(got, string(data))
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		`{"time":"0001-01-01T00:00:00Z","stage":"implement 1","text":"start","bound":true}`,
+		`{"time":"0001-01-01T00:00:00Z","stage":"implement 1","text":"go test ./...","tool":"Bash","sub":true}`,
+		`{"time":"0001-01-01T00:00:00Z","stage":"implement 1","text":"Done."}`,
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("events %q, want %q", got, want)
+	}
+}
+
+func TestLineKeepsTheTextOfAnEventThatIsNoToolCall(t *testing.T) {
+	for _, e := range []Event{
+		{Stage: "verify 1", Text: "│ x\r"},
+		{Stage: "verify 1", Text: "│ "},
+		{Stage: "verify 1", Text: "verify: go test\n", Bound: true},
+	} {
+		if got := e.Line(); got != e.Text {
+			t.Errorf("line of %q is %q", e.Text, got)
+		}
+	}
+	if got := (Event{Text: "  Done.  ", Sub: true}).Line(); got != "    Done.  " {
+		t.Errorf("subagent text line %q", got)
+	}
+	if got := (Event{Tool: "TodoWrite"}).Line(); got != "TodoWrite" {
+		t.Errorf("tool call without input %q", got)
+	}
 }

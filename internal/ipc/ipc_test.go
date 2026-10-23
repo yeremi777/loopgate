@@ -125,7 +125,33 @@ func TestFollowNamesTheStatusOfALoopdThatCannotFollow(t *testing.T) {
 	}
 }
 
+func TestPageResolvesAJobPrefixToItsTrackingPage(t *testing.T) {
+	c, st := serveStore(t)
+	j, err := st.CreateJob("fix")
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, err := c.Page(context.Background(), strings.ToUpper(j.ID[:4]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := (Page{ID: j.ID, URL: "http://127.0.0.1:1/jobs/" + j.ID + "?token=t"}); page != want {
+		t.Fatalf("page %+v, want %+v", page, want)
+	}
+	if _, err := c.Page(context.Background(), "ffffffffffff"); err == nil || !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("page of no job: %v", err)
+	}
+}
+
 func serve(t *testing.T) *Client {
+	t.Helper()
+	c, _ := serveStore(t)
+	return c
+}
+
+// serveStore answers on a socket for a daemon with no Loops, whose pages
+// are at 127.0.0.1:1 with the token t, and returns its store.
+func serveStore(t *testing.T) (*Client, *store.Store) {
 	t.Helper()
 	home := shortTempDir(t)
 	st, err := store.Open(filepath.Join(home, "state.db"))
@@ -143,8 +169,8 @@ func serve(t *testing.T) *Client {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = ln.Close() })
-	go func() { _ = Serve(ln, d) }()
-	return NewClient(sock)
+	go func() { _ = Serve(ln, d, func(id string) string { return "http://127.0.0.1:1/jobs/" + id + "?token=t" }) }()
+	return NewClient(sock), st
 }
 
 // shortTempDir keeps socket paths under the 104-byte limit of macOS.

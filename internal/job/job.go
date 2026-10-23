@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -108,6 +109,7 @@ func (p Pipeline) Run(ctx context.Context, j Job) Outcome {
 	switch {
 	case errors.Is(err, context.DeadlineExceeded):
 		out = Outcome{State: store.Exhausted, Summary: "timeout of " + j.Loop.Bounds.Timeout.String() + " reached", Err: err}
+		r.markBound("timeout")
 	case err != nil:
 		out = Outcome{State: store.Failed, Err: err}
 	}
@@ -207,6 +209,7 @@ func (r *jobRun) iterate(ctx context.Context) (Outcome, error) {
 			TestChanges: verify.TestChanges(changes, j.Loop.Tests),
 		})
 	}
+	r.markBound("iterations")
 	return Outcome{State: store.Exhausted, Summary: fmt.Sprintf("%d implement runs did not pass the checks", j.Loop.Bounds.MaxIterations)}, nil
 }
 
@@ -233,7 +236,13 @@ func (r *jobRun) ship(ctx context.Context, out Outcome) (Outcome, error) {
 	}
 	out.TestGuide = cut(strings.TrimSpace(land.Try), maxTestGuide)
 	pr.Body = report(j, out, r.drill, r.cost) + "\n\n---\n\n" + pr.Body
+	start := time.Now()
 	url, err := r.Publisher.Publish(ctx, j.Worktree, j.Branch, j.DefaultBranch, pr)
+	row := StageRow{Stage: "publish", Start: start, End: time.Now(), Status: "done"}
+	if err != nil {
+		row.Status = "failed"
+	}
+	r.record(row)
 	if err != nil {
 		return Outcome{}, fmt.Errorf("publish: %w", err)
 	}
@@ -242,18 +251,23 @@ func (r *jobRun) ship(ctx context.Context, out Outcome) (Outcome, error) {
 	return out, nil
 }
 
-// stage runs one stage between its start and end events.
+// stage runs one stage between its start and end events, and adds its row.
 func (r *jobRun) stage(ctx context.Context, name, prompt string) (runner.Result, error) {
+	row := StageRow{Stage: name, Start: time.Now()}
 	r.job.Feed.Bound(name, "start")
 	res, err := r.runStage(ctx, name, prompt)
+	row.Status, row.CostUSD = string(res.Status), res.CostUSD
 	switch {
 	case err != nil:
+		row.Status = "failed"
 		r.job.Feed.Bound(name, "failed: "+err.Error())
 	case res.Status == runner.StatusBlocked:
 		r.job.Feed.Bound(name, fmt.Sprintf("blocked $%.2f: %s", res.CostUSD, res.Question))
 	default:
 		r.job.Feed.Bound(name, fmt.Sprintf("%s $%.2f", res.Status, res.CostUSD))
 	}
+	row.End = time.Now()
+	r.record(row)
 	return res, err
 }
 
@@ -266,7 +280,7 @@ func (r *jobRun) runStage(ctx context.Context, name, prompt string) (runner.Resu
 		Timeout:   remaining(ctx),
 		Network:   r.job.Loop.Network,
 		DenyWrite: r.guard,
-		Log:       func(line string) { r.job.Feed.Line(name, line) },
+		Log:       func(s feed.Step) { r.job.Feed.Step(name, s) },
 	})
 	r.cost += res.CostUSD
 	if err != nil {
@@ -283,23 +297,50 @@ func (r *jobRun) runStage(ctx context.Context, name, prompt string) (runner.Resu
 }
 
 // gate runs the Verify gate of iteration i, reporting each command as it
-// starts, its result, and on failure the tail of its output.
+// starts, its result, and on failure the tail of its output, and adds its row.
 func (r *jobRun) gate(ctx context.Context, i int) (verify.Outcome, error) {
 	name := fmt.Sprintf("verify %d", i)
+	row := StageRow{Stage: name, Start: time.Now()}
 	gate, err := verify.Gate(ctx, r.Shell, r.job.Worktree, r.job.Loop, remaining(ctx), r.guard, func(step string) { r.job.Feed.Bound(name, step) })
+	row.Commands = gate.Commands
 	switch {
 	case err != nil:
+		row.Status = "failed"
 		r.job.Feed.Bound(name, "failed: "+err.Error())
 	case gate.Passed:
+		row.Status = "pass"
 		r.job.Feed.Bound(name, "pass: verify command exited 0")
 	default:
 		lines := strings.Split(strings.TrimSpace(gate.Output), "\n")
+		row.Status = "fail"
+		for _, line := range lines[max(0, len(lines)-gateTail):] {
+			row.Output = append(row.Output, feed.Cut(line))
+		}
 		r.job.Feed.Bound(name, "fail: "+strings.TrimSuffix(lines[0], ":"))
 		for _, line := range lines[max(1, len(lines)-gateTail):] {
 			r.job.Feed.Line(name, "│ "+line)
 		}
 	}
+	row.End = time.Now()
+	r.record(row)
 	return gate, err
+}
+
+// markBound names the bound that ran out on the Job's last stage row, logged
+// and lost when it cannot be written, as record's rows are.
+func (r *jobRun) markBound(bound string) {
+	if err := markBound(r.job.Dir, bound); err != nil {
+		log.Printf("loopd: job %s: stage rows bound %s: %v", r.job.ID, bound, err)
+	}
+}
+
+// record adds row to the Job's stage rows. A row that cannot be written is
+// logged and lost: the rows feed only the tracking page, which never decides
+// how a Job ends.
+func (r *jobRun) record(row StageRow) {
+	if err := appendStage(r.job.Dir, row); err != nil {
+		log.Printf("loopd: job %s: stage row %s: %v", r.job.ID, row.Stage, err)
+	}
 }
 
 // protectedQuestion asks whether the protected paths changed since the Job's

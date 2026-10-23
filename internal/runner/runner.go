@@ -12,6 +12,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/yeremi777/loopgate/internal/feed"
 )
 
 type Status string
@@ -58,9 +60,9 @@ type Stage struct {
 	Timeout   time.Duration
 	Network   []string
 	DenyWrite []string
-	// Log, when set, gets one line per tool call and per assistant text
-	// message as the stage makes them; a subagent's lines are indented.
-	Log func(line string)
+	// Log, when set, gets each tool call and assistant text message as the
+	// stage makes them.
+	Log func(feed.Step)
 }
 
 const resultSchema = `{"type":"object","properties":{` +
@@ -119,7 +121,7 @@ func (r Runner) Run(ctx context.Context, s Stage) (Result, error) {
 // streamJSON reads claude's stream-json output one line at a time: it logs
 // each tool call and text message, and keeps the final result line.
 type streamJSON struct {
-	log    func(string)
+	log    func(feed.Step)
 	buf    []byte
 	last   []byte
 	result []byte
@@ -164,16 +166,13 @@ func (s *streamJSON) line(data []byte) {
 		if s.log == nil {
 			return
 		}
-		indent := ""
-		if ev.Parent != nil {
-			indent = "  "
-		}
+		sub := ev.Parent != nil
 		for _, c := range ev.Message.Content {
 			switch {
 			case c.Type == "text" && firstLine(c.Text) != "":
-				s.log(indent + firstLine(c.Text))
+				s.log(feed.Step{Text: firstLine(c.Text), Sub: sub})
 			case c.Type == "tool_use" && c.Name != "StructuredOutput":
-				s.log(indent + strings.TrimSpace(c.Name+" "+toolArg(c.Input)))
+				s.log(feed.Step{Tool: c.Name, Text: toolArg(c.Input), Sub: sub})
 			}
 		}
 	}

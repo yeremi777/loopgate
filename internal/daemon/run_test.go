@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yeremi777/loopgate/internal/feed"
 	"github.com/yeremi777/loopgate/internal/gittest"
 	"github.com/yeremi777/loopgate/internal/job"
 	"github.com/yeremi777/loopgate/internal/runner"
@@ -234,7 +235,7 @@ func (s *scriptedStages) Run(ctx context.Context, st runner.Stage) (runner.Resul
 		if s.failFirst && n == 1 {
 			return done, nil
 		}
-		st.Log("Edit ok.txt")
+		st.Log(feed.Step{Tool: "Edit", Text: "ok.txt"})
 		writeFile(filepath.Join(st.Dir, "ok.txt"), "ok")
 		if _, err := runner.Git(ctx, time.Minute, st.Dir, "add", "ok.txt"); err != nil {
 			return runner.Result{}, err

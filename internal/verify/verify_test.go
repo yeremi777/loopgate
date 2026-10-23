@@ -6,6 +6,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -20,7 +22,8 @@ func TestGatePassesCleanTreeWhoseCommandExitsZero(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := (Outcome{Passed: true, Head: git(t, repo, "rev-parse", "HEAD"), Output: "checked\n"}); out != want {
+	want := Outcome{Passed: true, Head: git(t, repo, "rev-parse", "HEAD"), Output: "checked\n", Commands: []Command{{Name: "verify", Line: "echo checked"}}}
+	if !reflect.DeepEqual(out, want) {
 		t.Fatalf("got %+v, want %+v", out, want)
 	}
 }
@@ -41,7 +44,7 @@ func TestGateNamesTheExitCodeOfASilentVerifyCommand(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out.Passed || !strings.Contains(out.Output, "verify command exited 3") {
+	if out.Passed || !strings.Contains(out.Output, "verify command exited 3") || !slices.Equal(out.Commands, []Command{{Name: "verify", Line: "exit 3", ExitCode: 3}}) {
 		t.Fatalf("got %+v, want failed naming exit 3", out)
 	}
 }
@@ -78,7 +81,8 @@ func TestGateRunsSetupBeforeTheVerifyCommand(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := (Outcome{Passed: true, Head: git(t, repo, "rev-parse", "HEAD"), Output: "checked\n"}); out != want {
+	want := Outcome{Passed: true, Head: git(t, repo, "rev-parse", "HEAD"), Output: "checked\n", Commands: []Command{{Name: "setup", Line: loop.Setup}, {Name: "verify", Line: loop.Verify}}}
+	if !reflect.DeepEqual(out, want) {
 		t.Fatalf("got %+v, want %+v", out, want)
 	}
 }

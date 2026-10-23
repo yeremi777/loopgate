@@ -3,15 +3,18 @@ package job
 import (
 	"context"
 	"errors"
+	"log"
 	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/yeremi777/loopgate/internal/config"
 	"github.com/yeremi777/loopgate/internal/feed"
@@ -67,7 +70,7 @@ func TestEventsShowEachStageEachGateAndThePublishInOrder(t *testing.T) {
 	f := &fakeStages{t: t, steps: []step{
 		func(s runner.Stage) (runner.Result, error) {
 			<-attached
-			s.Log("Read docs/specs/x.md")
+			s.Log(feed.Step{Tool: "Read", Text: "docs/specs/x.md"})
 			return runner.Result{Status: runner.StatusDone, Summary: "done, trust me", CostUSD: 0.1}, nil
 		},
 		commits(j, "ok.txt"),
@@ -78,7 +81,7 @@ func TestEventsShowEachStageEachGateAndThePublishInOrder(t *testing.T) {
 	followed := make(chan error)
 	go func() {
 		followed <- j.Feed.Follow(context.Background(), func(e feed.Event) error {
-			if got = append(got, e.Stage+" | "+e.Text); len(got) == 1 {
+			if got = append(got, e.Stage+" | "+e.Line()); len(got) == 1 {
 				close(attached)
 			}
 			return nil
@@ -126,7 +129,7 @@ func TestEventsEndABlockedStageWithItsQuestion(t *testing.T) {
 	Pipeline{Stages: f, Shell: shell()}.Run(context.Background(), j)
 	j.Feed.Close()
 	var got []string
-	if err := j.Feed.Follow(context.Background(), func(e feed.Event) error { got = append(got, e.Stage+" | "+e.Text); return nil }); err != nil {
+	if err := j.Feed.Follow(context.Background(), func(e feed.Event) error { got = append(got, e.Stage+" | "+e.Line()); return nil }); err != nil {
 		t.Fatal(err)
 	}
 	if want := []string{"implement 1 | start", "implement 1 | blocked $0.20: which db?"}; !slices.Equal(got, want) {
@@ -213,6 +216,7 @@ func TestExhaustedAfterMaxIterations(t *testing.T) {
 		t.Fatalf("got %+v, want exhausted", out)
 	}
 	f.wantKinds("/implement", "/implement")
+	wantBound(t, j, "iterations")
 }
 
 func TestExhaustedOnTimeout(t *testing.T) {
@@ -230,6 +234,26 @@ func TestExhaustedOnTimeout(t *testing.T) {
 	out := Pipeline{Stages: f, Shell: shell()}.Run(context.Background(), j)
 	if out.State != store.Exhausted {
 		t.Fatalf("got %+v, want exhausted", out)
+	}
+	wantBound(t, j, "timeout")
+}
+
+// wantBound fails t unless only the last stage row of j names bound as the one that ran out.
+func wantBound(t *testing.T, j Job, bound string) {
+	t.Helper()
+	rows, err := ReadStages(j.Dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var bounds []string
+	for _, row := range rows {
+		bounds = append(bounds, row.Bound)
+	}
+	if len(rows) == 0 || rows[len(rows)-1].Bound != bound || slices.ContainsFunc(bounds[:len(bounds)-1], func(b string) bool { return b != "" }) {
+		t.Fatalf("stage rows name bounds %q, want %q on the last row only", bounds, bound)
+	}
+	if info, err := os.Stat(filepath.Join(j.Dir, "stages.jsonl")); err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("stages.jsonl: %v, %v; want mode 0600", info, err)
 	}
 }
 
@@ -793,4 +817,202 @@ func TestIssueJobBlockedInDrill(t *testing.T) {
 		t.Fatalf("got %+v", out)
 	}
 	f.wantKinds("/drill")
+}
+
+func TestStageRowsRecordEachEndedStageWithItsGateCommandsAndOutputTail(t *testing.T) {
+	j := newJob(t, 3)
+	j.Loop.Setup = "true"
+	j.Loop.Verify = "test -f ok.txt || { seq 1 30; exit 3; }"
+	f := &fakeStages{t: t, steps: []step{
+		reports(runner.StatusDone, "done, trust me"),
+		commits(j, "ok.txt"),
+		reports(runner.StatusDone, "clean"),
+		lands("t\n\nb"),
+	}}
+	before := time.Now()
+	out := Pipeline{Stages: f, Shell: shell(), Publisher: &fakePublisher{url: "https://github.com/me/app/pull/7"}}.Run(context.Background(), j)
+	if out.State != store.Done {
+		t.Fatalf("got %+v, want done", out)
+	}
+	rows, err := ReadStages(j.Dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var tail []string
+	for i := 11; i <= 30; i++ {
+		tail = append(tail, strconv.Itoa(i))
+	}
+	want := []StageRow{
+		{Stage: "implement 1", Status: "done", CostUSD: 0.1},
+		{Stage: "verify 1", Status: "fail", Commands: []verify.Command{{Name: "setup", Line: "true"}, {Name: "verify", Line: j.Loop.Verify, ExitCode: 3}}, Output: tail},
+		{Stage: "implement 2", Status: "done", CostUSD: 0.1},
+		{Stage: "verify 2", Status: "pass", Commands: []verify.Command{{Name: "setup", Line: "true"}, {Name: "verify", Line: j.Loop.Verify}}},
+		{Stage: "rubric 2", Status: "done", CostUSD: 0.1},
+		{Stage: "land", Status: "done", CostUSD: 0.1},
+		{Stage: "publish", Status: "done"},
+	}
+	if len(rows) != len(want) {
+		t.Fatalf("rows %+v, want %d", rows, len(want))
+	}
+	last := before
+	for i, row := range rows {
+		if row.Start.Before(last) || row.End.Before(row.Start) || row.End.After(time.Now()) {
+			t.Fatalf("row %d %s: start %v, end %v; want ordered after %v", i, row.Stage, row.Start, row.End, last)
+		}
+		last = row.End
+		row.Start, row.End = time.Time{}, time.Time{}
+		if !reflect.DeepEqual(row, want[i]) {
+			t.Fatalf("row %d: %+v, want %+v", i, row, want[i])
+		}
+	}
+	if info, err := os.Stat(filepath.Join(j.Dir, "stages.jsonl")); err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("stages.jsonl: %v, %v; want mode 0600", info, err)
+	}
+}
+
+func TestStageRowsEndABlockedOrFailedStage(t *testing.T) {
+	for name, c := range map[string]struct {
+		step   step
+		status string
+	}{
+		"blocked": {func(runner.Stage) (runner.Result, error) {
+			return runner.Result{Status: runner.StatusBlocked, Question: "which db?", Summary: "stopped", CostUSD: 0.2}, nil
+		}, "blocked"},
+		"failed": {func(runner.Stage) (runner.Result, error) { return runner.Result{CostUSD: 0.2}, errors.New("claude died") }, "failed"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			j := newJob(t, 3)
+			Pipeline{Stages: &fakeStages{t: t, steps: []step{c.step}}, Shell: shell()}.Run(context.Background(), j)
+			rows, err := ReadStages(j.Dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(rows) != 1 || rows[0].Stage != "implement 1" || rows[0].Status != c.status || rows[0].CostUSD != 0.2 {
+				t.Fatalf("rows %+v, want one %s implement 1 row costing 0.2", rows, c.status)
+			}
+		})
+	}
+}
+
+func TestStageRowsOfAJobThatNeverRanAreEmpty(t *testing.T) {
+	if rows, err := ReadStages(t.TempDir()); err != nil || rows != nil {
+		t.Fatalf("rows %+v, %v; want none", rows, err)
+	}
+}
+
+func TestStageRowsThatCannotBeWrittenLeaveTheJobToShip(t *testing.T) {
+	var logged strings.Builder
+	log.SetOutput(&logged)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+	j := newJob(t, 3)
+	if err := os.Mkdir(filepath.Join(j.Dir, "stages.jsonl"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	f := &fakeStages{t: t, steps: []step{commits(j, "ok.txt"), reports(runner.StatusDone, "clean"), lands("t\n\nb")}}
+	out := Pipeline{Stages: f, Shell: shell(), Publisher: &fakePublisher{url: "https://github.com/me/app/pull/7"}}.Run(context.Background(), j)
+	if out.State != store.Done || out.PRURL != "https://github.com/me/app/pull/7" || out.Err != nil {
+		t.Fatalf("got %+v, want done with the PR", out)
+	}
+	if !strings.Contains(logged.String(), "job 0123456789ab: stage row publish:") {
+		t.Fatalf("log %q does not name the lost row", logged.String())
+	}
+}
+
+func TestStageRowsSkipALineThatIsNotARowAndLogIt(t *testing.T) {
+	var logged strings.Builder
+	log.SetOutput(&logged)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+	dir := t.TempDir()
+	if err := appendStage(dir, StageRow{Stage: "implement 1", Status: "done"}); err != nil {
+		t.Fatal(err)
+	}
+	torn := filepath.Join(dir, stagesFile)
+	if err := os.WriteFile(torn, append(mustRead(t, torn), "{\"stage\":\"verify 1\",\"sta\n"...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := appendStage(dir, StageRow{Stage: "implement 2", Status: "done"}); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := ReadStages(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 || rows[0].Stage != "implement 1" || rows[1].Stage != "implement 2" {
+		t.Fatalf("rows %+v, want implement 1 and implement 2", rows)
+	}
+	if !strings.Contains(logged.String(), "stages.jsonl line 2: skipped") {
+		t.Fatalf("log %q does not name the skipped line", logged.String())
+	}
+}
+
+func TestStageRowAppendedAfterAHalfWrittenLineStartsOnItsOwnLine(t *testing.T) {
+	var logged strings.Builder
+	log.SetOutput(&logged)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+	dir := t.TempDir()
+	if err := appendStage(dir, StageRow{Stage: "implement 1", Status: "done"}); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, stagesFile)
+	if err := os.WriteFile(path, append(mustRead(t, path), "{\"stage\":\"verify 1\",\"sta"...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := appendStage(dir, StageRow{Stage: "implement 2", Status: "done"}); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := ReadStages(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 || rows[1].Stage != "implement 2" {
+		t.Fatalf("rows %+v, want the new row kept beside the first", rows)
+	}
+}
+
+func TestMarkBoundAfterAHalfWrittenLineKeepsTheRowsAndDropsTheLine(t *testing.T) {
+	dir := t.TempDir()
+	if err := appendStage(dir, StageRow{Stage: "implement 1", Status: "done"}); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, stagesFile)
+	if err := os.WriteFile(path, append(mustRead(t, path), "{\"stage\":\"verify 1\",\"sta"...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := markBound(dir, "timeout"); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := ReadStages(dir)
+	if err != nil || len(rows) != 1 || rows[0].Bound != "timeout" {
+		t.Fatalf("rows %+v, %v; want implement 1 with the timeout bound", rows, err)
+	}
+	if got := string(mustRead(t, path)); strings.Count(got, "\n") != 1 {
+		t.Fatalf("stages.jsonl %q, want the half line gone", got)
+	}
+}
+
+func mustRead(t *testing.T, path string) []byte {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
+}
+
+func TestStageRowsCapEachOutputLine(t *testing.T) {
+	j := newJob(t, 1)
+	j.Loop.Verify = "printf 'x%.0s' $(seq 1 5000); echo; exit 1"
+	Pipeline{Stages: &fakeStages{t: t, steps: []step{reports(runner.StatusDone, "done")}}, Shell: shell()}.Run(context.Background(), j)
+	rows, err := ReadStages(j.Dir)
+	if err != nil || len(rows) != 2 {
+		t.Fatalf("rows %+v, %v", rows, err)
+	}
+	for _, line := range rows[1].Output {
+		if n := utf8.RuneCountInString(line); n > 300 {
+			t.Fatalf("output line of %d characters kept", n)
+		}
+	}
+	if last := rows[1].Output[len(rows[1].Output)-1]; !strings.HasSuffix(last, "x…") {
+		t.Fatalf("long line %q not cut with …", last)
+	}
 }

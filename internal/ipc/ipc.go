@@ -24,8 +24,9 @@ var ErrNotRunning = errors.New("loopd not running")
 
 const maxLoopFile = 1 << 20
 
-// Serve answers loopctl requests on ln until ln closes.
-func Serve(ln net.Listener, d *daemon.Daemon) error {
+// Serve answers loopctl requests on ln until ln closes. pageURL is the
+// address of a Job's tracking page.
+func Serve(ln net.Listener, d *daemon.Daemon, pageURL func(id string) string) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /loops", func(w http.ResponseWriter, r *http.Request) {
 		loops, err := d.List()
@@ -89,30 +90,11 @@ func Serve(ln net.Listener, d *daemon.Daemon) error {
 		tried, err := d.Try(id)
 		reply(w, tried, err)
 	})
-	mux.HandleFunc("GET /jobs/{id}/events", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/x-ndjson")
-		enc := json.NewEncoder(w)
-		rc := http.NewResponseController(w)
+	mux.HandleFunc("GET /jobs/{id}/page", func(w http.ResponseWriter, r *http.Request) {
 		id, err := d.Resolve(r.PathValue("id"))
-		if err == nil {
-			err = d.Follow(r.Context(), id, func(e feed.Event) error {
-				if err := enc.Encode(followLine{Event: &e}); err != nil {
-					return err
-				}
-				return rc.Flush()
-			})
-		}
-		var end followLine
-		if err == nil {
-			var log daemon.JobLog
-			log, err = d.Job(id)
-			end.Job = &log.Job
-		}
-		if err != nil {
-			end = followLine{Error: err.Error()}
-		}
-		_ = enc.Encode(end)
+		reply(w, Page{ID: id, URL: pageURL(id)}, err)
 	})
+	mux.Handle("GET /jobs/{id}/events", Events(d))
 	mux.HandleFunc("POST /loops/{name}/requeue/{issue}", func(w http.ResponseWriter, r *http.Request) {
 		n, err := strconv.Atoi(r.PathValue("issue"))
 		if err != nil {
@@ -139,8 +121,44 @@ func Serve(ln net.Listener, d *daemon.Daemon) error {
 	return srv.Serve(ln)
 }
 
+// Events streams the events of the Job that the id path value names, as
+// one JSON line each, then a line with the Job as it ended or the error
+// that ended the stream.
+func Events(d *daemon.Daemon) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		enc := json.NewEncoder(w)
+		rc := http.NewResponseController(w)
+		id, err := d.Resolve(r.PathValue("id"))
+		if err == nil {
+			err = d.Follow(r.Context(), id, func(e feed.Event) error {
+				if err := enc.Encode(followLine{Event: &e}); err != nil {
+					return err
+				}
+				return rc.Flush()
+			})
+		}
+		var end followLine
+		if err == nil {
+			var log daemon.JobLog
+			log, err = d.Job(id)
+			end.Job = &log.Job
+		}
+		if err != nil {
+			end = followLine{Error: err.Error()}
+		}
+		_ = enc.Encode(end)
+	}
+}
+
 type runRequest struct {
 	Spec string `json:"spec"`
+}
+
+// Page is a Job's full id and the address of its tracking page.
+type Page struct {
+	ID  string `json:"id"`
+	URL string `json:"url"`
 }
 
 // followLine is one line of a followed Job's stream: an event, the Job as
@@ -240,6 +258,13 @@ func (c *Client) Job(ctx context.Context, id string) (daemon.JobLog, error) {
 	var log daemon.JobLog
 	err := call(ctx, c.http, http.MethodGet, "/jobs/"+url.PathEscape(id), nil, &log)
 	return log, err
+}
+
+// Page is the tracking page of the Job whose id starts with prefix.
+func (c *Client) Page(ctx context.Context, prefix string) (Page, error) {
+	var page Page
+	err := call(ctx, c.http, http.MethodGet, "/jobs/"+url.PathEscape(prefix)+"/page", nil, &page)
+	return page, err
 }
 
 // RemoveJob removes a Job that ended, with its worktree, directory and,

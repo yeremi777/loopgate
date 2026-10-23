@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.ID}} · loopgate</title>
+<link rel="stylesheet" href="/track.css?token={{.Token}}">
+<script src="/track.js?token={{.Token}}" defer></script>
+</head>
+<body data-job="{{.ID}}">
+<header class="bar"><div class="wrap crumbs"><a class="brand" href="/?token={{.Token}}">loopgate</a><span class="sep">/</span><span id="loop" class="muted"></span><span class="sep">/</span><span class="mono">{{.ID}}</span></div></header>
+<main id="page" class="wrap"><p class="muted">Loading job {{.ID}}</p></main>
+</body>
+</html>

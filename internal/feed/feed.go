@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 )
@@ -20,12 +21,36 @@ const (
 )
 
 // Event is one line of a Job's live view. A Bound event starts or ends a
-// stage, or a step of a Verify gate, and outlives its stage.
+// stage, or a step of a Verify gate, and outlives its stage. Tool names the
+// tool of a tool call, whose Text is its input; Sub marks a subagent's line.
 type Event struct {
 	Time  time.Time `json:"time"`
 	Stage string    `json:"stage"`
 	Text  string    `json:"text"`
 	Bound bool      `json:"bound,omitempty"`
+	Tool  string    `json:"tool,omitempty"`
+	Sub   bool      `json:"sub,omitempty"`
+}
+
+// Line is the event as one line of text: the tool and its input, or the
+// text, indented for a subagent.
+func (e Event) Line() string {
+	line := e.Text
+	if e.Tool != "" {
+		line = strings.TrimSpace(e.Tool + " " + e.Text)
+	}
+	if e.Sub {
+		return "  " + line
+	}
+	return line
+}
+
+// Step is one tool call or text message of Claude inside a stage. Tool is
+// empty for a text message.
+type Step struct {
+	Tool string
+	Text string
+	Sub  bool
 }
 
 // Feed is the events of one Job: the bounds of its earlier stages, and its
@@ -52,11 +77,22 @@ func (f *Feed) Bound(stage, text string) { f.add(Event{Stage: stage, Text: text,
 // Line adds a line inside the current stage.
 func (f *Feed) Line(stage, text string) { f.add(Event{Stage: stage, Text: text}) }
 
+// Step adds Claude's tool call or text message inside the current stage.
+func (f *Feed) Step(stage string, s Step) {
+	f.add(Event{Stage: stage, Text: s.Text, Tool: s.Tool, Sub: s.Sub})
+}
+
+// Cut shortens text to the length an event holds, ending a cut text in "…".
+func Cut(text string) string {
+	if r := []rune(text); len(r) > maxText {
+		return string(r[:maxText-1]) + "…"
+	}
+	return text
+}
+
 func (f *Feed) add(e Event) {
 	e.Time = time.Now()
-	if r := []rune(e.Text); len(r) > maxText {
-		e.Text = string(r[:maxText-1]) + "…"
-	}
+	e.Text = Cut(e.Text)
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if e.Bound && len(f.current) > 0 && f.current[0].Stage != e.Stage {

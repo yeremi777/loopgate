@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestStateSurvivesReopen(t *testing.T) {
@@ -206,6 +207,7 @@ func TestJobDetailsSurviveReopen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	got.Started, got.Ended = time.Time{}, time.Time{}
 	want := Job{
 		ID: job.ID, Loop: "fix", State: Done, Work: "spec docs/specs/x.md",
 		Branch: "loop/fix-1", Worktree: "/jobs/1/worktree", Base: "abc123", Issue: 7,
@@ -240,8 +242,8 @@ func TestInterruptFailsJobsLeftRunning(t *testing.T) {
 		if job.State != want {
 			t.Fatalf("job %s: state %s, want %s", id, job.State, want)
 		}
-		if want == Failed && job.Error != "loopd restarted" {
-			t.Fatalf("job %s: error %q", id, job.Error)
+		if want == Failed && (job.Error != "loopd restarted" || job.Ended.IsZero()) {
+			t.Fatalf("job %s: error %q, ended %v; want the reason and an end time", id, job.Error, job.Ended)
 		}
 	}
 }
@@ -415,5 +417,98 @@ INSERT INTO jobs (id, loop, state, pr_url) VALUES ('0123456789ab', 'fix', 'done'
 	}
 	if got, err := open(t, path).Job(job.ID); err != nil || got.TestGuide != "make run" {
 		t.Fatalf("after a second open: %+v, %v", got, err)
+	}
+}
+
+func TestJobTimesAreStoredAtStartAndEndAndSurviveReopen(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.db")
+	st := open(t, path)
+	job, err := st.CreateJob("fix")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := st.Job(job.ID); !got.Started.IsZero() || !got.Ended.IsZero() {
+		t.Fatalf("queued job has times %v, %v", got.Started, got.Ended)
+	}
+	before := time.Now().Truncate(time.Millisecond)
+	if err := st.StartJob(job.ID, Start{Work: "task x"}); err != nil {
+		t.Fatal(err)
+	}
+	started, _ := st.Job(job.ID)
+	if started.Started.Before(before) || started.Started.After(time.Now()) || !started.Ended.IsZero() {
+		t.Fatalf("running job: started %v (want after %v), ended %v (want none)", started.Started, before, started.Ended)
+	}
+	time.Sleep(5 * time.Millisecond)
+	if err := st.FinishJob(job.ID, Finish{State: Done}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Close(); err != nil {
+		t.Fatal(err)
+	}
+	got, err := open(t, path).Job(job.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Started.Equal(started.Started) || !got.Ended.After(got.Started) || got.Ended.After(time.Now()) {
+		t.Fatalf("after reopen: started %v (want %v), ended %v", got.Started, started.Started, got.Ended)
+	}
+}
+
+func TestJobTimesOnADatabaseFromBeforeThem(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.db")
+	db, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TABLE jobs (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE, ` +
+		`loop TEXT NOT NULL, state TEXT NOT NULL, work TEXT NOT NULL DEFAULT '', branch TEXT NOT NULL DEFAULT '', ` +
+		`worktree TEXT NOT NULL DEFAULT '', base TEXT NOT NULL DEFAULT '', issue INTEGER NOT NULL DEFAULT 0, ` +
+		`question TEXT NOT NULL DEFAULT '', summary TEXT NOT NULL DEFAULT '', pr_url TEXT NOT NULL DEFAULT '', ` +
+		`cost_usd REAL NOT NULL DEFAULT 0, error TEXT NOT NULL DEFAULT '', end_commit TEXT NOT NULL DEFAULT '');
+		INSERT INTO jobs (id, loop, state) VALUES ('0123456789ab', 'fix', 'done')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		st, err := Open(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		old, err := st.Job("0123456789ab")
+		if err != nil || old.State != Done || !old.Started.IsZero() || !old.Ended.IsZero() {
+			t.Fatalf("old job %+v, %v; want done with no times", old, err)
+		}
+		if err := st.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	st := open(t, path)
+	job, _ := st.CreateJob("fix")
+	if err := st.StartJob(job.ID, Start{Work: "task x"}); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := st.Job(job.ID); got.Started.IsZero() {
+		t.Fatal("new job on an old database has no start time")
+	}
+}
+
+func TestJobTimesOnADatabaseThatGotOnlyTheStartColumn(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.db")
+	st := open(t, path)
+	if _, err := st.db.Exec(`ALTER TABLE jobs DROP COLUMN ended_ms`); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Close(); err != nil {
+		t.Fatal(err)
+	}
+	st = open(t, path)
+	job, _ := st.CreateJob("fix")
+	if err := st.FinishJob(job.ID, Finish{State: Failed}); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := st.Job(job.ID); err != nil || got.Ended.IsZero() {
+		t.Fatalf("job %+v, %v; want an end time", got, err)
 	}
 }
