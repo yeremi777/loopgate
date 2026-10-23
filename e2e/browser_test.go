@@ -38,6 +38,9 @@ func TestTrackPageFollowsTheJobLiveAndMovesToItsEndWithoutAReload(t *testing.T) 
 	if got := page.eval(t, `[...document.querySelectorAll(".stages-row:last-child > span")].slice(0, 2).map(e => e.textContent).join(" ")`); got != "running Implement 1" {
 		t.Fatalf("last stages row %q, want the running stage", got)
 	}
+	if got := page.eval(t, logTimeContrastAtLeast45); got != "true" {
+		t.Fatalf("log time contrast is under 4.5:1 on the log background")
+	}
 	page.noEmDash(t)
 	implemented()
 
@@ -141,6 +144,26 @@ func TestTrackPageOfAFailedJobWaitsForTheStagesFirstToolCallThenShowsTheErrorAnd
 	page.noEmDash(t)
 }
 
+func TestTrackPageCopiesTheCommandOfItsCardWithTheCopyButton(t *testing.T) {
+	failing, fail := hold(t)
+	e, id := startJobOf(t, "#!/bin/sh\n"+failing+"\nexit 1\n")
+	fakeOpen(t, e.env, "")
+	page := openPage(t, e.track(t, id, id))
+	fail()
+	page.waitFor(t, `document.querySelector(".headline")?.textContent`, "Job failed")
+	page.eval(t, `(window.copied = [], navigator.clipboard.writeText = s => (window.copied.push(s), Promise.resolve()))`)
+	page.waitFor(t, `document.querySelector(".detail .copy")?.getAttribute("aria-label")`, "Copy command")
+	page.eval(t, `document.querySelector(".detail .copy").click()`)
+	page.waitFor(t, `window.copied.join("|")`, "loopctl takeover "+id)
+	page.waitFor(t, `document.querySelector(".detail .copy").getAttribute("aria-label")`, "Copied")
+	page.eval(t, `navigator.clipboard.writeText = () => Promise.reject(new Error("denied"))`)
+	page.eval(t, `document.querySelector(".detail .copy").click()`)
+	page.waitFor(t, `document.querySelector(".detail .copy").getAttribute("aria-label")`, "Copy failed")
+	if got := page.eval(t, `document.querySelector(".detail .cmd").textContent`); got != "loopctl takeover "+id {
+		t.Fatalf("command text %q, want it unchanged by the button", got)
+	}
+}
+
 func TestTrackPageOfAJobThatFailedBeforeItsWorktreeNamesRm(t *testing.T) {
 	e, origin := streamLoop(t, "#!/bin/sh\nexit 1\n", "1m")
 	if err := os.RemoveAll(origin); err != nil {
@@ -176,6 +199,18 @@ func TestTrackPageShowsTheErrorLoopdReturned(t *testing.T) {
 	page.eval(t, `load().then(render, fail)`)
 	page.waitFor(t, `document.querySelector(".notice")?.textContent`, "loopd returned an error · job "+id+": not found")
 }
+
+// logTimeContrastAtLeast45 is true when a log entry's time, blended with its opacity, reads at 4.5:1 on the log background.
+const logTimeContrastAtLeast45 = `(() => {
+	const rgb = (c) => c.match(/[\d.]+/g).slice(0, 3).map(Number);
+	const lum = (c) => { const [r, g, b] = c.map((v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
+	const time = document.querySelector(".log .entry .time");
+	const bg = rgb(getComputedStyle(document.querySelector(".log")).backgroundColor);
+	const op = Number(getComputedStyle(time).opacity);
+	const fg = rgb(getComputedStyle(time).color).map((v, i) => v * op + bg[i] * (1 - op));
+	const [hi, lo] = [lum(fg), lum(bg)].sort((a, b) => b - a);
+	return (hi + 0.05) / (lo + 0.05) >= 4.5;
+})()`
 
 // hold is a shell line that waits until release runs, so a fake stays in its
 // stage until the test has looked at the page.

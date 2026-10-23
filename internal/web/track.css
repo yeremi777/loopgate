@@ -112,6 +112,18 @@ main.wrap { padding-top: 32px; padding-bottom: 32px; display: flex; flex-directi
   background: var(--inset);
   border: 1px solid var(--divider);
 }
+.cmd-row { display: flex; align-items: center; gap: 8px; }
+.copy {
+  display: inline-flex;
+  padding: 4px;
+  border-radius: 6px;
+  border: 1px solid var(--divider);
+  background: var(--inset);
+  color: var(--muted);
+  cursor: pointer;
+}
+.copy:hover { color: var(--fg); border-color: var(--border); }
+.copy svg { width: 14px; height: 14px; }
 .figures { flex: none; display: flex; gap: 24px; }
 .figure { display: flex; flex-direction: column; align-items: flex-end; }
 .figure .label { color: var(--muted); font-size: 12px; }
@@ -180,7 +192,7 @@ main.wrap { padding-top: 32px; padding-bottom: 32px; display: flex; flex-directi
 .entry.say .body { color: var(--fg); white-space: pre-wrap; }
 .entry .tool { color: var(--fg); font-weight: 600; }
 .entry.out .body { white-space: pre-wrap; }
-.entry .time { color: var(--muted); opacity: 0.6; padding-left: 16px; }
+.entry .time { color: var(--muted); padding-left: 16px; }
 .entry.sub { margin-left: 24px; position: relative; }
 .entry.sub::before {
   content: "";

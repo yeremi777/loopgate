@@ -29,6 +29,7 @@ const icons = {
   external: [["path", { d: "M15 3h6v6" }], ["path", { d: "M10 14 21 3" }], ["path", { d: "M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" }]],
   ring: [["circle", { cx: "12", cy: "12", r: "9" }], ["circle", { cx: "12", cy: "12", r: "3", fill: "currentColor", stroke: "none" }]],
   hollow: [["circle", { cx: "12", cy: "12", r: "9" }]],
+  copy: [["rect", { width: "14", height: "14", x: "8", y: "8", rx: "2", ry: "2" }], ["path", { d: "M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" }]],
 };
 
 function icon(name, cls) {
@@ -141,9 +142,32 @@ function headline(state, cur) {
 
 const stateIcon = { running: "ring", queued: "hollow", done: "check", blocked: "pause", manual: "pause", failed: "x", exhausted: "x" };
 
+function copyButton(text) {
+  const button = el("button", "copy");
+  button.type = "button";
+  let reset;
+  const show = (label, name) => {
+    button.title = label;
+    button.setAttribute("aria-label", label);
+    button.replaceChildren(icon(name));
+  };
+  show("Copy command", "copy");
+  button.addEventListener("click", async () => {
+    clearTimeout(reset);
+    try {
+      await navigator.clipboard.writeText(text);
+      show("Copied", "check");
+    } catch {
+      show("Copy failed", "x");
+    }
+    reset = setTimeout(() => show("Copy command", "copy"), 2000);
+  });
+  return button;
+}
+
 function detail(job) {
   const box = el("div", "detail");
-  const command = (text) => el("code", "cmd", text);
+  const command = (text) => el("div", "cmd-row", el("code", "cmd", text), copyButton(text));
   switch (job.State) {
     case "done": {
       const pr = prNumber(job);
