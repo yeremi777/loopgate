@@ -38,6 +38,7 @@ usage:
   loopctl logs [-f] <job>              show a job's state, branch, PR, cost and progress; -f then follows the running job until it ends, and Ctrl-C leaves it running
   loopctl takeover <job>               take a job, stopping it if it runs, and hand its worktree to you
   loopctl handback <job>               give a taken-over job back to its loop
+  loopctl try <job>                    copy the checkout's .worktreeinclude files into a done job's worktree, then print its path and test guide
   loopctl rm <job>                     remove an ended job with its worktree, and its branch unless it has commits the job did not end at
   loopctl requeue <loop> <issue>       let a github loop run an issue again
   loopctl install                      start loopd now and at login, and add the Claude Code skill
@@ -154,6 +155,13 @@ func run(args []string) error {
 		if removed.Job.PRURL != "" {
 			fmt.Println("pr: " + removed.Job.PRURL)
 		}
+		return nil
+	case cmd == "try" && len(rest) == 1:
+		tried, err := c.Try(ctx, rest[0])
+		if err != nil {
+			return err
+		}
+		printTry(tried)
 		return nil
 	case cmd == "logs" && len(rest) == 1:
 		log, err := c.Job(ctx, rest[0])
@@ -355,6 +363,25 @@ func printLog(log daemon.JobLog) {
 	}
 }
 
+// printTry prints a tried Job's worktree, the files try copied into it,
+// and its Test guide.
+func printTry(t daemon.Tried) {
+	fmt.Println("worktree: " + printable(daemon.Tilde(t.Job.Worktree)))
+	copied := "nothing; list the gitignored files the app needs, such as .env, in " + daemon.Tilde(filepath.Join(t.Checkout, ".worktreeinclude"))
+	if len(t.Copied) > 0 {
+		copied = strings.Join(t.Copied, ", ")
+	}
+	fmt.Println("copied: " + printable(copied))
+	guide := t.Job.TestGuide
+	if guide == "" {
+		guide = "The job wrote no test guide."
+	}
+	fmt.Println("\ntest guide:")
+	for line := range strings.Lines(guide) {
+		fmt.Println(printable(strings.TrimSuffix(line, "\n")))
+	}
+}
+
 // printEnd prints how a followed Job ended: its PR, question, error, or the
 // first line of its summary.
 func printEnd(j store.Job) {
@@ -384,7 +411,7 @@ func printList(loops []daemon.LoopStatus, jobs []store.Job, color bool) {
 	var blocks []*listBlock
 	byName := map[string]*listBlock{}
 	for _, l := range loops {
-		b := &listBlock{name: l.Name, state: "active", trigger: l.Trigger, checkout: home(l.Checkout)}
+		b := &listBlock{name: l.Name, state: "active", trigger: l.Trigger, checkout: daemon.Tilde(l.Checkout)}
 		if l.Paused {
 			b.state = "paused"
 		}
@@ -484,22 +511,6 @@ func result(j store.Job) string {
 		return "taken over"
 	}
 	return ""
-}
-
-// home writes path with the user's home as ~.
-func home(path string) string {
-	user, err := os.UserHomeDir()
-	if err != nil {
-		return path
-	}
-	user = filepath.Clean(user)
-	if path == user {
-		return "~"
-	}
-	if rel, ok := strings.CutPrefix(path, user+"/"); ok {
-		return "~/" + rel
-	}
-	return path
 }
 
 // cell is the first line of s as one table cell of at most 60 characters.

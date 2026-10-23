@@ -50,6 +50,19 @@ func TestRunCarriesSpecJobToDraftPRAndNotifies(t *testing.T) {
 	}
 }
 
+func TestRunStoresTheTestGuideOfADoneJob(t *testing.T) {
+	r := newRunEnv(t)
+	r.stages.try = "go run ./cmd/app, then GET /ok"
+	r.release()
+	started, err := r.d.Run("deps", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := r.waitDone(t, started.ID); got.State != store.Done || got.TestGuide != "go run ./cmd/app, then GET /ok" {
+		t.Fatalf("finished %+v, want done with the test guide", got)
+	}
+}
+
 func TestRunUsesTimerTaskWithoutSpec(t *testing.T) {
 	r := newRunEnv(t)
 	started, err := r.d.Run("deps", "")
@@ -186,11 +199,13 @@ func (r *runEnv) waitDone(t *testing.T, id string) store.Job {
 }
 
 // scriptedStages stands in for claude: implement commits ok.txt, rubric
-// passes, land returns PR text. The first stage waits for gate to close.
+// passes, land returns PR text and try as its test guide. The first stage
+// waits for gate to close.
 type scriptedStages struct {
 	gate       chan struct{}
 	failFirst  bool
 	blockFirst bool
+	try        string
 	mu         sync.Mutex
 	prompts    []string
 }
@@ -228,7 +243,7 @@ func (s *scriptedStages) Run(ctx context.Context, st runner.Stage) (runner.Resul
 			return runner.Result{}, err
 		}
 	case strings.HasPrefix(st.Prompt, "/land"):
-		done.Summary = "Add ok\n\nbody"
+		done.Summary, done.Try = "Add ok\n\nbody", s.try
 	}
 	return done, nil
 }

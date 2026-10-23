@@ -42,6 +42,8 @@ type Job struct {
 	// EndCommit is the commit the Job's branch pointed at when it last ended,
 	// or empty when none was stored.
 	EndCommit string
+	// TestGuide is how to run a done Job's work by hand, or empty.
+	TestGuide string
 }
 
 // Finish is how one run of a Job ended. CostUSD adds to the cost of earlier runs.
@@ -53,6 +55,7 @@ type Finish struct {
 	CostUSD   float64
 	Error     string
 	EndCommit string
+	TestGuide string
 }
 
 var (
@@ -82,7 +85,8 @@ const jobsTable = `(
 	pr_url     TEXT NOT NULL DEFAULT '',
 	cost_usd   REAL NOT NULL DEFAULT 0,
 	error      TEXT NOT NULL DEFAULT '',
-	end_commit TEXT NOT NULL DEFAULT ''
+	end_commit TEXT NOT NULL DEFAULT '',
+	test_guide TEXT NOT NULL DEFAULT ''
 )`
 
 const schema = `
@@ -109,6 +113,9 @@ func Open(path string) (*Store, error) {
 	}
 	if err := convertIntegerIDs(db); err != nil {
 		return nil, errors.Join(fmt.Errorf("convert integer job ids: %w", err), db.Close())
+	}
+	if err := addTestGuide(db); err != nil {
+		return nil, errors.Join(fmt.Errorf("add the test guide column: %w", err), db.Close())
 	}
 	return &Store{db: db, newID: newID}, nil
 }
@@ -168,6 +175,16 @@ func convertIntegerIDs(db *sql.DB) (err error) {
 		log.Printf("job %d is now %s", n, ids[i])
 	}
 	return nil
+}
+
+// addTestGuide adds the test_guide column to a jobs table from before it.
+func addTestGuide(db *sql.DB) error {
+	var has bool
+	if err := db.QueryRow(`SELECT count(*) FROM pragma_table_info('jobs') WHERE name = 'test_guide'`).Scan(&has); err != nil || has {
+		return err
+	}
+	_, err := db.Exec(`ALTER TABLE jobs ADD COLUMN test_guide TEXT NOT NULL DEFAULT ''`)
+	return err
 }
 
 func (s *Store) Close() error { return s.db.Close() }
@@ -237,8 +254,8 @@ func (s *Store) StartJob(id string, st Start) error {
 }
 
 func (s *Store) FinishJob(id string, f Finish) error {
-	return s.updateJob(id, `UPDATE jobs SET state = ?, question = ?, summary = ?, pr_url = ?, cost_usd = cost_usd + ?, error = ?, end_commit = ? WHERE id = ?`,
-		f.State, f.Question, f.Summary, f.PRURL, f.CostUSD, f.Error, f.EndCommit, id)
+	return s.updateJob(id, `UPDATE jobs SET state = ?, question = ?, summary = ?, pr_url = ?, cost_usd = cost_usd + ?, error = ?, end_commit = ?, test_guide = ? WHERE id = ?`,
+		f.State, f.Question, f.Summary, f.PRURL, f.CostUSD, f.Error, f.EndCommit, f.TestGuide, id)
 }
 
 // InterruptRunning fails every queued or running Job, which a dead loopd left behind.
@@ -258,11 +275,11 @@ func (s *Store) updateJob(id string, query string, args ...any) error {
 	return nil
 }
 
-const jobColumns = `id, loop, state, work, branch, worktree, base, issue, question, summary, pr_url, cost_usd, error, end_commit`
+const jobColumns = `id, loop, state, work, branch, worktree, base, issue, question, summary, pr_url, cost_usd, error, end_commit, test_guide`
 
 func scanJob(row interface{ Scan(...any) error }) (Job, error) {
 	var job Job
-	err := row.Scan(&job.ID, &job.Loop, &job.State, &job.Work, &job.Branch, &job.Worktree, &job.Base, &job.Issue, &job.Question, &job.Summary, &job.PRURL, &job.CostUSD, &job.Error, &job.EndCommit)
+	err := row.Scan(&job.ID, &job.Loop, &job.State, &job.Work, &job.Branch, &job.Worktree, &job.Base, &job.Issue, &job.Question, &job.Summary, &job.PRURL, &job.CostUSD, &job.Error, &job.EndCommit, &job.TestGuide)
 	return job, err
 }
 

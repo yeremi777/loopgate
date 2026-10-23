@@ -194,7 +194,7 @@ func TestJobDetailsSurviveReopen(t *testing.T) {
 	if err := st.StartJob(job.ID, Start{Work: "spec docs/specs/x.md", Branch: "loop/fix-1", Worktree: "/jobs/1/worktree", Base: "abc123", Issue: 7}); err != nil {
 		t.Fatal(err)
 	}
-	end := Finish{State: Done, Summary: "added Double", PRURL: "https://github.com/me/app/pull/7", CostUSD: 1.25}
+	end := Finish{State: Done, Summary: "added Double", PRURL: "https://github.com/me/app/pull/7", CostUSD: 1.25, TestGuide: "go run ./cmd/app, then GET /double"}
 	if err := st.FinishJob(job.ID, end); err != nil {
 		t.Fatal(err)
 	}
@@ -210,6 +210,7 @@ func TestJobDetailsSurviveReopen(t *testing.T) {
 		ID: job.ID, Loop: "fix", State: Done, Work: "spec docs/specs/x.md",
 		Branch: "loop/fix-1", Worktree: "/jobs/1/worktree", Base: "abc123", Issue: 7,
 		Summary: "added Double", PRURL: "https://github.com/me/app/pull/7", CostUSD: 1.25,
+		TestGuide: "go run ./cmd/app, then GET /double",
 	}
 	if got != want {
 		t.Fatalf("got %+v\nwant %+v", got, want)
@@ -367,5 +368,52 @@ func TestConvertIntegerIDsGivesEachOldJobANewIDOnceAndKeepsEverythingElse(t *tes
 	}
 	if logged.Len() != 0 {
 		t.Fatalf("second open logged %q", logged.String())
+	}
+}
+
+func TestOpenAddsTheTestGuideToAStateDatabaseFromBeforeIt(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.db")
+	db, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TABLE jobs (
+	seq        INTEGER PRIMARY KEY AUTOINCREMENT,
+	id         TEXT NOT NULL UNIQUE,
+	loop       TEXT NOT NULL,
+	state      TEXT NOT NULL,
+	work       TEXT NOT NULL DEFAULT '',
+	branch     TEXT NOT NULL DEFAULT '',
+	worktree   TEXT NOT NULL DEFAULT '',
+	base       TEXT NOT NULL DEFAULT '',
+	issue      INTEGER NOT NULL DEFAULT 0,
+	question   TEXT NOT NULL DEFAULT '',
+	summary    TEXT NOT NULL DEFAULT '',
+	pr_url     TEXT NOT NULL DEFAULT '',
+	cost_usd   REAL NOT NULL DEFAULT 0,
+	error      TEXT NOT NULL DEFAULT '',
+	end_commit TEXT NOT NULL DEFAULT ''
+);
+INSERT INTO jobs (id, loop, state, pr_url) VALUES ('0123456789ab', 'fix', 'done', 'https://github.com/me/app/pull/1');`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	st := open(t, path)
+	old, err := st.Job("0123456789ab")
+	if err != nil || old.State != Done || old.PRURL != "https://github.com/me/app/pull/1" || old.TestGuide != "" {
+		t.Fatalf("old job read back as %+v, %v", old, err)
+	}
+	job, _ := st.CreateJob("fix")
+	if err := st.FinishJob(job.ID, Finish{State: Done, TestGuide: "make run"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := open(t, path).Job(job.ID); err != nil || got.TestGuide != "make run" {
+		t.Fatalf("after a second open: %+v, %v", got, err)
 	}
 }

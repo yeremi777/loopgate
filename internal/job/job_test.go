@@ -437,6 +437,12 @@ func reports(status runner.Status, summary string) step {
 
 func lands(pr string) step { return reports(runner.StatusDone, pr) }
 
+func landsTrying(pr, guide string) step {
+	return func(runner.Stage) (runner.Result, error) {
+		return runner.Result{Status: runner.StatusDone, Summary: pr, Try: guide, CostUSD: 0.1}, nil
+	}
+}
+
 func landsAfter(work step, pr string) step {
 	return func(s runner.Stage) (runner.Result, error) {
 		if _, err := work(s); err != nil {
@@ -687,6 +693,93 @@ func TestIssueJobImplementsTheSpecDrillWrote(t *testing.T) {
 	}
 	if got := strings.SplitN(f.stages[3].Prompt, "\n", 2)[0]; got != "/land PR, keep spec docs/specs/issue-7.md" {
 		t.Fatalf("land prompt %q", got)
+	}
+}
+
+func TestLandPromptAsksForTheTestGuideInTry(t *testing.T) {
+	for name, tc := range map[string]struct {
+		work Work
+		demo bool
+	}{
+		"spec": {Spec{Path: "docs/specs/x.md"}, true},
+		"task": {Task{Text: "add ok.txt"}, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			j := newJob(t, 3)
+			j.Work = tc.work
+			f := &fakeStages{t: t, steps: []step{commits(j, "ok.txt"), reports(runner.StatusDone, "clean"), lands("t\n\nb")}}
+			Pipeline{Stages: f, Shell: shell(), Publisher: &fakePublisher{}}.Run(context.Background(), j)
+			land := f.stages[2].Prompt
+			for _, want := range []string{
+				"Set the `try` field to the test guide", "Markdown of at most 40 lines", "from the root of this worktree",
+				".worktreeinclude", "the commands that start the app", "each endpoint, screen or command", "what to expect",
+				"Name each environment variable the app needs, never its value", "no token, password or other secret",
+				"drops or resets data", "the human's choice", "Leave `try` empty when the branch adds nothing a human can run",
+			} {
+				if !strings.Contains(land, want) {
+					t.Fatalf("land prompt lacks %q:\n%s", want, land)
+				}
+			}
+			if got := strings.Contains(land, "`Demo:` lines of docs/specs/x.md"); got != tc.demo {
+				t.Fatalf("land prompt names the spec's Demo: lines: %v, want %v:\n%s", got, tc.demo, land)
+			}
+		})
+	}
+}
+
+func TestReportTryItFollowsTheBulletsAndPrecedesDrill(t *testing.T) {
+	j := issueJob(t)
+	guide := "Start the app with `go run ./cmd/app`; it needs DATABASE_URL.\n\n- GET /ok answers 200 with `ok`."
+	f := &fakeStages{t: t, steps: []step{
+		reports(runner.StatusDone, "Obvious: add ok.txt; check: test -f ok.txt"),
+		commits(j, "ok.txt"),
+		reports(runner.StatusDone, "clean"),
+		landsTrying("Add ok\n\nbody", guide),
+	}}
+	pub := &fakePublisher{}
+	out := Pipeline{Stages: f, Shell: shell(), Publisher: pub}.Run(context.Background(), j)
+	if out.State != store.Done || out.TestGuide != guide {
+		t.Fatalf("got %+v, want done with the test guide", out)
+	}
+	tryIt := "\n### Try it\n\nRun `loopctl try " + j.ID + "`, then:\n\n" + guide + "\n"
+	at := strings.Index(pub.pr.Body, tryIt)
+	bullets := strings.Index(pub.pr.Body, "- Changed or deleted tests")
+	drill := strings.Index(pub.pr.Body, "### Drill")
+	if at < 0 || bullets < 0 || at < bullets || drill < at {
+		t.Fatalf("PR body lacks %q between the bullets and the drill section:\n%s", tryIt, pub.pr.Body)
+	}
+}
+
+func TestReportNoTestGuideSaysSo(t *testing.T) {
+	j := newJob(t, 3)
+	f := &fakeStages{t: t, steps: []step{commits(j, "ok.txt"), reports(runner.StatusDone, "clean"), landsTrying("t\n\nb", " \n")}}
+	pub := &fakePublisher{}
+	out := Pipeline{Stages: f, Shell: shell(), Publisher: pub}.Run(context.Background(), j)
+	if out.State != store.Done || out.TestGuide != "" {
+		t.Fatalf("got %+v, want done with no test guide", out)
+	}
+	if want := "\n### Try it\n\nRun `loopctl try " + j.ID + "`, then:\n\nThe job wrote no test guide.\n\n### Implement summary"; !strings.Contains(pub.pr.Body, want) {
+		t.Fatalf("PR body lacks %q:\n%s", want, pub.pr.Body)
+	}
+}
+
+func TestTestGuideCutTo4000CharactersEndingInEllipsis(t *testing.T) {
+	for name, tc := range map[string]struct{ guide, want string }{
+		"long":    {strings.Repeat("é", 5000), strings.Repeat("é", 3999) + "…"},
+		"at most": {strings.Repeat("é", 4000), strings.Repeat("é", 4000)},
+	} {
+		t.Run(name, func(t *testing.T) {
+			j := newJob(t, 3)
+			f := &fakeStages{t: t, steps: []step{commits(j, "ok.txt"), reports(runner.StatusDone, "clean"), landsTrying("t\n\nb", tc.guide)}}
+			pub := &fakePublisher{}
+			out := Pipeline{Stages: f, Shell: shell(), Publisher: pub}.Run(context.Background(), j)
+			if out.TestGuide != tc.want {
+				t.Fatalf("test guide of %d characters, want %d ending %q", len([]rune(out.TestGuide)), len([]rune(tc.want)), tc.want[len(tc.want)-3:])
+			}
+			if !strings.Contains(pub.pr.Body, "then:\n\n"+tc.want+"\n") {
+				t.Fatal("PR body does not carry the cut test guide")
+			}
+		})
 	}
 }
 

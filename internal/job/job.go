@@ -72,6 +72,7 @@ type Outcome struct {
 	Summary     string
 	Gated       string
 	TestChanges []verify.Change
+	TestGuide   string
 	PRURL       string
 	CostUSD     float64
 	Err         error
@@ -80,6 +81,9 @@ type Outcome struct {
 // maxLogOutput bounds each verify output kept in the progress log, so the
 // implement prompt stays small across iterations.
 const maxLogOutput = 4000
+
+// maxTestGuide bounds the Test guide kept on a Job and shown in its PR.
+const maxTestGuide = 4000
 
 // gateTail is how many lines of a failed gate's output its live view shows.
 const gateTail = 20
@@ -227,6 +231,7 @@ func (r *jobRun) ship(ctx context.Context, out Outcome) (Outcome, error) {
 	if err != nil {
 		return Outcome{}, err
 	}
+	out.TestGuide = cut(strings.TrimSpace(land.Try), maxTestGuide)
 	pr.Body = report(j, out, r.drill, r.cost) + "\n\n---\n\n" + pr.Body
 	url, err := r.Publisher.Publish(ctx, j.Worktree, j.Branch, j.DefaultBranch, pr)
 	if err != nil {
@@ -345,6 +350,15 @@ func (l *progressLog) add(iteration int, title, body string) error {
 	}
 	l.text += entry
 	return f.Close()
+}
+
+// cut shortens s to max characters, ending it in "…".
+func cut(s string, max int) string {
+	r := []rune(s)
+	if len(r) <= max {
+		return s
+	}
+	return string(r[:max-1]) + "…"
 }
 
 func tail(s string) string {

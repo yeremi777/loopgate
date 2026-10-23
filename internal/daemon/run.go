@@ -151,14 +151,14 @@ func (d *Daemon) Takeover(id string) (store.Job, error) {
 	}
 	switch j.State {
 	case store.Done:
-		return store.Job{}, fmt.Errorf("job %s is done; check out %s instead: %w", id, j.Branch, ErrNotTakeable)
+		return store.Job{}, fmt.Errorf("job %s is done: %w; to run it by hand, run `loopctl try %s`", id, ErrNotTakeable, id)
 	case store.Queued, store.Running:
 		return store.Job{}, fmt.Errorf("job %s: %w", id, ErrStarting)
 	case store.Manual:
 		return j, nil
 	}
 	if j.Worktree == "" {
-		return store.Job{}, fmt.Errorf("job %s never got a worktree: %w", id, ErrNotTakeable)
+		return store.Job{}, fmt.Errorf("job %s never got a worktree: %w; to remove it, run `loopctl rm %s`", id, ErrNotTakeable, id)
 	}
 	if err := d.st.SetJobState(id, store.Manual); err != nil {
 		return store.Job{}, err
@@ -316,7 +316,7 @@ func (d *Daemon) finish(ctx context.Context, cur *running, j job.Job) {
 	endCommit := d.endCommit(j)
 
 	d.mu.Lock()
-	end := store.Finish{State: out.State, Question: out.Question, Summary: out.Summary, PRURL: out.PRURL, CostUSD: out.CostUSD}
+	end := store.Finish{State: out.State, Question: out.Question, Summary: out.Summary, PRURL: out.PRURL, CostUSD: out.CostUSD, TestGuide: out.TestGuide}
 	switch {
 	case out.State == store.Done:
 		// The draft PR exists; a stop or takeover that came late changes nothing.

@@ -204,6 +204,28 @@ func TestGitIgnoresHooksAndFsmonitorPlantedInTheRepo(t *testing.T) {
 	}
 }
 
+func TestIgnoredNamesThePathsGitIgnoresWhetherOrNotTheyExist(t *testing.T) {
+	checkout, _ := cloneWithOrigin(t)
+	commitFile(t, checkout, "kept.env", "tracked")
+	commitFile(t, checkout, ".gitignore", "*.env\nbuild/\n")
+	writeFile(t, filepath.Join(checkout, "a.env"), "x")
+	writeFile(t, filepath.Join(checkout, "notes.txt"), "x")
+
+	got, err := Ignored(context.Background(), checkout, []string{"notes.txt", "a.env", "kept.env", "build/out", "no such dir/b.env"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"a.env", "build/out", "no such dir/b.env"}; !slices.Equal(got, want) {
+		t.Fatalf("ignored %q, want %q", got, want)
+	}
+	if got, err := Ignored(context.Background(), checkout, []string{"notes.txt"}); err != nil || len(got) != 0 {
+		t.Fatalf("none ignored: %q, %v", got, err)
+	}
+	if _, err := Ignored(context.Background(), t.TempDir(), []string{"a.env"}); err == nil {
+		t.Fatal("no error outside a repository")
+	}
+}
+
 func TestGitTimeoutKeepsItsCause(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

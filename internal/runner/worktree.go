@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -163,6 +164,35 @@ func GitGuard(worktree string) ([]string, error) {
 		filepath.Join(admin, "gitdir"),
 		dotgit,
 	}, nil
+}
+
+// Ignored is the paths, relative to dir, that git ignores in dir, in the
+// order given.
+func Ignored(ctx context.Context, dir string, paths []string) ([]string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "check-ignore", "-z", "--stdin")
+	cmd.Dir = dir
+	var stdin strings.Builder
+	for _, p := range paths {
+		stdin.WriteString(p + "\x00")
+	}
+	cmd.Stdin = strings.NewReader(stdin.String())
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return nil, fmt.Errorf("git check-ignore: %w", ctxErr)
+	}
+	// check-ignore exits 1 when it ignores none of the paths.
+	var exit *exec.ExitError
+	if errors.As(err, &exit) && exit.ExitCode() == 1 {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("git check-ignore: %w: %s", err, strings.TrimSpace(stderr.String()))
+	}
+	return strings.Split(strings.TrimSuffix(string(out), "\x00"), "\x00"), nil
 }
 
 // Git runs git in dir for loopd itself, outside any stage, and returns its

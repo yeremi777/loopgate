@@ -22,11 +22,13 @@ const (
 	StatusRevise  Status = "revise"
 )
 
-// Result is the stage's structured report and what the stage cost.
+// Result is the stage's structured report and what the stage cost. Try is
+// the land stage's Test guide, empty when the stage wrote none.
 type Result struct {
 	Status   Status
 	Question string
 	Summary  string
+	Try      string
 	CostUSD  float64
 }
 
@@ -64,7 +66,8 @@ type Stage struct {
 const resultSchema = `{"type":"object","properties":{` +
 	`"status":{"type":"string","enum":["done","blocked","revise"]},` +
 	`"question":{"type":"string"},` +
-	`"summary":{"type":"string"}},` +
+	`"summary":{"type":"string"},` +
+	`"try":{"type":"string","description":"Land only: the test guide in Markdown, at most 40 lines; empty when the branch adds nothing a human can run."}},` +
 	`"required":["status","summary"]}`
 
 // envAllowlist holds what claude, git and ssh need; everything else stays in loopd.
@@ -205,6 +208,7 @@ func parseResult(data []byte) (Result, error) {
 			Status   Status `json:"status"`
 			Question string `json:"question"`
 			Summary  string `json:"summary"`
+			Try      string `json:"try"`
 		} `json:"structured_output"`
 	}
 	if err := json.Unmarshal(data, &out); err != nil {
@@ -216,7 +220,7 @@ func parseResult(data []byte) (Result, error) {
 	if out.Structured == nil {
 		return Result{}, errors.New("claude output has no structured_output")
 	}
-	res := Result{Status: out.Structured.Status, Question: out.Structured.Question, Summary: out.Structured.Summary, CostUSD: out.CostUSD}
+	res := Result{Status: out.Structured.Status, Question: out.Structured.Question, Summary: out.Structured.Summary, Try: out.Structured.Try, CostUSD: out.CostUSD}
 	switch {
 	case res.Status != StatusDone && res.Status != StatusBlocked && res.Status != StatusRevise:
 		return Result{}, fmt.Errorf("claude reported unknown status %q", res.Status)
