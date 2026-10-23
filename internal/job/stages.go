@@ -4,7 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"errors"
-	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"time"
@@ -29,20 +29,40 @@ type StageRow struct {
 
 const stagesFile = "stages.jsonl"
 
-// appendStage adds row to the stage rows in the Job's directory.
+// appendStage adds row to the stage rows in the Job's directory, on a line
+// of its own even when a crash left the file ending mid-line.
 func appendStage(dir string, row StageRow) error {
 	data, err := json.Marshal(row)
 	if err != nil {
 		return err
 	}
-	f, err := os.OpenFile(filepath.Join(dir, stagesFile), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	f, err := os.OpenFile(filepath.Join(dir, stagesFile), os.O_APPEND|os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return err
+	}
+	midLine, err := endsMidLine(f)
+	if err != nil {
+		return errors.Join(err, f.Close())
+	}
+	if midLine {
+		data = append([]byte{'\n'}, data...)
 	}
 	if _, err := f.Write(append(data, '\n')); err != nil {
 		return errors.Join(err, f.Close())
 	}
 	return f.Close()
+}
+
+func endsMidLine(f *os.File) (bool, error) {
+	info, err := f.Stat()
+	if err != nil || info.Size() == 0 {
+		return false, err
+	}
+	var last [1]byte
+	if _, err := f.ReadAt(last[:], info.Size()-1); err != nil {
+		return false, err
+	}
+	return last[0] != '\n', nil
 }
 
 // markBound names bound on the last stage row in the Job's directory, when
@@ -78,7 +98,8 @@ func markBound(dir, bound string) error {
 }
 
 // ReadStages is the stage rows in a Job's directory, oldest first; a Job
-// that never ended a stage has none.
+// that never ended a stage has none. A line that is not a row, such as one
+// cut short by a crash, is logged and left out.
 func ReadStages(dir string) ([]StageRow, error) {
 	f, err := os.Open(filepath.Join(dir, stagesFile))
 	if errors.Is(err, os.ErrNotExist) {
@@ -91,10 +112,11 @@ func ReadStages(dir string) ([]StageRow, error) {
 	var rows []StageRow
 	lines := bufio.NewScanner(f)
 	lines.Buffer(nil, 1<<20)
-	for lines.Scan() {
+	for n := 1; lines.Scan(); n++ {
 		var row StageRow
 		if err := json.Unmarshal(lines.Bytes(), &row); err != nil {
-			return nil, fmt.Errorf("%s line %d: %w", stagesFile, len(rows)+1, err)
+			log.Printf("%s line %d: skipped: %v", filepath.Join(dir, stagesFile), n, err)
+			continue
 		}
 		rows = append(rows, row)
 	}

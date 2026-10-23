@@ -918,6 +918,87 @@ func TestStageRowsThatCannotBeWrittenLeaveTheJobToShip(t *testing.T) {
 	}
 }
 
+func TestStageRowsSkipALineThatIsNotARowAndLogIt(t *testing.T) {
+	var logged strings.Builder
+	log.SetOutput(&logged)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+	dir := t.TempDir()
+	if err := appendStage(dir, StageRow{Stage: "implement 1", Status: "done"}); err != nil {
+		t.Fatal(err)
+	}
+	torn := filepath.Join(dir, stagesFile)
+	if err := os.WriteFile(torn, append(mustRead(t, torn), "{\"stage\":\"verify 1\",\"sta\n"...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := appendStage(dir, StageRow{Stage: "implement 2", Status: "done"}); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := ReadStages(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 || rows[0].Stage != "implement 1" || rows[1].Stage != "implement 2" {
+		t.Fatalf("rows %+v, want implement 1 and implement 2", rows)
+	}
+	if !strings.Contains(logged.String(), "stages.jsonl line 2: skipped") {
+		t.Fatalf("log %q does not name the skipped line", logged.String())
+	}
+}
+
+func TestStageRowAppendedAfterAHalfWrittenLineStartsOnItsOwnLine(t *testing.T) {
+	var logged strings.Builder
+	log.SetOutput(&logged)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+	dir := t.TempDir()
+	if err := appendStage(dir, StageRow{Stage: "implement 1", Status: "done"}); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, stagesFile)
+	if err := os.WriteFile(path, append(mustRead(t, path), "{\"stage\":\"verify 1\",\"sta"...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := appendStage(dir, StageRow{Stage: "implement 2", Status: "done"}); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := ReadStages(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 || rows[1].Stage != "implement 2" {
+		t.Fatalf("rows %+v, want the new row kept beside the first", rows)
+	}
+}
+
+func TestMarkBoundAfterAHalfWrittenLineKeepsTheRowsAndDropsTheLine(t *testing.T) {
+	dir := t.TempDir()
+	if err := appendStage(dir, StageRow{Stage: "implement 1", Status: "done"}); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, stagesFile)
+	if err := os.WriteFile(path, append(mustRead(t, path), "{\"stage\":\"verify 1\",\"sta"...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := markBound(dir, "timeout"); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := ReadStages(dir)
+	if err != nil || len(rows) != 1 || rows[0].Bound != "timeout" {
+		t.Fatalf("rows %+v, %v; want implement 1 with the timeout bound", rows, err)
+	}
+	if got := string(mustRead(t, path)); strings.Count(got, "\n") != 1 {
+		t.Fatalf("stages.jsonl %q, want the half line gone", got)
+	}
+}
+
+func mustRead(t *testing.T, path string) []byte {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
+}
+
 func TestStageRowsCapEachOutputLine(t *testing.T) {
 	j := newJob(t, 1)
 	j.Loop.Verify = "printf 'x%.0s' $(seq 1 5000); echo; exit 1"
