@@ -7,7 +7,7 @@ const jobID = document.body.dataset.job;
 const url = (path) => "/jobs/" + jobID + path + "?token=" + encodeURIComponent(token);
 
 // stoppedAt is when the page lost loopd; problem is an error loopd answered.
-const view = { track: null, events: [], following: false, stoppedAt: null, problem: "" };
+const view = { track: null, events: [], following: false, stoppedAt: null, problem: "", opened: new Map() };
 
 // el builds an element; strings among the children become text nodes.
 function el(tag, cls, ...children) {
@@ -340,12 +340,15 @@ function stagesTable() {
   if (cur && !view.stoppedAt) rows.push({ stage: cur.stage, status: "running", start: cur.start, cost_usd: 0 });
   const table = el("div", "panel stages",
     el("div", "stages-row stages-head", el("span", null, "Status"), el("span", null, "Stage"), el("span", "num started", "Started"), el("span", "num", "Took"), el("span", "num cost", "Cost"), el("span")));
+  const lastFailedGate = rows.findLastIndex((row) => row.status === "fail" && row.commands);
   rows.forEach((row, i) => {
     const end = row.status === "running" ? null : time(row.end);
     if (row.status === "fail" && row.commands) {
       const summary = el("summary", null, ...cells(row, end), icon("chevron", "chev"));
       const details = el("details", null, summary, gateDetail(row));
       details.dataset.row = String(i);
+      details.open = i === lastFailedGate;
+      summary.addEventListener("click", () => view.opened.set(details.dataset.row, !details.open));
       table.append(details);
     } else {
       table.append(el("div", "stages-row", ...cells(row, end), el("span")));
@@ -369,7 +372,7 @@ function render() {
   }
   const job = view.track.job;
   document.getElementById("loop").textContent = job.Loop;
-  const open = new Set([...document.querySelectorAll(".stages details[open]")].map((d) => d.dataset.row));
+  document.title = (view.stoppedAt ? "loopd stopped" : headline(job.State, current())) + " · " + job.ID;
   const log = document.querySelector(".log");
   const scrolled = log ? log.scrollTop : 0;
   const atBottom = !log || scrolled + log.clientHeight >= log.scrollHeight - 4;
@@ -377,7 +380,9 @@ function render() {
   if (view.following && isLive()) parts.push(live());
   parts.push(stagesTable());
   page.replaceChildren(...parts.filter(Boolean));
-  for (const d of document.querySelectorAll(".stages details")) d.open = open.has(d.dataset.row);
+  for (const d of document.querySelectorAll(".stages details")) {
+    if (view.opened.has(d.dataset.row)) d.open = view.opened.get(d.dataset.row);
+  }
   const newLog = document.querySelector(".log");
   if (newLog) newLog.scrollTop = atBottom ? newLog.scrollHeight : scrolled;
 }

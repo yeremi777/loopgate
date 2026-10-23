@@ -28,6 +28,7 @@ func TestTrackPageFollowsTheJobLiveAndMovesToItsEndWithoutAReload(t *testing.T) 
 	page := openPage(t, e.track(t, id, id))
 
 	page.waitFor(t, `document.querySelector(".headline")?.textContent`, "Implementing, run 1 of 2")
+	page.waitFor(t, `document.title`, "Implementing, run 1 of 2 · "+id)
 	page.waitFor(t, `document.querySelector(".log .entry.newest .body")?.textContent`, "<img src=x onerror=alert(1)><b>bold</b>")
 	if got := page.eval(t, `document.querySelector(".log .entry .body").textContent`); got != "Write(ok.txt)" {
 		t.Fatalf("first log entry %q, want the tool call as Tool(input)", got)
@@ -47,6 +48,7 @@ func TestTrackPageFollowsTheJobLiveAndMovesToItsEndWithoutAReload(t *testing.T) 
 	page.waitFor(t, `document.querySelector(".live .empty")?.textContent`, "Pushing the branch and opening the draft PR")
 	published()
 	page.waitFor(t, `document.querySelector(".headline")?.textContent`, "Draft PR opened")
+	page.waitFor(t, `document.title`, "Draft PR opened · "+id)
 	if got := page.eval(t, `document.querySelector(".pr-link").textContent + " | " + document.querySelectorAll(".live").length`); got != "Open PR #9 | 0" {
 		t.Fatalf("done page: %q, want the PR link and no live section", got)
 	}
@@ -65,6 +67,7 @@ func TestTrackPageSaysLoopdStoppedWhenLoopdStops(t *testing.T) {
 		t.Fatal(err)
 	}
 	page.waitFor(t, `document.querySelector(".notice")?.textContent`, "loopd stopped · reload this page; if it does not load, run loopctl install")
+	page.waitFor(t, `document.title`, "loopd stopped · "+id)
 	if got := page.eval(t, `document.querySelector(".state-label").textContent + " | " + document.querySelectorAll(".stages .s-running, .live").length`); got != "last seen running | 0" {
 		t.Fatalf("once loopd stopped: %q, want a stale card and no running row or live section", got)
 	}
@@ -127,6 +130,31 @@ func TestTrackPageKeepsARetriedGatePendingWhileARetryRunsAndFailsItOnceTheJobEnd
 			}
 			page.noEmDash(t)
 		})
+	}
+}
+
+func TestTrackPageOpensTheLastFailedGateAndKeepsWhatTheUserToggles(t *testing.T) {
+	retrying, retried := hold(t)
+	claude := strings.NewReplacer(
+		"sleep STAGE_SLEEP", `case "$prompt" in *"did not pass"*) `+retrying+`; result "missed ok.txt"; exit 0;; esac; result "missed ok.txt"; exit 0`,
+		`result "clean"`, `result "clean"`).Replace(streamClaude)
+	e, id := startJobOf(t, claude)
+	fakeOpen(t, e.env, "")
+	page := openPage(t, e.track(t, id, id))
+	gates := `[...document.querySelectorAll(".stages details")].map(d => d.open).join()`
+	page.waitFor(t, `document.querySelector(".headline")?.textContent`, "Implementing, run 2 of 2")
+	page.waitFor(t, gates, "true")
+	retried()
+	page.waitFor(t, `document.querySelector(".headline")?.textContent`, "Out of attempts")
+	page.waitFor(t, gates, "false,true")
+	if got := page.eval(t, `document.querySelector(".stages details[open] .gate-out")?.textContent.length > 0`); got != "true" {
+		t.Fatalf("the open gate shows no output")
+	}
+	page.eval(t, `document.querySelector(".stages details[open] summary").click()`)
+	page.eval(t, `document.querySelectorAll(".stages summary")[0].click()`)
+	page.eval(t, `render()`)
+	if got := page.eval(t, gates); got != "true,false" {
+		t.Fatalf("gates open after the user toggled both and the page redrew: %s, want true,false", got)
 	}
 }
 
