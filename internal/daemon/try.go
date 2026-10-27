@@ -16,18 +16,17 @@ import (
 // ErrNotDone refuses try of a Job that did not end done.
 var ErrNotDone = errors.New("only a done job can be tried")
 
-// Tried is a done Job readied to run by hand, its Loop's checkout, and the
-// paths, relative to its worktree, of the files copied into it.
+// Tried is a done Job readied to run by hand and the paths, relative to its
+// worktree, of the files copied into it.
 type Tried struct {
-	Job      store.Job `json:"job"`
-	Checkout string    `json:"checkout"`
-	Copied   []string  `json:"copied"`
+	Job    store.Job `json:"job"`
+	Copied []string  `json:"copied"`
 }
 
-// Try copies into a done Job's own worktree each regular file of its Loop's
-// checkout that the checkout's .worktreeinclude matches and git ignores, in
-// the checkout and in the worktree. A done Job runs no more stages, so no
-// model reads what Try copies.
+// Try adds a deleted worktree of a done Job again from its branch, then
+// copies into it each regular file of its Loop's checkout that the checkout's
+// .worktreeinclude matches and git ignores, in the checkout and in the
+// worktree. A done Job runs no more stages, so no model reads what Try copies.
 func (d *Daemon) Try(id string) (Tried, error) {
 	j, err := d.st.Job(id)
 	if err != nil {
@@ -51,7 +50,9 @@ func (d *Daemon) Try(id string) (Tried, error) {
 		return Tried{}, fmt.Errorf("job %s: loop %s: %w; to try the job, add the loop again with `loopctl add <loop.yaml>`", id, j.Loop, ErrUnknownLoop)
 	}
 	if _, err := os.Stat(j.Worktree); errors.Is(err, os.ErrNotExist) {
-		return Tried{}, fmt.Errorf("job %s: its worktree %s is gone; to remove the job, run `loopctl rm %s`", id, Tilde(j.Worktree), id)
+		if err := d.restoreWorktree(j, loop.Checkout); err != nil {
+			return Tried{}, err
+		}
 	} else if err != nil {
 		return Tried{}, fmt.Errorf("job %s: %w", id, err)
 	}
@@ -82,7 +83,26 @@ func (d *Daemon) Try(id string) (Tried, error) {
 			return Tried{}, fmt.Errorf("copy %s into job %s's worktree: %w", f, id, err)
 		}
 	}
-	return Tried{Job: j, Checkout: loop.Checkout, Copied: files}, nil
+	return Tried{Job: j, Copied: files}, nil
+}
+
+// restoreWorktree adds j's deleted worktree again from its branch, and fails
+// naming `loopctl rm` when the branch is gone too.
+func (d *Daemon) restoreWorktree(j store.Job, checkout string) error {
+	if _, err := runner.Git(d.ctx, 30*time.Second, checkout, "worktree", "prune"); err != nil {
+		return err
+	}
+	at, err := runner.Git(d.ctx, 30*time.Second, checkout, "for-each-ref", "--format=%(objectname)", "refs/heads/"+j.Branch)
+	if err != nil {
+		return fmt.Errorf("job %s: look up its branch %s: %w", j.ID, j.Branch, err)
+	}
+	if at == "" {
+		return fmt.Errorf("job %s: its worktree %s is gone and so is its branch %s; to remove the job, run `loopctl rm %s`", j.ID, Tilde(j.Worktree), j.Branch, j.ID)
+	}
+	if _, err := runner.Git(d.ctx, time.Minute, checkout, "worktree", "add", "--quiet", j.Worktree, j.Branch); err != nil {
+		return fmt.Errorf("job %s: add its worktree %s again: %w", j.ID, Tilde(j.Worktree), err)
+	}
+	return nil
 }
 
 // refuseUnignored fails when j's branch tracks or does not ignore any of

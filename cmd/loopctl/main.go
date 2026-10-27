@@ -40,7 +40,7 @@ usage:
   loopctl track <job>                  open a job's tracking page in a browser tab
   loopctl takeover <job>               take a job, stopping it if it runs, and hand its worktree to you
   loopctl handback <job>               give a taken-over job back to its loop
-  loopctl try <job>                    copy the checkout's .worktreeinclude files into a done job's worktree, then print its path and test guide
+  loopctl try <job>                    ready a done job's worktree (added again if deleted, .worktreeinclude files copied), then print its path and test guide
   loopctl rm <job>                     remove an ended job with its worktree, and its branch unless it has commits the job did not end at
   loopctl requeue <loop> <issue>       let a github loop run an issue again
   loopctl install                      start loopd now and at login, and add the Claude Code skill
@@ -331,7 +331,7 @@ func loggedError(log string, offset int64) string {
 }
 
 // uninstall stops loopd and removes what install added. Loops, jobs and
-// worktrees in the loopd home stay.
+// worktrees stay.
 func uninstall() error {
 	user, err := os.UserHomeDir()
 	if err != nil {
@@ -379,21 +379,14 @@ func printLog(log daemon.JobLog) {
 	}
 }
 
-// printTry prints a tried Job's worktree, the files try copied into it,
-// and its Test guide.
+// printTry prints a tried Job's worktree and its Test guide, when it has one.
 func printTry(t daemon.Tried) {
 	fmt.Println("worktree: " + printable(daemon.Tilde(t.Job.Worktree)))
-	copied := "nothing; list the gitignored files the app needs, such as .env, in " + daemon.Tilde(filepath.Join(t.Checkout, ".worktreeinclude"))
-	if len(t.Copied) > 0 {
-		copied = strings.Join(t.Copied, ", ")
+	if t.Job.TestGuide == "" {
+		return
 	}
-	fmt.Println("copied: " + printable(copied))
-	guide := t.Job.TestGuide
-	if guide == "" {
-		guide = "The job wrote no test guide."
-	}
-	fmt.Println("\ntest guide:")
-	for line := range strings.Lines(guide) {
+	fmt.Println()
+	for line := range strings.Lines(t.Job.TestGuide) {
 		fmt.Println(printable(strings.TrimSuffix(line, "\n")))
 	}
 }

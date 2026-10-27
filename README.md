@@ -92,7 +92,7 @@ To remove loopgate, run `loopctl uninstall`, then delete the binaries with `rm "
 | Variable | Default | Meaning |
 |---|---|---|
 | `PATH` | your shell's | `loopctl install` hands it to `loopd` with each missing or relative entry dropped, and each link to a link replaced by its target, so fnm's per-shell directory becomes its stable `aliases/default` and follows `fnm default`; run install from a shell where `fnm use` has not switched versions. Homebrew's `opt` links stay as they are and follow upgrades. After you move `claude`, `gh` or `git`, run `loopctl install` again. |
-| `LOOPD_HOME` | `~/.loopd` | Where loops, jobs, worktrees, caches and the log live. Set it before `loopctl install`, and in every shell that runs `loopctl`. Keep it short: its socket path must stay under 104 bytes. |
+| `LOOPD_HOME` | `~/.loopd` | Where loops, job logs, trial worktrees, caches and the log live. A job's worktree is `<checkout>-worktrees/<id>`, beside the loop's checkout. Set it before `loopctl install`, and in every shell that runs `loopctl`. Keep it short: its socket path must stay under 104 bytes. |
 
 No `.env` file and no token are needed: Claude Code and `gh` keep their own logins in your keychain.
 
@@ -147,8 +147,8 @@ A timer loop replaces `github` with `timer: { every: 6h }` or `timer: { cron: "0
 | Track a job in the browser | `loopctl track <job>`: opens the job's tracking page in a browser tab: its state, a step for each stage, the current stage's tool calls as they happen, and a table of every stage, where a failed verify gate opens to its commands and output. loopd serves it only on `127.0.0.1`, at a port and token it keeps in `~/.loopd`, so the URL keeps working across loopd restarts; if another program took the port, loopd moves to a new port and token, and `loopctl track <job>` prints the new URL. The page only reads; it never stops or slows the job. |
 | Take a job back | `loopctl takeover <job>`, then work in the worktree it prints |
 | Give it back | Commit, then `loopctl handback <job>` |
-| Try a done job by hand | `loopctl try <job>`: copies the gitignored files that the checkout's `.worktreeinclude` names, such as `.env`, into the job's own worktree, then prints that worktree, the names of the files it copied, and the job's test guide: how to start the app and what to call or open. The PR's `Try it` section carries the same guide. |
-| Clean up an ended job | `loopctl rm <job>`: removes a done, failed, exhausted or blocked job's worktree, directory and entry in `loopctl list`, and prints its PR link. It deletes the job's local branch only while the branch points where the job ended; otherwise it keeps the branch and says so. The remote branch, the PR and the issue stay. |
+| Try a done job by hand | `loopctl try <job>`: adds the job's worktree again from its branch when it was deleted, copies the gitignored files that the checkout's `.worktreeinclude` names, such as `.env`, into the job's own worktree, then prints that worktree and the job's test guide: how to start the app and what to call or open. The PR's `Try it` section carries the same guide. |
+| Clean up an ended job | `loopctl rm <job>`: removes a done, failed, exhausted or blocked job's worktree, directory and entry in `loopctl list`, and prints its PR link. It removes `<checkout>-worktrees` too once no worktree is left in it. It deletes the job's local branch only while the branch points where the job ended; otherwise it keeps the branch and says so. The remote branch, the PR and the issue stay. |
 | End the running job | `loopctl stop <loop>` (the loop keeps its trigger) |
 | Silence a loop's trigger | `loopctl pause <loop>`, later `loopctl resume <loop>` |
 

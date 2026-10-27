@@ -38,7 +38,7 @@ func TestTryCopiesTheIncludedIgnoredFilesIntoTheDoneJobsOwnWorktree(t *testing.T
 	if want := []string{".env", "config/local.json"}; !slices.Equal(tried.Copied, want) {
 		t.Fatalf("copied %q, want %q", tried.Copied, want)
 	}
-	if tried.Job.ID != j.ID || tried.Job.Worktree != j.Worktree || tried.Job.TestGuide != "go run ./cmd/app, then GET /ok" || tried.Checkout != r.checkout {
+	if tried.Job.ID != j.ID || tried.Job.Worktree != j.Worktree || tried.Job.TestGuide != "go run ./cmd/app, then GET /ok" {
 		t.Fatalf("tried job %+v", tried.Job)
 	}
 	if got := readFile(t, filepath.Join(j.Worktree, "config/local.json")); got != `{"db":"x"}` {
@@ -208,17 +208,45 @@ func TestTryOfAJobWhoseLoopWasRemovedNamesTheLoop(t *testing.T) {
 	}
 }
 
-func TestTryOfAJobWhoseWorktreeIsGoneNamesThePath(t *testing.T) {
+func TestTryAddsAGoneWorktreeAgainFromTheJobsBranch(t *testing.T) {
+	r, j := triedEnv(t)
+	writeFile(filepath.Join(r.checkout, ".worktreeinclude"), ".env\nconfig/\n")
+	writeFile(filepath.Join(r.checkout, ".env"), "SECRET=1\n")
+	writeFile(filepath.Join(r.checkout, "config/local.json"), `{"db":"x"}`)
+	head := runGit(t, j.Worktree, "rev-parse", "HEAD")
+	if err := os.RemoveAll(j.Worktree); err != nil {
+		t.Fatal(err)
+	}
+	tried, err := r.d.Try(j.ID)
+	if err != nil {
+		t.Fatalf("try of a job whose worktree is gone: %v", err)
+	}
+	if !slices.Equal(tried.Copied, []string{".env", "config/local.json"}) {
+		t.Fatalf("copied %q", tried.Copied)
+	}
+	if now := runGit(t, j.Worktree, "rev-parse", "HEAD"); now != head {
+		t.Fatalf("head %s after the worktree was added again, want %s", now, head)
+	}
+	if branch := runGit(t, j.Worktree, "branch", "--show-current"); branch != j.Branch {
+		t.Fatalf("branch %q in the new worktree, want %q", branch, j.Branch)
+	}
+	if status := runGit(t, j.Worktree, "status", "--porcelain"); status != "" {
+		t.Fatalf("worktree status %q", status)
+	}
+}
+
+func TestTryOfAJobWhoseWorktreeAndBranchAreGoneNamesRm(t *testing.T) {
 	r, j := triedEnv(t)
 	if err := os.RemoveAll(j.Worktree); err != nil {
 		t.Fatal(err)
 	}
+	runGit(t, r.checkout, "worktree", "prune")
+	runGit(t, r.checkout, "branch", "-D", j.Branch)
 	t.Setenv("HOME", filepath.Dir(j.Worktree))
-	want := "job " + j.ID + ": its worktree ~/" + filepath.Base(j.Worktree) + " is gone; to remove the job, run `loopctl rm " + j.ID + "`"
+	want := "job " + j.ID + ": its worktree ~/" + filepath.Base(j.Worktree) + " is gone and so is its branch " + j.Branch + "; to remove the job, run `loopctl rm " + j.ID + "`"
 	if _, err := r.d.Try(j.ID); err == nil || err.Error() != want {
-		t.Fatalf("try of a job with no worktree: %v, want %q", err, want)
+		t.Fatalf("try of a job with no worktree and no branch: %v, want %q", err, want)
 	}
-
 	if _, err := r.d.RemoveJob(j.ID); err != nil {
 		t.Fatalf("rm of a job with no worktree: %v", err)
 	}

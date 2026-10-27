@@ -18,6 +18,17 @@ import (
 	"github.com/yeremi777/loopgate/internal/store"
 )
 
+func TestRunThatFailsToStartLeavesNoWorktreeFolderBesideTheCheckout(t *testing.T) {
+	r := newRunEnv(t)
+	runGit(t, r.checkout, "remote", "set-url", "origin", filepath.Join(t.TempDir(), "missing.git"))
+	if _, err := r.d.Run("deps", ""); err == nil {
+		t.Fatal("run with an unreachable origin started")
+	}
+	if _, err := os.Stat(r.checkout + "-worktrees"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("worktree folder after a failed start: %v", err)
+	}
+}
+
 func TestRunCarriesSpecJobToDraftPRAndNotifies(t *testing.T) {
 	r := newRunEnv(t)
 	writeFile(filepath.Join(r.checkout, "docs/specs/x.md"), "the spec")
@@ -29,7 +40,7 @@ func TestRunCarriesSpecJobToDraftPRAndNotifies(t *testing.T) {
 	if started.State != store.Running || !regexp.MustCompile(`^loop/deps-\d{8}-\d{6}-`+started.ID+`$`).MatchString(started.Branch) {
 		t.Fatalf("started %+v", started)
 	}
-	if want := filepath.Join(r.d.home, "jobs", started.ID, "worktree"); started.Worktree != want {
+	if want := filepath.Join(r.checkout+"-worktrees", started.ID); started.Worktree != want {
 		t.Fatalf("worktree %s, want %s", started.Worktree, want)
 	}
 	if got := readFile(t, filepath.Join(started.Worktree, "docs/specs/x.md")); got != "the spec" {

@@ -3,6 +3,7 @@ package daemon
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/yeremi777/loopgate/internal/runner"
@@ -34,6 +35,10 @@ func (d *Daemon) RemoveJob(id string) (Removal, error) {
 	}
 	if err := os.RemoveAll(d.dirOf(j)); err != nil {
 		return removed, fmt.Errorf("job %s is no longer listed, but its directory stays: %w", id, err)
+	}
+	if j.Worktree != "" {
+		// the folder stays while another worktree is in it
+		_ = os.Remove(filepath.Dir(j.Worktree))
 	}
 	if j.Branch == "" {
 		return removed, nil

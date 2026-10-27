@@ -735,8 +735,8 @@ func TestLandPromptAsksForTheTestGuideInTry(t *testing.T) {
 			Pipeline{Stages: f, Shell: shell(), Publisher: &fakePublisher{}}.Run(context.Background(), j)
 			land := f.stages[2].Prompt
 			for _, want := range []string{
-				"Set the `try` field to the test guide", "Markdown of at most 40 lines", "from the root of this worktree",
-				".worktreeinclude", "the commands that start the app", "each endpoint, screen or command", "what to expect",
+				"Set the `try` field to the test guide", "Markdown of at most 15 lines", "opens the root of this worktree",
+				"The commands that start the app come first", "each endpoint, screen or command", "what is expected",
 				"Name each environment variable the app needs, never its value", "no token, password or other secret",
 				"drops or resets data", "the human's choice", "Leave `try` empty when the branch adds nothing a human can run",
 			} {
@@ -765,7 +765,7 @@ func TestReportTryItFollowsTheBulletsAndPrecedesDrill(t *testing.T) {
 	if out.State != store.Done || out.TestGuide != guide {
 		t.Fatalf("got %+v, want done with the test guide", out)
 	}
-	tryIt := "\n### Try it\n\nRun `loopctl try " + j.ID + "`, then:\n\n" + guide + "\n"
+	tryIt := "\n### Try it\n\n" + guide + "\n\nThe worktree path is printed by `loopctl try " + j.ID + "`.\n"
 	at := strings.Index(pub.pr.Body, tryIt)
 	bullets := strings.Index(pub.pr.Body, "- Changed or deleted tests")
 	drill := strings.Index(pub.pr.Body, "### Drill")
@@ -774,7 +774,7 @@ func TestReportTryItFollowsTheBulletsAndPrecedesDrill(t *testing.T) {
 	}
 }
 
-func TestReportNoTestGuideSaysSo(t *testing.T) {
+func TestReportWithoutATestGuideHasNoTryIt(t *testing.T) {
 	j := newJob(t, 3)
 	f := &fakeStages{t: t, steps: []step{commits(j, "ok.txt"), reports(runner.StatusDone, "clean"), landsTrying("t\n\nb", " \n")}}
 	pub := &fakePublisher{}
@@ -782,8 +782,8 @@ func TestReportNoTestGuideSaysSo(t *testing.T) {
 	if out.State != store.Done || out.TestGuide != "" {
 		t.Fatalf("got %+v, want done with no test guide", out)
 	}
-	if want := "\n### Try it\n\nRun `loopctl try " + j.ID + "`, then:\n\nThe job wrote no test guide.\n\n### Implement summary"; !strings.Contains(pub.pr.Body, want) {
-		t.Fatalf("PR body lacks %q:\n%s", want, pub.pr.Body)
+	if strings.Contains(pub.pr.Body, "### Try it") {
+		t.Fatalf("PR body has a Try it section without a test guide:\n%s", pub.pr.Body)
 	}
 }
 
@@ -800,7 +800,7 @@ func TestTestGuideCutTo4000CharactersEndingInEllipsis(t *testing.T) {
 			if out.TestGuide != tc.want {
 				t.Fatalf("test guide of %d characters, want %d ending %q", len([]rune(out.TestGuide)), len([]rune(tc.want)), tc.want[len(tc.want)-3:])
 			}
-			if !strings.Contains(pub.pr.Body, "then:\n\n"+tc.want+"\n") {
+			if !strings.Contains(pub.pr.Body, "### Try it\n\n"+tc.want+"\n\n") {
 				t.Fatal("PR body does not carry the cut test guide")
 			}
 		})

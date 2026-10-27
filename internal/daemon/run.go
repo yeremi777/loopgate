@@ -260,7 +260,7 @@ func (d *Daemon) start(loop config.Loop, work job.Work) (job.Job, error) {
 		tag, j.Issue = strconv.Itoa(issue.Number), issue.Number
 	}
 	j.Branch = "loop/" + loop.Name + "-" + tag + "-" + created.ID
-	j.Worktree = filepath.Join(j.Dir, "worktree")
+	j.Worktree = filepath.Join(loop.Checkout+"-worktrees", created.ID)
 	if err := os.MkdirAll(j.Dir, 0o700); err != nil {
 		return job.Job{}, d.fail(created.ID, err)
 	}
@@ -422,13 +422,15 @@ func (d *Daemon) jobDir(id string) string {
 	return filepath.Join(d.home, "jobs", id)
 }
 
-// dirOf is a stored Job's directory, the parent of its worktree, so a Job
-// from before random ids keeps its integer-named one.
+// dirOf is a stored Job's directory: the parent of its worktree when that
+// parent is directly in the jobs directory, and jobs/<id> otherwise.
 func (d *Daemon) dirOf(j store.Job) string {
-	if j.Worktree == "" {
-		return d.jobDir(j.ID)
+	if j.Worktree != "" {
+		if dir := filepath.Dir(j.Worktree); filepath.Dir(dir) == filepath.Join(d.home, "jobs") {
+			return dir
+		}
 	}
-	return filepath.Dir(j.Worktree)
+	return d.jobDir(j.ID)
 }
 
 // Close stops the running Job and waits until its outcome is stored.
