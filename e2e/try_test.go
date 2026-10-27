@@ -42,13 +42,9 @@ func TestTryCopiesTheIncludedFilesAndPrintsTheTestGuide(t *testing.T) {
 		return string(out)
 	}
 	worktree := "worktree: ~/" + filepath.Base(e.home) + "/jobs/" + id + "/worktree\n"
-	include, ok := strings.CutPrefix(filepath.Join(checkout, ".worktreeinclude"), filepath.Dir(e.home)+"/")
-	if !ok {
-		t.Fatalf("checkout %s is not under %s", checkout, filepath.Dir(e.home))
-	}
-	guide := "\ntest guide:\nStart it with make run; it needs DATABASE_URL.\n�[2JGET /ok answers ok.\n"
+	guide := "\nStart it with make run; it needs DATABASE_URL.\n�[2JGET /ok answers ok.\n"
 
-	if out, want := try(), worktree+"copied: nothing; list the gitignored files the app needs, such as .env, in ~/"+include+"\n"+guide; out != want {
+	if out, want := try(), worktree+guide; out != want {
 		t.Fatalf("try without .worktreeinclude:\n%q\nwant\n%q", out, want)
 	}
 
@@ -57,7 +53,7 @@ func TestTryCopiesTheIncludedFilesAndPrintsTheTestGuide(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if out, want := try(), worktree+"copied: .env\n"+guide; out != want {
+	if out, want := try(), worktree+guide; out != want {
 		t.Fatalf("try with .worktreeinclude:\n%q\nwant\n%q", out, want)
 	}
 	if got := readFile(t, filepath.Join(wt, ".env")); got != "DATABASE_URL=postgres://secret\n" {
@@ -68,6 +64,19 @@ func TestTryCopiesTheIncludedFilesAndPrintsTheTestGuide(t *testing.T) {
 	}
 	if out, code := e.loopctl("takeover", id); code == 0 || !strings.Contains(out, "loopctl try "+id) {
 		t.Fatalf("takeover of a done job: exit %d, %q", code, out)
+	}
+}
+
+func TestTryOfAJobWithoutATestGuidePrintsOnlyTheWorktree(t *testing.T) {
+	e := newEnv(t, "exit 0")
+	e.timerLoop(t, "work", fakeClaude)
+	m := regexp.MustCompile(`job ([0-9a-f]{12}) running`).FindStringSubmatch(e.mustLoopctl("run", "work"))
+	e.waitState(t, m[1], "done")
+	cmd := e.cmd("loopctl", "try", m[1])
+	cmd.Env = append(cmd.Env, "HOME="+filepath.Dir(e.home))
+	out, err := cmd.CombinedOutput()
+	if want := "worktree: ~/" + filepath.Base(e.home) + "/jobs/" + m[1] + "/worktree\n"; err != nil || string(out) != want {
+		t.Fatalf("try without a test guide: %v: %q, want %q", err, out, want)
 	}
 }
 

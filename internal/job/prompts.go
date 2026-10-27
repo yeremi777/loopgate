@@ -73,7 +73,7 @@ You run unattended inside loopgate, with no network. Nobody can answer a questio
 - Do not run git push or gh. loopgate pushes this branch and opens the draft pull request after its own checks.
 - Change only Markdown files, and commit every change you make. loopgate refuses to ship any other change after the gate.
 - Report status done with the summary set to the pull request text: the title on the first line, a blank line, then the body.
-- Set the ` + "`try`" + ` field to the test guide: Markdown of at most 40 lines that a human follows from the root of this worktree to run this branch by hand, after loopctl try copied in the gitignored files that the checkout's .worktreeinclude lists, so it needs no clone and no copy of .env. Give the commands that start the app, then for each endpoint, screen or command the branch adds or changes, what to call or open and what to expect.` + demo + `
+- Set the ` + "`try`" + ` field to the test guide: Markdown of at most 15 lines, read by a person who opens the root of this worktree to try this branch by hand. The commands that start the app come first, then one line for each endpoint, screen or command the branch adds or changes, saying what is called or opened and what is expected.` + demo + `
 - Name each environment variable the app needs, never its value, and write no token, password or other secret in the test guide. Never include a command that drops or resets data, and mark a migration or seed as the human's choice.
 - Leave ` + "`try`" + ` empty when the branch adds nothing a human can run.
 - Report status blocked, with one question, only when landing needs a decision that only the human can make.`
@@ -121,11 +121,9 @@ func report(j Job, out Outcome, drill string, cost float64) string {
 			fmt.Fprintf(&b, "  - `%s` (%s)\n", c.Path, c.Kind)
 		}
 	}
-	guide := out.TestGuide
-	if guide == "" {
-		guide = "The job wrote no test guide."
+	if out.TestGuide != "" {
+		fmt.Fprintf(&b, "\n### Try it\n\n%s\n\nThe worktree path is printed by `loopctl try %s`.\n", out.TestGuide, j.ID)
 	}
-	fmt.Fprintf(&b, "\n### Try it\n\nRun `loopctl try %s`, then:\n\n%s\n", j.ID, guide)
 	if drill != "" {
 		fmt.Fprintf(&b, "\n### Drill: the plan and the choices it made on its own\n\n%s\n", drill)
 	}

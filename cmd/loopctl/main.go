@@ -379,21 +379,14 @@ func printLog(log daemon.JobLog) {
 	}
 }
 
-// printTry prints a tried Job's worktree, the files try copied into it,
-// and its Test guide.
+// printTry prints a tried Job's worktree and its Test guide, when it has one.
 func printTry(t daemon.Tried) {
 	fmt.Println("worktree: " + printable(daemon.Tilde(t.Job.Worktree)))
-	copied := "nothing; list the gitignored files the app needs, such as .env, in " + daemon.Tilde(filepath.Join(t.Checkout, ".worktreeinclude"))
-	if len(t.Copied) > 0 {
-		copied = strings.Join(t.Copied, ", ")
+	if t.Job.TestGuide == "" {
+		return
 	}
-	fmt.Println("copied: " + printable(copied))
-	guide := t.Job.TestGuide
-	if guide == "" {
-		guide = "The job wrote no test guide."
-	}
-	fmt.Println("\ntest guide:")
-	for line := range strings.Lines(guide) {
+	fmt.Println()
+	for line := range strings.Lines(t.Job.TestGuide) {
 		fmt.Println(printable(strings.TrimSuffix(line, "\n")))
 	}
 }
