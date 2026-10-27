@@ -91,6 +91,35 @@ func TestRemoveJobKeepsABranchWithCommitsTheJobDidNotEndAt(t *testing.T) {
 	}
 }
 
+func TestSiblingWorktreeFolderStaysWhileAnotherWorktreeIsInItAndGoesWhenEmpty(t *testing.T) {
+	r := newRunEnv(t)
+	r.release()
+	var jobs [2]store.Job
+	for i := range jobs {
+		started, err := r.d.Run("deps", "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		jobs[i] = r.waitDone(t, started.ID)
+		if got := readFile(t, filepath.Join(r.d.jobDir(started.ID), "stages.jsonl")); got == "" {
+			t.Fatalf("stage rows of job %s are empty or missing in its job directory", started.ID)
+		}
+	}
+	folder := r.checkout + "-worktrees"
+	if _, err := r.d.RemoveJob(jobs[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(jobs[1].Worktree); err != nil {
+		t.Fatalf("the other job's worktree after rm: %v", err)
+	}
+	if _, err := r.d.RemoveJob(jobs[1].ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(folder); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("%s stays with no worktree in it: %v", folder, err)
+	}
+}
+
 func TestRemoveJobKeepsTheBranchOfAJobWithNoStoredEndCommit(t *testing.T) {
 	r := newRunEnv(t)
 	old, err := r.st.CreateJob("deps")
@@ -169,8 +198,10 @@ func assertRemoved(t *testing.T, r *runEnv, j store.Job) {
 	if _, err := r.st.Job(j.ID); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("row of job %s stays: %v", j.ID, err)
 	}
-	if _, err := os.Stat(filepath.Dir(j.Worktree)); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("directory of job %s stays: %v", j.ID, err)
+	for _, path := range []string{j.Worktree, r.d.dirOf(j)} {
+		if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("%s of job %s stays: %v", path, j.ID, err)
+		}
 	}
 	if n := worktrees(t, r.checkout); n != 1 {
 		t.Fatalf("%d worktrees registered, want only the checkout", n)

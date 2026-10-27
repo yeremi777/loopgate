@@ -59,7 +59,7 @@ func TestTakeoverThenHandbackShipsTheHumansWork(t *testing.T) {
 func TestPrefixOfAJobIDInAnyCaseNamesTheJobInEveryJobCommand(t *testing.T) {
 	e := newEnv(t, "exit 0")
 	claude, started := hangFirst(t)
-	e.timerLoop(t, "work", claude)
+	checkout := e.timerLoop(t, "work", claude)
 	out := e.mustLoopctl("run", "work")
 	m := regexp.MustCompile(`job ([0-9a-f]{12}) running on (\S+)`).FindStringSubmatch(out)
 	if m == nil {
@@ -69,7 +69,7 @@ func TestPrefixOfAJobIDInAnyCaseNamesTheJobInEveryJobCommand(t *testing.T) {
 	if !strings.HasSuffix(branch, "-"+id) {
 		t.Fatalf("branch %s does not end in the job id %s", branch, id)
 	}
-	if want := filepath.Join(e.home, "jobs", id, "worktree"); !strings.HasSuffix(out, " in "+want+"\n") {
+	if want := filepath.Join(checkout+"-worktrees", id); !strings.HasSuffix(out, " in "+want+"\n") {
 		t.Fatalf("run output %q; want the worktree %s", out, want)
 	}
 	prefix := strings.ToUpper(id[:4])
@@ -115,8 +115,10 @@ func TestRemoveRefusesAJobInProgressThenRemovesTheEndedJobAndPrintsItsPR(t *test
 	if want := "removed job " + id + " of loop work\npr: https://github.com/me/app/pull/5\n"; out != want {
 		t.Fatalf("rm output %q, want %q", out, want)
 	}
-	if _, err := os.Stat(filepath.Dir(wt)); !os.IsNotExist(err) {
-		t.Fatalf("job directory stays: %v", err)
+	for _, path := range []string{wt, checkout + "-worktrees", filepath.Join(e.home, "jobs", id)} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("%s stays after rm: %v", path, err)
+		}
 	}
 	if list := gitIn(t, checkout, "worktree", "list"); strings.Contains(list, id) {
 		t.Fatalf("worktree still registered:\n%s", list)

@@ -29,7 +29,7 @@ func TestRunCarriesSpecJobToDraftPRAndNotifies(t *testing.T) {
 	if started.State != store.Running || !regexp.MustCompile(`^loop/deps-\d{8}-\d{6}-`+started.ID+`$`).MatchString(started.Branch) {
 		t.Fatalf("started %+v", started)
 	}
-	if want := filepath.Join(r.d.home, "jobs", started.ID, "worktree"); started.Worktree != want {
+	if want := filepath.Join(r.checkout+"-worktrees", started.ID); started.Worktree != want {
 		t.Fatalf("worktree %s, want %s", started.Worktree, want)
 	}
 	if got := readFile(t, filepath.Join(started.Worktree, "docs/specs/x.md")); got != "the spec" {

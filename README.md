@@ -92,7 +92,7 @@ To remove loopgate, run `loopctl uninstall`, then delete the binaries with `rm "
 | Variable | Default | Meaning |
 |---|---|---|
 | `PATH` | your shell's | `loopctl install` hands it to `loopd` with each missing or relative entry dropped, and each link to a link replaced by its target, so fnm's per-shell directory becomes its stable `aliases/default` and follows `fnm default`; run install from a shell where `fnm use` has not switched versions. Homebrew's `opt` links stay as they are and follow upgrades. After you move `claude`, `gh` or `git`, run `loopctl install` again. |
-| `LOOPD_HOME` | `~/.loopd` | Where loops, jobs, worktrees, caches and the log live. Set it before `loopctl install`, and in every shell that runs `loopctl`. Keep it short: its socket path must stay under 104 bytes. |
+| `LOOPD_HOME` | `~/.loopd` | Where loops, job logs, caches and the log live. A job's worktree is not here: it is `<checkout>-worktrees/<id>`, beside the loop's checkout. Set it before `loopctl install`, and in every shell that runs `loopctl`. Keep it short: its socket path must stay under 104 bytes. |
 
 No `.env` file and no token are needed: Claude Code and `gh` keep their own logins in your keychain.
 

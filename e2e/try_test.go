@@ -41,7 +41,11 @@ func TestTryCopiesTheIncludedFilesAndPrintsTheTestGuide(t *testing.T) {
 		}
 		return string(out)
 	}
-	worktree := "worktree: ~/" + filepath.Base(e.home) + "/jobs/" + id + "/worktree\n"
+	checkoutRel, ok := strings.CutPrefix(checkout, filepath.Dir(e.home)+"/")
+	if !ok {
+		t.Fatalf("checkout %s is not under %s", checkout, filepath.Dir(e.home))
+	}
+	worktree := "worktree: ~/" + checkoutRel + "-worktrees/" + id + "\n"
 	guide := "\nStart it with make run; it needs DATABASE_URL.\n�[2JGET /ok answers ok.\n"
 
 	if out, want := try(), worktree+guide; out != want {
@@ -69,13 +73,13 @@ func TestTryCopiesTheIncludedFilesAndPrintsTheTestGuide(t *testing.T) {
 
 func TestTryOfAJobWithoutATestGuidePrintsOnlyTheWorktree(t *testing.T) {
 	e := newEnv(t, "exit 0")
-	e.timerLoop(t, "work", fakeClaude)
+	checkout := e.timerLoop(t, "work", fakeClaude)
 	m := regexp.MustCompile(`job ([0-9a-f]{12}) running`).FindStringSubmatch(e.mustLoopctl("run", "work"))
 	e.waitState(t, m[1], "done")
 	cmd := e.cmd("loopctl", "try", m[1])
 	cmd.Env = append(cmd.Env, "HOME="+filepath.Dir(e.home))
 	out, err := cmd.CombinedOutput()
-	if want := "worktree: ~/" + filepath.Base(e.home) + "/jobs/" + m[1] + "/worktree\n"; err != nil || string(out) != want {
+	if want := "worktree: ~/" + strings.TrimPrefix(checkout, filepath.Dir(e.home)+"/") + "-worktrees/" + m[1] + "\n"; err != nil || string(out) != want {
 		t.Fatalf("try without a test guide: %v: %q, want %q", err, out, want)
 	}
 }

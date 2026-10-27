@@ -15,7 +15,7 @@ A Job's id is a random 12-character hex string that is never reused, every `loop
 - AC-2: Every `<job>` argument of `loopctl` (`logs`, `logs -f`, `takeover`, `handback`, `rm`) takes a Job's full id or any unique prefix of it, matched in lowercase; a prefix that matches several Jobs fails with `job prefix <p> matches <id>, <id>`, and one that matches none fails as not found.
 - AC-3: A new Job's branch is `loop/<loop>-<tag>-<id>`, and its directory is `$LOOPD_HOME/jobs/<id>/`.
 - AC-4: Opening a state database whose Jobs have integer ids gives each Job a new id as AC-1 says, in one transaction, keeps every other stored field and the Jobs' creation order, and logs `job <n> is now <id>` for each; opening it again changes nothing.
-- AC-5: A Job's directory is found from its stored worktree path, so an old Job keeps `jobs/<n>/`: `logs` shows its progress log, and `takeover` and `handback` work on it.
+- AC-5: An old Job's directory is found from its stored worktree path, so it keeps `jobs/<n>/`: `logs` shows its progress log, and `takeover` and `handback` work on it.
 - AC-6: `loopctl list` and every other read that orders Jobs orders them newest first by creation, not by id.
 - AC-7: When a Job ends, loopd stores the commit its worktree's branch points at.
 - AC-8: `loopctl rm <job>` refuses a queued, running or manual Job, naming its state; for a done, failed, exhausted or Blocked Job it removes the worktree from the checkout's worktrees, its directory, and its row, and prints the PR link when the Job has one.
