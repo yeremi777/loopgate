@@ -50,7 +50,9 @@ func (d *Daemon) Try(id string) (Tried, error) {
 		return Tried{}, fmt.Errorf("job %s: loop %s: %w; to try the job, add the loop again with `loopctl add <loop.yaml>`", id, j.Loop, ErrUnknownLoop)
 	}
 	if _, err := os.Stat(j.Worktree); errors.Is(err, os.ErrNotExist) {
-		return Tried{}, fmt.Errorf("job %s: its worktree %s is gone; to remove the job, run `loopctl rm %s`", id, Tilde(j.Worktree), id)
+		if err := d.restoreWorktree(j, loop.Checkout); err != nil {
+			return Tried{}, err
+		}
 	} else if err != nil {
 		return Tried{}, fmt.Errorf("job %s: %w", id, err)
 	}
@@ -82,6 +84,22 @@ func (d *Daemon) Try(id string) (Tried, error) {
 		}
 	}
 	return Tried{Job: j, Copied: files}, nil
+}
+
+// restoreWorktree adds j's deleted worktree again from its branch, and fails
+// naming `loopctl rm` when the branch is gone too.
+func (d *Daemon) restoreWorktree(j store.Job, checkout string) error {
+	if _, err := runner.Git(d.ctx, 30*time.Second, checkout, "worktree", "prune"); err != nil {
+		return err
+	}
+	if _, err := runner.Git(d.ctx, 30*time.Second, checkout, "rev-parse", "--verify", "--quiet", "refs/heads/"+j.Branch); err != nil {
+		return fmt.Errorf("job %s: its worktree %s is gone and so is its branch %s; to remove the job, run `loopctl rm %s`", j.ID, Tilde(j.Worktree), j.Branch, j.ID)
+	}
+	if err := os.MkdirAll(filepath.Dir(j.Worktree), 0o700); err != nil {
+		return err
+	}
+	_, err := runner.Git(d.ctx, time.Minute, checkout, "worktree", "add", "--quiet", j.Worktree, j.Branch)
+	return err
 }
 
 // refuseUnignored fails when j's branch tracks or does not ignore any of
