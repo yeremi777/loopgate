@@ -18,6 +18,17 @@ import (
 	"github.com/yeremi777/loopgate/internal/store"
 )
 
+func TestRunThatFailsToStartLeavesNoWorktreeFolderBesideTheCheckout(t *testing.T) {
+	r := newRunEnv(t)
+	runGit(t, r.checkout, "remote", "set-url", "origin", filepath.Join(t.TempDir(), "missing.git"))
+	if _, err := r.d.Run("deps", ""); err == nil {
+		t.Fatal("run with an unreachable origin started")
+	}
+	if _, err := os.Stat(r.checkout + "-worktrees"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("worktree folder after a failed start: %v", err)
+	}
+}
+
 func TestRunCarriesSpecJobToDraftPRAndNotifies(t *testing.T) {
 	r := newRunEnv(t)
 	writeFile(filepath.Join(r.checkout, "docs/specs/x.md"), "the spec")

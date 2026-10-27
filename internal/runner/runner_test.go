@@ -163,7 +163,7 @@ func TestStageTryFieldIsOptionalAndCarriedToTheResult(t *testing.T) {
 	if schema.Properties["try"].Type != "string" || slices.Contains(schema.Required, "try") {
 		t.Fatalf("schema %+v; want an optional string try", schema)
 	}
-	if want := "Land only: the test guide in Markdown, at most 40 lines; empty when the branch adds nothing a human can run."; schema.Properties["try"].Description != want {
+	if want := "Land only: the test guide in Markdown, at most 15 lines; empty when the branch adds nothing a human can run."; schema.Properties["try"].Description != want {
 		t.Fatalf("try description %q, want %q", schema.Properties["try"].Description, want)
 	}
 

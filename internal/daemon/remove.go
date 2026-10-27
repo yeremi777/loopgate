@@ -37,7 +37,7 @@ func (d *Daemon) RemoveJob(id string) (Removal, error) {
 		return removed, fmt.Errorf("job %s is no longer listed, but its directory stays: %w", id, err)
 	}
 	if j.Worktree != "" {
-		// Remove fails on a folder that still holds a worktree, which is the point.
+		// the folder stays while another worktree is in it
 		_ = os.Remove(filepath.Dir(j.Worktree))
 	}
 	if j.Branch == "" {

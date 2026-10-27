@@ -23,10 +23,10 @@ type Tried struct {
 	Copied []string  `json:"copied"`
 }
 
-// Try copies into a done Job's own worktree each regular file of its Loop's
-// checkout that the checkout's .worktreeinclude matches and git ignores, in
-// the checkout and in the worktree. A done Job runs no more stages, so no
-// model reads what Try copies.
+// Try adds a deleted worktree of a done Job again from its branch, then
+// copies into it each regular file of its Loop's checkout that the checkout's
+// .worktreeinclude matches and git ignores, in the checkout and in the
+// worktree. A done Job runs no more stages, so no model reads what Try copies.
 func (d *Daemon) Try(id string) (Tried, error) {
 	j, err := d.st.Job(id)
 	if err != nil {
@@ -92,14 +92,17 @@ func (d *Daemon) restoreWorktree(j store.Job, checkout string) error {
 	if _, err := runner.Git(d.ctx, 30*time.Second, checkout, "worktree", "prune"); err != nil {
 		return err
 	}
-	if _, err := runner.Git(d.ctx, 30*time.Second, checkout, "rev-parse", "--verify", "--quiet", "refs/heads/"+j.Branch); err != nil {
+	at, err := runner.Git(d.ctx, 30*time.Second, checkout, "for-each-ref", "--format=%(objectname)", "refs/heads/"+j.Branch)
+	if err != nil {
+		return fmt.Errorf("job %s: look up its branch %s: %w", j.ID, j.Branch, err)
+	}
+	if at == "" {
 		return fmt.Errorf("job %s: its worktree %s is gone and so is its branch %s; to remove the job, run `loopctl rm %s`", j.ID, Tilde(j.Worktree), j.Branch, j.ID)
 	}
-	if err := os.MkdirAll(filepath.Dir(j.Worktree), 0o700); err != nil {
-		return err
+	if _, err := runner.Git(d.ctx, time.Minute, checkout, "worktree", "add", "--quiet", j.Worktree, j.Branch); err != nil {
+		return fmt.Errorf("job %s: add its worktree %s again: %w", j.ID, Tilde(j.Worktree), err)
 	}
-	_, err := runner.Git(d.ctx, time.Minute, checkout, "worktree", "add", "--quiet", j.Worktree, j.Branch)
-	return err
+	return nil
 }
 
 // refuseUnignored fails when j's branch tracks or does not ignore any of

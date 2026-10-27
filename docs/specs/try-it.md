@@ -6,7 +6,7 @@ Every done Job carries a Test guide, and `loopctl try <job>` names the Job's own
 ## Non-goals
 - loopgate never starts the user's app, never runs a database command, and never runs the Setup command for `try`.
 - No second worktree: `try` uses the Job's own worktree.
-- No copied file's name or contents reach a PR, a log or `loopctl` output.
+- No copied file's contents reach a PR, a log or `loopctl` output, and `try` prints no file name.
 - `try` takes only a done Job, and a done Job is never taken over, so no stage runs where `try` copied files.
 - The Test guide is guidance, not a gate: it never decides pass or fail, and a missing one never stops a Job.
 - No change to the Verify gate, the rubric stage, or `loopctl logs`.
