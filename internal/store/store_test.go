@@ -81,7 +81,7 @@ func TestUnknownJob(t *testing.T) {
 	}
 }
 
-func TestJobsOrderTheOnesInProgressAndTheFiveNewestEndedNewestFirstByCreation(t *testing.T) {
+func TestJobsShowTheOnesInProgressAndTheFiveNewestEndedWithBlockedFailedAndExhaustedFirst(t *testing.T) {
 	st := open(t, filepath.Join(t.TempDir(), "state.db"))
 	ids := []string{"00000000000a", "ffffffffffff", "000000000001", "777777777777", "aaaaaaaaaaaa", "100000000000", "fffffffffffe", "000000000002", "555555555555", "333333333333"}
 	next := 0
@@ -107,10 +107,10 @@ func TestJobsOrderTheOnesInProgressAndTheFiveNewestEndedNewestFirstByCreation(t 
 	for _, j := range jobs {
 		works = append(works, j.Work)
 	}
-	if want := []string{"job 10", "job 9", "job 8", "job 7", "job 6", "job 5", "job 4", "job 1"}; !slices.Equal(works, want) {
+	if want := []string{"job 7", "job 1", "job 10", "job 9", "job 8", "job 6", "job 5", "job 4"}; !slices.Equal(works, want) {
 		t.Fatalf("jobs %v, want %v", works, want)
 	}
-	if j := jobs[1]; j.ID != "555555555555" || j.Loop != "fix" || j.State != Done || j.PRURL != "https://github.com/me/app/pull/1" {
+	if j := jobs[3]; j.ID != "555555555555" || j.Loop != "fix" || j.State != Done || j.PRURL != "https://github.com/me/app/pull/1" {
 		t.Fatalf("job 9 read back as %+v", j)
 	}
 }
@@ -353,8 +353,8 @@ func TestConvertIntegerIDsGivesEachOldJobANewIDOnceAndKeepsEverythingElse(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	if jobs, _ := st.Jobs(); jobs[0].ID != next.ID {
-		t.Fatalf("a job created after conversion is not the newest: %+v", jobs)
+	if jobs, _ := st.Jobs(); jobs[2].ID != next.ID {
+		t.Fatalf("a job created after conversion is not the newest after the failed and Blocked ones: %+v", jobs)
 	}
 	if err := st.Close(); err != nil {
 		t.Fatal(err)
@@ -365,7 +365,7 @@ func TestConvertIntegerIDsGivesEachOldJobANewIDOnceAndKeepsEverythingElse(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(again) != 4 || again[0].ID != next.ID || again[1] != want[0] || again[2] != want[1] || again[3] != want[2] {
+	if len(again) != 4 || again[0] != want[0] || again[1] != want[1] || again[2].ID != next.ID || again[3] != want[2] {
 		t.Fatalf("second open changed the jobs: %+v", again)
 	}
 	if logged.Len() != 0 {

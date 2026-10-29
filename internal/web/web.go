@@ -239,7 +239,7 @@ type indexPage struct {
 	Loops []*loopBlock
 }
 
-// loopBlock is one Loop of the index with its Jobs, newest first.
+// loopBlock is one Loop of the index with its Jobs, Blocked, failed and exhausted first.
 type loopBlock struct {
 	Name, State, Trigger, Checkout string
 	Jobs                           []jobRow

@@ -18,7 +18,7 @@ import (
 
 func TestGatePassesCleanTreeWhoseCommandExitsZero(t *testing.T) {
 	repo := newRepo(t)
-	out, err := Gate(context.Background(), shell(), repo, config.Loop{Verify: "echo checked"}, time.Minute, nil, func(string) {})
+	out, err := Gate(context.Background(), shell(), repo, t.TempDir(), config.Loop{Verify: "echo checked"}, time.Minute, func(string) {})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,7 +30,7 @@ func TestGatePassesCleanTreeWhoseCommandExitsZero(t *testing.T) {
 
 func TestGateFailsWhenCommandFails(t *testing.T) {
 	repo := newRepo(t)
-	out, err := Gate(context.Background(), shell(), repo, config.Loop{Verify: "echo 'FAIL TestX'; exit 1"}, time.Minute, nil, func(string) {})
+	out, err := Gate(context.Background(), shell(), repo, t.TempDir(), config.Loop{Verify: "echo 'FAIL TestX'; exit 1"}, time.Minute, func(string) {})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,7 +40,7 @@ func TestGateFailsWhenCommandFails(t *testing.T) {
 }
 
 func TestGateNamesTheExitCodeOfASilentVerifyCommand(t *testing.T) {
-	out, err := Gate(context.Background(), shell(), newRepo(t), config.Loop{Verify: "exit 3"}, time.Minute, nil, func(string) {})
+	out, err := Gate(context.Background(), shell(), newRepo(t), t.TempDir(), config.Loop{Verify: "exit 3"}, time.Minute, func(string) {})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,7 +55,7 @@ func TestGateRefusesUncommittedWorkWithoutRunningCommand(t *testing.T) {
 			repo := newRepo(t)
 			write(t, filepath.Join(repo, dirty), "uncommitted")
 			setupMarker, marker := filepath.Join(t.TempDir(), "setup-ran"), filepath.Join(t.TempDir(), "ran")
-			out, err := Gate(context.Background(), shell(), repo, config.Loop{Setup: "touch " + setupMarker, Verify: "touch " + marker}, time.Minute, nil, func(string) {})
+			out, err := Gate(context.Background(), shell(), repo, t.TempDir(), config.Loop{Setup: "touch " + setupMarker, Verify: "touch " + marker}, time.Minute, func(string) {})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -71,13 +71,59 @@ func TestGateRefusesUncommittedWorkWithoutRunningCommand(t *testing.T) {
 	}
 }
 
+func TestGateRunsOnAFreshCheckoutOfHEADThatHasNoIgnoredFiles(t *testing.T) {
+	repo := newRepo(t)
+	write(t, filepath.Join(repo, ".gitignore"), "secret.txt\n")
+	git(t, repo, "add", ".gitignore")
+	git(t, repo, "commit", "-q", "-m", "ignore secret")
+	write(t, filepath.Join(repo, "secret.txt"), "only on this disk")
+	ran := filepath.Join(t.TempDir(), "ran-in")
+	loop := config.Loop{Setup: "pwd -P > " + ran, Verify: "test -f secret.txt || { echo missing secret.txt; exit 1; }"}
+	out, err := Gate(context.Background(), shell(), repo, t.TempDir(), loop, time.Minute, func(string) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Passed || !strings.Contains(out.Output, "missing secret.txt") || out.Head != git(t, repo, "rev-parse", "HEAD") {
+		t.Fatalf("got %+v, want failed for want of the ignored secret.txt", out)
+	}
+	data, err := os.ReadFile(ran)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tree := strings.TrimSpace(string(data))
+	if real, _ := filepath.EvalSymlinks(repo); tree == real {
+		t.Fatal("the gate ran in the Job's worktree")
+	}
+	if _, err := os.Stat(tree); !os.IsNotExist(err) {
+		t.Fatalf("the gate's checkout %s is still there: %v", tree, err)
+	}
+	if n := worktrees(t, repo); n != 1 {
+		t.Fatalf("%d worktrees registered after the gate, want only the repo", n)
+	}
+}
+
+func TestGateCommandsCannotForgeOrMoveTheCheckoutsGitPointer(t *testing.T) {
+	var env []string
+	for _, kv := range os.Environ() {
+		if !strings.HasPrefix(kv, "TMPDIR=") {
+			env = append(env, kv)
+		}
+	}
+	r := runner.Runner{Environ: append(env, "TMPDIR="+t.TempDir()), Cache: t.TempDir()}
+	loop := config.Loop{Setup: `echo 'gitdir: /nowhere' > .git; mv "$PWD" "$PWD.moved"; true`, Verify: "head -c 7 .git"}
+	out, err := Gate(context.Background(), r, newRepo(t), t.TempDir(), loop, time.Minute, func(string) {})
+	if err != nil || !out.Passed || out.Output != "gitdir:" {
+		t.Fatalf("got %+v, %v; want a pass on the checkout's own .git pointer", out, err)
+	}
+}
+
 func TestGateRunsSetupBeforeTheVerifyCommand(t *testing.T) {
 	repo := newRepo(t)
 	write(t, filepath.Join(repo, ".gitignore"), "node_modules/\n")
 	git(t, repo, "add", ".gitignore")
 	git(t, repo, "commit", "-q", "-m", "ignore deps")
 	loop := config.Loop{Setup: "mkdir -p node_modules && echo installed", Verify: "test -d node_modules && echo checked"}
-	out, err := Gate(context.Background(), shell(), repo, loop, time.Minute, nil, func(string) {})
+	out, err := Gate(context.Background(), shell(), repo, t.TempDir(), loop, time.Minute, func(string) {})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,9 +135,9 @@ func TestGateRunsSetupBeforeTheVerifyCommand(t *testing.T) {
 
 func TestGateLetsSetupReachTheLoopsNetwork(t *testing.T) {
 	repo := newRepo(t)
-	// The proxy answers 200 when it reaches example.com and 502 when this machine is offline.
-	loop := config.Loop{Setup: "curl -s -m 5 -o /dev/null -w 'connect-%{http_connect}\\n' https://example.com/; exit 1", Verify: "true", Network: []string{"example.com"}}
-	out, err := Gate(context.Background(), shell(), repo, loop, time.Minute, nil, func(string) {})
+	// curl outwaits the proxy's 10-second dial, which answers 200 when it reaches example.com and 502 otherwise.
+	loop := config.Loop{Setup: "curl -s -m 15 -o /dev/null -w 'connect-%{http_connect}\\n' https://example.com/; exit 1", Verify: "true", Network: []string{"example.com"}}
+	out, err := Gate(context.Background(), shell(), repo, t.TempDir(), loop, time.Minute, func(string) {})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,7 +156,7 @@ func TestGateFailsOnSetupThatFailsOrChangesTheTree(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			repo := newRepo(t)
 			marker := filepath.Join(t.TempDir(), "ran")
-			out, err := Gate(context.Background(), shell(), repo, config.Loop{Setup: c.setup, Verify: "touch " + marker}, time.Minute, nil, func(string) {})
+			out, err := Gate(context.Background(), shell(), repo, t.TempDir(), config.Loop{Setup: c.setup, Verify: "touch " + marker}, time.Minute, func(string) {})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -129,7 +175,7 @@ func TestGateFailsOnSetupThatFailsOrChangesTheTree(t *testing.T) {
 func TestGateNamesRefusedHostsWhenVerifyFailsAfterSetup(t *testing.T) {
 	repo := newRepo(t)
 	loop := config.Loop{Setup: "curl -s -m 5 https://example.com/ || true", Verify: "echo 'module not found'; exit 1"}
-	out, err := Gate(context.Background(), shell(), repo, loop, time.Minute, nil, func(string) {})
+	out, err := Gate(context.Background(), shell(), repo, t.TempDir(), loop, time.Minute, func(string) {})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,12 +190,22 @@ func TestGateNamesRefusedHostsWhenACommandTimesOut(t *testing.T) {
 		"verify": {Setup: "curl -s -m 5 https://example.com/ || true", Verify: "sleep 60"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			_, err := Gate(context.Background(), shell(), newRepo(t), loop, 3*time.Second, nil, func(string) {})
+			repo := newRepo(t)
+			_, err := Gate(context.Background(), shell(), repo, t.TempDir(), loop, 3*time.Second, func(string) {})
 			if !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "example.com") || strings.Contains(err.Error(), "\n") {
 				t.Fatalf("got %q, want a one-line deadline error naming example.com", err)
 			}
+			if n := worktrees(t, repo); n != 1 {
+				t.Fatalf("%d worktrees registered after a timed-out gate, want only the repo", n)
+			}
 		})
 	}
+}
+
+// worktrees counts the worktrees registered in repo, repo's own included.
+func worktrees(t *testing.T, repo string) int {
+	t.Helper()
+	return strings.Count(git(t, repo, "worktree", "list", "--porcelain"), "worktree ")
 }
 
 func shell() runner.Runner { return runner.Runner{Environ: os.Environ(), Cache: os.TempDir()} }

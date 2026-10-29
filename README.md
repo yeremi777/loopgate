@@ -28,7 +28,7 @@ flowchart TD
     kind -- yes --> drill["/drill, unattended:<br/>a spec or a one-line plan"]
     kind -- no --> impl
     drill --> impl["/implement"]
-    impl --> gate{"Verify gate:<br/>setup, if set, then verify<br/>exit 0 on a clean, committed tree"}
+    impl --> gate{"Verify gate:<br/>setup, if set, then verify<br/>exit 0 on a fresh checkout<br/>of the clean, committed HEAD"}
     gate -- fail --> log[("Progress log")]
     log --> impl
     gate -- pass --> rubric{"/rubric defect review"}
@@ -51,7 +51,7 @@ flowchart LR
     loop -- "draft PR" --> review["You review and merge"]
 ```
 
-Pass or fail comes only from the exit codes of your setup and verify commands on a clean, committed tree that setup leaves unchanged, never from the model's claim. Each stage is a fresh `claude -p` session; what earlier implement runs learned reaches the next one through a progress log.
+Pass or fail comes only from the exit codes of your setup and verify commands on a fresh checkout of the clean, committed HEAD that setup leaves unchanged, never from the model's claim; a gitignored file on disk never reaches that checkout. Each stage is a fresh `claude -p` session; what earlier implement runs learned reaches the next one through a progress log.
 
 ## Install
 
@@ -129,8 +129,8 @@ A timer loop replaces `github` with `timer: { every: 6h }` or `timer: { cron: "0
 
 | Field | Meaning |
 |---|---|
-| `verify` | Shell command run in the worktree. Exit 0 is the only pass. |
-| `setup` | Optional. Shell command run in the worktree before each verify command, to install what the offline verify command needs. It must exit 0 and change no tracked file, and what it installs must be gitignored. When the gate fails, `loopctl logs <job>` names each host outside `network` that setup tried to reach. The install tool must honor `HTTPS_PROXY`; one that ignores it fails without a named host. With pnpm through corepack, run `pnpm --version` in the checkout first, and again after `packageManager` changes: setup cannot write corepack's own cache. |
+| `verify` | Shell command run on a fresh checkout of the worktree's HEAD, which holds no gitignored file but what `setup` installed. Exit 0 is the only pass. |
+| `setup` | Optional. Shell command run on that fresh checkout before each verify command, to install what the offline verify command needs; the job's worktree keeps none of it. It must exit 0 and change no tracked file, and what it installs must be gitignored. When the gate fails, `loopctl logs <job>` names each host outside `network` that setup tried to reach. The install tool must honor `HTTPS_PROXY`; one that ignores it fails without a named host. With pnpm through corepack, run `pnpm --version` in the checkout first, and again after `packageManager` changes: setup cannot write corepack's own cache. |
 | `bounds` | Required. `max_iterations` counts implement runs; `timeout` covers the whole job. |
 | `protected` | A change to a matching path blocks the job for you to decide. |
 | `network` | Domains the sandboxed stages and the setup command may reach, such as package registries. GitHub domains are refused. The verify command gets no network. |
@@ -179,7 +179,7 @@ Summaries follow your `tldr` skill.
 - The verify command runs code the model wrote, so it runs under macOS Seatbelt: no network but localhost, no keychain and no SSH agent (so no GitHub credentials), and writes only to the worktree, `~/.loopd/cache` and `TMPDIR`. The verify command cannot write the worktree's `.git` pointer either. Go modules come from the stages' downloads first, then from your own module cache.
 - The setup command runs code the model can change, such as `postinstall` scripts, so it runs under the same Seatbelt profile as the verify command. Beyond localhost, which any local service listens on, its only way out is a proxy in `loopd` that tunnels to port 443 of the loop's `network` domains; the proxy refuses everything else, ends its tunnels when setup ends, and a failed gate names each host it refused. Setup can still send what it reads to those domains. Stages, setup and verify keep the npm, pnpm, uv and pip caches in `~/.loopd/cache`, which every loop shares.
 - Stages, the setup command and the verify command cannot read `~/.ssh`, `~/.aws`, `~/.config/gh`, `~/.gnupg`, `~/.netrc`, `~/.npmrc`, `~/.docker`, `~/.kube` or `~/Library/Keychains`. Stages cannot write the repository's git config, hooks or the worktree's `.git` pointer, and `loopd` runs its own git with hooks and fsmonitor off.
-- After every stage, a change to a protected path, committed or not, ignored files included except installed dependencies under `node_modules` and `.venv` outside `.claude/` and `.github/`, blocks the job before the next stage starts. The same check runs after every verify gate.
+- After every stage, a change to a protected path in any letter case, committed or not, ignored files included except installed dependencies under `node_modules` and `.venv` outside `.claude/` and `.github/`, blocks the job before the next stage starts. The setup and verify commands write only their own checkout, never the job's worktree.
 - `land` may change unprotected Markdown only. Any change after the gate to a file that is not Markdown (a rename counts as removing one path and adding another), or a rewrite of the gated commit, fails the job before anything is pushed.
 - Issue text reaches the model as fenced, untrusted data. It cannot change the verify command, bounds, protected paths, or stages.
 - Stages get an allowlisted environment; your other variables stay in `loopd`. Every stage, setup and verify run is its own process group, which is killed on timeout, stop, or takeover.

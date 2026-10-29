@@ -24,9 +24,9 @@ loopgate is a local macOS service, `loopd`, and its CLI, `loopctl`. It runs Clau
 
 ## Invariants
 - No Claude Code stage has a network path to GitHub; only `loopd` pushes, without force, and only opens draft PRs.
-- Pass or fail comes only from the Setup and verify commands' exit codes on a clean, committed tree that the Setup command leaves unchanged, never from a model's report.
+- Pass or fail comes only from the Setup and verify commands' exit codes on a fresh checkout of a clean, committed HEAD that the Setup command leaves unchanged, never from a model's report.
 - The Setup and verify commands run sandboxed, because they execute code the model wrote; the Setup command reaches the network only through `loopd`'s proxy to the Loop's `network` domains.
-- A protected path changed by any stage or Verify gate blocks the Job before the next stage starts.
+- A protected path changed by any stage blocks the Job before the next stage starts; the Verify gate writes only its own checkout.
 - After the gate, only unprotected Markdown may change before the push.
 - One Job holds the running slot at a time; a manual or Blocked Job holds none.
 - A viewer only reads: following or tracking a Job never stops, pauses or slows it, and its live events end with the Job.

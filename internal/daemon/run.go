@@ -264,6 +264,9 @@ func (d *Daemon) start(loop config.Loop, work job.Work) (job.Job, error) {
 	if err := os.MkdirAll(j.Dir, 0o700); err != nil {
 		return job.Job{}, d.fail(created.ID, err)
 	}
+	if err := checkWorktreeFolder(loop.Checkout); err != nil {
+		return job.Job{}, d.fail(created.ID, err)
+	}
 	wt := runner.Worktree{Checkout: loop.Checkout, Path: j.Worktree, Branch: j.Branch}
 	if s, ok := work.(job.Spec); ok {
 		wt.Spec = s.Path
@@ -305,7 +308,7 @@ func (d *Daemon) resume(loop config.Loop, stored store.Job) (job.Job, error) {
 		Base:          stored.Base,
 		Issue:         stored.Issue,
 	}
-	return j, d.st.SetJobState(j.ID, store.Running)
+	return j, d.st.ResumeJob(j.ID)
 }
 
 // finish stores the outcome and frees the slot under one lock, so no caller

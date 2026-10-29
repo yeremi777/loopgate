@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -28,11 +29,13 @@ type Command struct {
 	ExitCode int    `json:"exit_code"`
 }
 
-// Gate runs the Loop's setup command, when set, then its verify command in
-// dir, and passes only a clean, committed tree that setup leaves unchanged and
-// whose commands both exit 0. Neither command may write guard, the repository
-// files that loopd's own git trusts. started gets each command as it starts.
-func Gate(ctx context.Context, r runner.Runner, dir string, loop config.Loop, timeout time.Duration, guard []string, started func(step string)) (Outcome, error) {
+// Gate runs the Loop's setup command, when set, then its verify command on a
+// fresh checkout of dir's HEAD in scratch, a folder neither command may write,
+// so no ignored file in dir reaches them. It passes only a clean, committed dir
+// whose checkout setup leaves unchanged and whose commands both exit 0. Neither
+// command may write the repository files that loopd's own git trusts. started
+// gets each command as it starts.
+func Gate(ctx context.Context, r runner.Runner, dir, scratch string, loop config.Loop, timeout time.Duration, started func(step string)) (_ Outcome, err error) {
 	status, err := runner.Git(ctx, 30*time.Second, dir, "status", "--porcelain")
 	if err != nil {
 		return Outcome{}, err
@@ -44,11 +47,20 @@ func Gate(ctx context.Context, r runner.Runner, dir string, loop config.Loop, ti
 	if err != nil {
 		return Outcome{}, err
 	}
+	tree, remove, err := checkout(ctx, dir, scratch, head)
+	if err != nil {
+		return Outcome{}, err
+	}
+	defer func() { err = errors.Join(err, remove()) }()
+	guard, err := runner.GitGuard(tree)
+	if err != nil {
+		return Outcome{}, err
+	}
 	var refused string
 	var ran []Command
 	if loop.Setup != "" {
 		started("setup: " + loop.Setup)
-		setup, hosts, err := r.Setup(ctx, dir, loop.Setup, timeout, guard, loop.Network)
+		setup, hosts, err := r.Setup(ctx, tree, loop.Setup, timeout, guard, loop.Network)
 		if hosts != nil {
 			refused = "loopgate refused hosts outside the loop's network list: " + strings.Join(hosts, ", ")
 		}
@@ -59,7 +71,7 @@ func Gate(ctx context.Context, r runner.Runner, dir string, loop config.Loop, ti
 		if setup.ExitCode != 0 {
 			return Outcome{Output: fmt.Sprintf("setup command exited %d:\n%s%s", setup.ExitCode, setup.Output, block(refused)), Commands: ran}, nil
 		}
-		status, err := runner.Git(ctx, 30*time.Second, dir, "status", "--porcelain")
+		status, err := runner.Git(ctx, 30*time.Second, tree, "status", "--porcelain")
 		if err != nil {
 			return Outcome{}, err
 		}
@@ -68,7 +80,7 @@ func Gate(ctx context.Context, r runner.Runner, dir string, loop config.Loop, ti
 		}
 	}
 	started("verify: " + loop.Verify)
-	res, err := r.Shell(ctx, dir, loop.Verify, timeout, guard)
+	res, err := r.Shell(ctx, tree, loop.Verify, timeout, guard)
 	if err != nil {
 		return Outcome{}, fmt.Errorf("verify command: %w%s", err, inline(refused))
 	}
@@ -77,6 +89,20 @@ func Gate(ctx context.Context, r runner.Runner, dir string, loop config.Loop, ti
 		return Outcome{Head: head, Output: fmt.Sprintf("verify command exited %d:\n%s%s", res.ExitCode, res.Output, block(refused)), Commands: ran}, nil
 	}
 	return Outcome{Passed: true, Head: head, Output: res.Output, Commands: ran}, nil
+}
+
+// checkout adds a detached worktree of head in scratch and returns it with
+// the function that removes it.
+func checkout(ctx context.Context, dir, scratch, head string) (string, func() error, error) {
+	tree, err := os.MkdirTemp(scratch, "gate-")
+	if err != nil {
+		return "", nil, fmt.Errorf("verify gate checkout: %w", err)
+	}
+	remove := func() error { return runner.RemoveWorktree(context.WithoutCancel(ctx), dir, tree) }
+	if _, err := runner.Git(ctx, time.Minute, dir, "worktree", "add", "--quiet", "--detach", tree, head); err != nil {
+		return "", nil, errors.Join(fmt.Errorf("verify gate checkout of %s: %w", head, err), remove())
+	}
+	return tree, remove, nil
 }
 
 // inline and block place a note at the end of an error line or of command output.

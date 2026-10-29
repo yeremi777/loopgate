@@ -115,6 +115,31 @@ func TestHandbackRunsTheLoopAgainOnTheHumansCommits(t *testing.T) {
 	}
 }
 
+func TestHandbackClearsTheEarlierOutcome(t *testing.T) {
+	r := newRunEnv(t)
+	started, _ := r.d.Run("deps", "")
+	if _, err := r.d.Takeover(started.ID); err != nil {
+		t.Fatal(err)
+	}
+	earlier := store.Finish{State: store.Manual, Question: "which db?", Summary: "stopped", Error: "stage failed", EndCommit: "abc", TestGuide: "run it", CostUSD: 1.5}
+	if err := r.st.FinishJob(started.ID, earlier); err != nil {
+		t.Fatal(err)
+	}
+	cost := r.waitDone(t, started.ID).CostUSD
+	back, err := r.d.Handback(started.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if back.Question != "" || back.Summary != "" || back.Error != "" || back.EndCommit != "" || back.TestGuide != "" || !back.Ended.IsZero() {
+		t.Fatalf("handed back with the earlier outcome: %+v", back)
+	}
+	if back.CostUSD != cost {
+		t.Fatalf("cost %v, want %v kept", back.CostUSD, cost)
+	}
+	r.release()
+	r.waitDone(t, started.ID)
+}
+
 func TestHandbackWaitsForTheSlot(t *testing.T) {
 	r := newRunEnv(t)
 	first, _ := r.d.Run("deps", "")

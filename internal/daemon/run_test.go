@@ -29,6 +29,15 @@ func TestRunThatFailsToStartLeavesNoWorktreeFolderBesideTheCheckout(t *testing.T
 	}
 }
 
+func TestRunOnACheckoutWhoseParentIsNotWritableNamesTheWorktreeFolder(t *testing.T) {
+	r := newRunEnv(t)
+	readOnly(t, filepath.Dir(r.checkout))
+	_, err := r.d.Run("deps", "")
+	if want := "worktree folder " + Tilde(r.checkout+"-worktrees"); err == nil || !strings.Contains(err.Error(), want) || !strings.Contains(err.Error(), "make "+Tilde(filepath.Dir(r.checkout))+" writable") {
+		t.Fatalf("err %v, want it to name the %s and the parent to make writable", err, want)
+	}
+}
+
 func TestRunCarriesSpecJobToDraftPRAndNotifies(t *testing.T) {
 	r := newRunEnv(t)
 	writeFile(filepath.Join(r.checkout, "docs/specs/x.md"), "the spec")

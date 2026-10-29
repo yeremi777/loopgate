@@ -184,6 +184,24 @@ func TestRemoveWorktreeDropsALockedHalfMadeWorktree(t *testing.T) {
 	}
 }
 
+func TestRemoveWorktreeRemovesFoldersACommandMadeReadOnly(t *testing.T) {
+	checkout, _ := cloneWithOrigin(t)
+	path := filepath.Join(t.TempDir(), "wt")
+	gitRun(t, checkout, "worktree", "add", "--quiet", "--detach", path)
+	writeFile(t, filepath.Join(path, "deps/pkg/index.js"), "x")
+	for _, dir := range []string{"deps/pkg", "deps"} {
+		if err := os.Chmod(filepath.Join(path, dir), 0o555); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := RemoveWorktree(context.Background(), checkout, path); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("worktree directory still there: %v", err)
+	}
+}
+
 func TestGitIgnoresHooksAndFsmonitorPlantedInTheRepo(t *testing.T) {
 	checkout, _ := cloneWithOrigin(t)
 	marker := filepath.Join(t.TempDir(), "ran")

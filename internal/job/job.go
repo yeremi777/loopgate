@@ -166,14 +166,6 @@ func (r *jobRun) iterate(ctx context.Context) (Outcome, error) {
 		if err != nil {
 			return Outcome{}, err
 		}
-		// The setup and verify commands run code too, so they face the same check as a stage.
-		question, err := r.protectedQuestion(ctx)
-		if err != nil {
-			return Outcome{}, err
-		}
-		if question != "" {
-			return Outcome{State: store.Blocked, Question: question, Summary: res.Summary}, nil
-		}
 		if !gate.Passed {
 			if err := r.progress.add(i, "verify gate failed", "```\n"+tail(gate.Output)+"\n```"); err != nil {
 				return Outcome{}, err
@@ -301,7 +293,7 @@ func (r *jobRun) runStage(ctx context.Context, name, prompt string) (runner.Resu
 func (r *jobRun) gate(ctx context.Context, i int) (verify.Outcome, error) {
 	name := fmt.Sprintf("verify %d", i)
 	row := StageRow{Stage: name, Start: time.Now()}
-	gate, err := verify.Gate(ctx, r.Shell, r.job.Worktree, r.job.Loop, remaining(ctx), r.guard, func(step string) { r.job.Feed.Bound(name, step) })
+	gate, err := verify.Gate(ctx, r.Shell, r.job.Worktree, r.job.Dir, r.job.Loop, remaining(ctx), func(step string) { r.job.Feed.Bound(name, step) })
 	row.Commands = gate.Commands
 	switch {
 	case err != nil:

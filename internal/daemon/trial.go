@@ -38,11 +38,7 @@ func (d *Daemon) trial(ctx context.Context, loop config.Loop) (err error) {
 	if err != nil {
 		return fmt.Errorf("trial gate: %w", err)
 	}
-	guard, err := runner.GitGuard(wt)
-	if err != nil {
-		return err
-	}
-	gate, err := verify.Gate(ctx, d.deps.Pipeline.Shell, wt, loop, loop.Bounds.Timeout, guard, func(string) {})
+	gate, err := verify.Gate(ctx, d.deps.Pipeline.Shell, wt, dir, loop, loop.Bounds.Timeout, func(string) {})
 	switch {
 	case errors.Is(ctx.Err(), context.DeadlineExceeded):
 		return fmt.Errorf("trial gate on origin/%s ran past the loop's timeout of %s; loop %s not added: %w", made.DefaultBranch, loop.Bounds.Timeout, loop.Name, err)
@@ -57,8 +53,8 @@ func (d *Daemon) trial(ctx context.Context, loop config.Loop) (err error) {
 }
 
 // checkCheckout refuses a checkout that no Job could start from: one that is
-// not a clone's top level, has no origin HEAD to cut worktrees from, or whose
-// origin is not the GitHub repo the Loop polls.
+// not a clone's top level, has no origin HEAD to cut worktrees from, has no
+// writable worktree folder, or whose origin is not the GitHub repo the Loop polls.
 func checkCheckout(ctx context.Context, loop config.Loop) error {
 	top, err := runner.Git(ctx, 30*time.Second, loop.Checkout, "rev-parse", "--show-toplevel")
 	if err != nil {
@@ -69,6 +65,9 @@ func checkCheckout(ctx context.Context, loop config.Loop) error {
 	}
 	if _, err := runner.Git(ctx, 30*time.Second, loop.Checkout, "symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"); err != nil {
 		return fmt.Errorf("checkout %s has no origin HEAD; run `git -C %s remote set-head origin --auto`", loop.Checkout, loop.Checkout)
+	}
+	if err := checkWorktreeFolder(loop.Checkout); err != nil {
+		return err
 	}
 	gh, ok := loop.Trigger.(config.GitHub)
 	if !ok {
@@ -82,6 +81,21 @@ func checkCheckout(ctx context.Context, loop config.Loop) error {
 		return fmt.Errorf("checkout %s is a clone of %s, not of the loop's repo %s", loop.Checkout, repo, gh.Repo)
 	}
 	return nil
+}
+
+// checkWorktreeFolder refuses a checkout whose worktree folder, or its parent
+// while the folder does not exist, cannot take a new entry; it leaves nothing behind.
+func checkWorktreeFolder(checkout string) error {
+	folder := checkout + "-worktrees"
+	dir := folder
+	if _, err := os.Stat(folder); errors.Is(err, os.ErrNotExist) {
+		dir = filepath.Dir(checkout)
+	}
+	probe, err := os.MkdirTemp(dir, ".loopgate-")
+	if err != nil {
+		return fmt.Errorf("checkout %s has no writable worktree folder %s: %w; make %s writable", Tilde(checkout), Tilde(folder), err, Tilde(dir))
+	}
+	return os.Remove(probe)
 }
 
 // repoOf reads owner/repo from the last two path segments of a remote URL,

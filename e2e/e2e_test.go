@@ -396,8 +396,8 @@ func TestHelpExitsZeroAndExplainsStop(t *testing.T) {
 	}
 }
 
-// Go stamps the tag on a tagged commit and a pseudo-version naming the
-// commit otherwise; loopctl prints whichever it got.
+// Go stamps the tag on a tagged commit, a pseudo-version naming the commit
+// otherwise, and (devel) in a detached or outside worktree; loopctl prints whichever it got.
 func TestVersionPrintsTheVersionGoStamped(t *testing.T) {
 	e := newEnv(t, "exit 0")
 	mod, err := exec.Command("go", "version", "-m", filepath.Join(bin, "loopctl")).Output()
@@ -410,7 +410,7 @@ func TestVersionPrintsTheVersionGoStamped(t *testing.T) {
 			stamped = f[2]
 		}
 	}
-	if !strings.HasPrefix(stamped, "v") {
+	if !strings.HasPrefix(stamped, "v") && stamped != "(devel)" {
 		t.Fatalf("go stamped no version into loopctl:\n%s", mod)
 	}
 	for _, arg := range []string{"version", "--version"} {

@@ -91,7 +91,7 @@ func Touched(ctx context.Context, dir, base string, globs []string) ([]string, e
 // manager fills, whose files are the installed dependencies, not the Job's work.
 // Claude Code and GitHub configuration never holds dependencies.
 func inDependencyDir(file string) bool {
-	if strings.HasPrefix(file, ".claude/") || strings.HasPrefix(file, ".github/") {
+	if lower := strings.ToLower(file); strings.HasPrefix(lower, ".claude/") || strings.HasPrefix(lower, ".github/") {
 		return false
 	}
 	dirs := strings.Split(file, "/")
@@ -108,12 +108,15 @@ func splitNUL(s string) []string {
 	return out
 }
 
-// Protected returns the changed paths that match the default protected globs or globs.
+// Protected returns the changed paths that match the default protected globs or globs, in any letter case.
 func Protected(changes []Change, globs []string) []string {
 	all := append(append([]string{}, defaultProtected...), globs...)
+	for i, g := range all {
+		all[i] = strings.ToLower(g)
+	}
 	var hits []string
 	for _, c := range changes {
-		if matchAny(all, c.Path) {
+		if matchAny(all, strings.ToLower(c.Path)) {
 			hits = append(hits, c.Path)
 		}
 	}
