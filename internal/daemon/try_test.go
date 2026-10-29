@@ -7,7 +7,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 
@@ -34,9 +33,6 @@ func TestTryCopiesTheIncludedIgnoredFilesIntoTheDoneJobsOwnWorktree(t *testing.T
 	tried, err := r.d.Try(j.ID)
 	if err != nil {
 		t.Fatal(err)
-	}
-	if want := []string{".env", "config/local.json"}; !slices.Equal(tried.Copied, want) {
-		t.Fatalf("copied %q, want %q", tried.Copied, want)
 	}
 	if tried.Job.ID != j.ID || tried.Job.Worktree != j.Worktree || tried.Job.TestGuide != "go run ./cmd/app, then GET /ok" {
 		t.Fatalf("tried job %+v", tried.Job)
@@ -70,9 +66,8 @@ func TestTryCopiesTheIncludedIgnoredFilesIntoTheDoneJobsOwnWorktree(t *testing.T
 func TestTryWithoutAWorktreeincludeCopiesNothing(t *testing.T) {
 	r, j := triedEnv(t)
 	writeFile(filepath.Join(r.checkout, ".env"), "SECRET=1\n")
-	tried, err := r.d.Try(j.ID)
-	if err != nil || len(tried.Copied) != 0 {
-		t.Fatalf("tried %+v, %v; want nothing copied", tried, err)
+	if _, err := r.d.Try(j.ID); err != nil {
+		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(j.Worktree, ".env")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf(".env reached the worktree: %v", err)
@@ -100,8 +95,11 @@ func TestTryRefusesFilesTheJobsBranchDoesNotIgnoreAndNamesInfoExclude(t *testing
 	}
 
 	writeFile(exclude, ".env\n")
-	if tried, err := r.d.Try(j.ID); err != nil || !slices.Equal(tried.Copied, []string{".env", "config/local.json"}) {
-		t.Fatalf("try once info/exclude lists .env: %+v, %v", tried, err)
+	if _, err := r.d.Try(j.ID); err != nil {
+		t.Fatalf("try once info/exclude lists .env: %v", err)
+	}
+	if got := readFile(t, filepath.Join(j.Worktree, ".env")); got != "SECRET=1\n" {
+		t.Fatalf(".env in the worktree %q", got)
 	}
 	if status := runGit(t, j.Worktree, "status", "--porcelain"); status != "" {
 		t.Fatalf("worktree status after try %q", status)
@@ -217,12 +215,11 @@ func TestTryAddsAGoneWorktreeAgainFromTheJobsBranch(t *testing.T) {
 	if err := os.RemoveAll(j.Worktree); err != nil {
 		t.Fatal(err)
 	}
-	tried, err := r.d.Try(j.ID)
-	if err != nil {
+	if _, err := r.d.Try(j.ID); err != nil {
 		t.Fatalf("try of a job whose worktree is gone: %v", err)
 	}
-	if !slices.Equal(tried.Copied, []string{".env", "config/local.json"}) {
-		t.Fatalf("copied %q", tried.Copied)
+	if got := readFile(t, filepath.Join(j.Worktree, "config/local.json")); got != `{"db":"x"}` {
+		t.Fatalf("config/local.json in the worktree %q", got)
 	}
 	if now := runGit(t, j.Worktree, "rev-parse", "HEAD"); now != head {
 		t.Fatalf("head %s after the worktree was added again, want %s", now, head)

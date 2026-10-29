@@ -141,6 +141,41 @@ func TestAddRefusesACheckoutThatJobsCannotUse(t *testing.T) {
 	}
 }
 
+func TestAddRefusesACheckoutWhoseWorktreeFolderCannotBeMadeAndLeavesNothing(t *testing.T) {
+	for name, locked := range map[string]func(checkout string) string{
+		"parent not writable": func(checkout string) string { return filepath.Dir(checkout) },
+		"folder not writable": func(checkout string) string {
+			if err := os.Mkdir(checkout+"-worktrees", 0o755); err != nil {
+				t.Fatal(err)
+			}
+			return checkout + "-worktrees"
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			checkout := gittest.Checkout(t, "https://github.com/me/app.git")
+			dir := locked(checkout)
+			readOnly(t, dir)
+			before, _ := os.ReadDir(dir)
+			_, err := newDaemon(t, t.TempDir()).Add(context.Background(), []byte(fixLoop(checkout)))
+			if want := "worktree folder " + Tilde(checkout+"-worktrees"); err == nil || !strings.Contains(err.Error(), want) || !strings.Contains(err.Error(), "make "+Tilde(dir)+" writable") {
+				t.Fatalf("err %v, want it to name the %s and %s to make writable", err, want, dir)
+			}
+			if after, _ := os.ReadDir(dir); len(after) != len(before) {
+				t.Fatalf("add left %d entries in %s, want %d", len(after), dir, len(before))
+			}
+		})
+	}
+}
+
+// readOnly takes write access to dir away for the rest of t.
+func readOnly(t *testing.T, dir string) {
+	t.Helper()
+	if err := os.Chmod(dir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+}
+
 func TestAddRefusesACheckoutPathInAnotherLetterCaseAndNamesTheRealOne(t *testing.T) {
 	checkout := gittest.Checkout(t, "https://github.com/me/app.git")
 	upper := strings.ToUpper(checkout)

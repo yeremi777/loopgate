@@ -617,34 +617,21 @@ func TestStageThatLeavesProtectedFilesBlocksBeforeTheNextStage(t *testing.T) {
 	f.wantKinds("/implement")
 }
 
-func TestGateThatLeavesProtectedFilesBlocksBeforeRubric(t *testing.T) {
+func TestGateCommandsLeaveNothingInTheJobsWorktree(t *testing.T) {
 	j := newJob(t, 3)
 	writeFile(t, filepath.Join(j.Worktree, ".gitignore"), ".claude/settings.local.json\n")
 	git(t, j.Worktree, "add", ".gitignore")
 	git(t, j.Worktree, "commit", "-q", "-m", "ignore")
 	j.Base = git(t, j.Worktree, "rev-parse", "HEAD")
 	j.Loop.Setup = `mkdir -p .claude && echo '{"hooks":{}}' > .claude/settings.local.json`
-	f := &fakeStages{t: t, steps: []step{commits(j, "ok.txt")}}
-	out := Pipeline{Stages: f, Shell: shell()}.Run(context.Background(), j)
-	if out.State != store.Blocked || !strings.Contains(out.Question, ".claude/settings.local.json") {
-		t.Fatalf("got %+v, want blocked naming the file setup left", out)
+	f := &fakeStages{t: t, steps: []step{commits(j, "ok.txt"), reports(runner.StatusDone, "clean"), lands("t\n\nb")}}
+	out := Pipeline{Stages: f, Shell: shell(), Publisher: &fakePublisher{}}.Run(context.Background(), j)
+	if out.State != store.Done {
+		t.Fatalf("got %+v, want done", out)
 	}
-	f.wantKinds("/implement")
-}
-
-func TestFailedGateThatLeavesProtectedFilesBlocksBeforeTheNextImplement(t *testing.T) {
-	j := newJob(t, 3)
-	writeFile(t, filepath.Join(j.Worktree, ".gitignore"), ".claude/settings.local.json\n")
-	git(t, j.Worktree, "add", ".gitignore")
-	git(t, j.Worktree, "commit", "-q", "-m", "ignore")
-	j.Base = git(t, j.Worktree, "rev-parse", "HEAD")
-	j.Loop.Setup = `mkdir -p .claude && echo '{"hooks":{}}' > .claude/settings.local.json; exit 1`
-	f := &fakeStages{t: t, steps: []step{commits(j, "ok.txt")}}
-	out := Pipeline{Stages: f, Shell: shell()}.Run(context.Background(), j)
-	if out.State != store.Blocked || !strings.Contains(out.Question, ".claude/settings.local.json") {
-		t.Fatalf("got %+v, want blocked naming the file setup left", out)
+	if _, err := os.Stat(filepath.Join(j.Worktree, ".claude/settings.local.json")); !os.IsNotExist(err) {
+		t.Fatalf("setup's file reached the job's worktree: %v", err)
 	}
-	f.wantKinds("/implement")
 }
 
 func TestLandThatEditsProtectedMarkdownIsNeverPublished(t *testing.T) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -92,6 +93,15 @@ func RemoveWorktree(ctx context.Context, checkout, path string) error {
 			}
 		}
 	}
+	// Owner write goes back on each folder, so the entries of one a command made read-only can be deleted.
+	_ = filepath.WalkDir(path, func(p string, d fs.DirEntry, err error) error {
+		if err == nil && d.IsDir() {
+			if info, err := d.Info(); err == nil {
+				_ = os.Chmod(p, info.Mode().Perm()|0o200)
+			}
+		}
+		return nil
+	})
 	if err := os.RemoveAll(path); err != nil {
 		return err
 	}

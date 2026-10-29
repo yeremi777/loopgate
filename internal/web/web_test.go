@@ -243,7 +243,7 @@ func TestIndexListsEachLoopWithItsJobsLinkingToTheirPages(t *testing.T) {
 	done := e.job(t, "deps", "task tidy", store.Finish{State: store.Done, PRURL: "https://github.com/me/app/pull/9"})
 	blocked := e.job(t, "deps", "task <b>bold</b>", store.Finish{State: store.Blocked, Question: "<script>alert(1)</script>"})
 	orphan := e.job(t, "gone", "task old", store.Finish{State: store.Failed, Error: "fetch failed"})
-	e.job(t, "deps", "task mine", store.Finish{State: store.Manual})
+	mine := e.job(t, "deps", "task mine", store.Finish{State: store.Manual})
 
 	res := get(t, p.URL("/"), "")
 	body := readBody(t, res)
@@ -267,6 +267,12 @@ func TestIndexListsEachLoopWithItsJobsLinkingToTheirPages(t *testing.T) {
 	}
 	if strings.Contains(body, "<script>alert") || strings.Contains(body, "<b>bold") {
 		t.Fatalf("index put a job's text in as markup:\n%s", body)
+	}
+	if !strings.Contains(body, `<meta http-equiv="refresh" content="5">`) {
+		t.Errorf("index does not load itself again every 5 seconds:\n%s", body)
+	}
+	if i, j, k := strings.Index(body, ">"+blocked.ID+"<"), strings.Index(body, ">"+mine.ID+"<"), strings.Index(body, ">"+done.ID+"<"); i > j || j > k {
+		t.Errorf("deps jobs not Blocked first, then newest first:\n%s", body)
 	}
 	if i, j := strings.Index(body, ">deps<"), strings.Index(body, ">gone<"); i > j {
 		t.Fatalf("loops not sorted by name:\n%s", body)

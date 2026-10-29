@@ -60,6 +60,26 @@ func TestProtectedMatchesDefaultsAndLoopGlobs(t *testing.T) {
 	}
 }
 
+// macOS folds letter case, so .CLAUDE/ is the folder Claude Code reads as .claude/.
+func TestProtectedMatchesInAnyLetterCase(t *testing.T) {
+	changes := []Change{
+		{Path: ".CLAUDE/settings.json", Kind: Added},
+		{Path: ".Github/workflows/ci.yml", Kind: Modified},
+		{Path: "docs/claude.md", Kind: Added},
+		{Path: "pkg/Agents.MD", Kind: Added},
+		{Path: "ci/Lint.YML", Kind: Modified},
+		{Path: "docs/notes.md", Kind: Added},
+	}
+	got := Protected(changes, []string{"ci/lint.yml"})
+	want := []string{".CLAUDE/settings.json", ".Github/workflows/ci.yml", "docs/claude.md", "pkg/Agents.MD", "ci/Lint.YML"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+	if got := TestChanges([]Change{{Path: "A_TEST.GO", Kind: Modified}}, []string{"**/*_test.go"}); got != nil {
+		t.Fatalf("test globs matched %+v in another letter case", got)
+	}
+}
+
 func TestTestChangesReportsChangedAndDeletedTestsOnly(t *testing.T) {
 	changes := []Change{
 		{Path: "a_test.go", Kind: Modified},
@@ -143,6 +163,23 @@ func TestTouchedSkipsIgnoredFilesInDependencyDirsOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	if want := []string{".claude/commands/node_modules/rubric.md", ".github/node_modules/x", "node_modules_x/CLAUDE.md", "src/CLAUDE.md", "vendor/node_modules/kept/CLAUDE.md"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+func TestTouchedKeepsIgnoredDependencyDirsUnderClaudeInAnyLetterCase(t *testing.T) {
+	branch, _ := newBranch(t)
+	base := git(t, branch, "rev-parse", "HEAD")
+	write(t, filepath.Join(branch, ".gitignore"), "node_modules/\n")
+	git(t, branch, "add", ".gitignore")
+	git(t, branch, "commit", "-q", "-m", "ignore dependencies")
+	write(t, filepath.Join(branch, ".CLAUDE/node_modules/hooks.md"), "rules")
+	write(t, filepath.Join(branch, ".CLAUDE/settings.local.json"), `{"hooks":{}}`)
+	got, err := Touched(context.Background(), branch, base, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{".CLAUDE/node_modules/hooks.md", ".CLAUDE/settings.local.json"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %q, want %q", got, want)
 	}
 }

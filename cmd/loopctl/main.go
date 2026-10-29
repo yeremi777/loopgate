@@ -407,7 +407,7 @@ func printEnd(j store.Job) {
 	}
 }
 
-// listBlock is one Loop of loopctl list with its Jobs, newest first.
+// listBlock is one Loop of loopctl list with its Jobs, Blocked, failed and exhausted first.
 type listBlock struct {
 	name, state, trigger, checkout string
 	jobs                           []store.Job

@@ -281,6 +281,11 @@ func (s *Store) StartJob(id string, st Start) error {
 		Running, st.Work, st.Branch, st.Worktree, st.Base, st.Issue, time.Now().UnixMilli(), id)
 }
 
+// ResumeJob marks a handed-back Job running, with no outcome from its earlier run.
+func (s *Store) ResumeJob(id string) error {
+	return s.updateJob(id, `UPDATE jobs SET state = ?, question = '', summary = '', pr_url = '', error = '', end_commit = '', test_guide = '', ended_ms = 0 WHERE id = ?`, Running, id)
+}
+
 // FinishJob stores how a run of a Job ended, now.
 func (s *Store) FinishJob(id string, f Finish) error {
 	return s.updateJob(id, `UPDATE jobs SET state = ?, question = ?, summary = ?, pr_url = ?, cost_usd = cost_usd + ?, error = ?, end_commit = ?, test_guide = ?, ended_ms = ? WHERE id = ?`,
@@ -380,12 +385,12 @@ func (s *Store) Resolve(prefix string) (string, error) {
 }
 
 // Jobs are every Job in progress, that is queued, running, Blocked or
-// manual, and the five newest that ended done, failed or exhausted, newest
-// first by creation.
+// manual, and the five newest that ended done, failed or exhausted; the
+// Blocked, failed and exhausted ones come first, each group newest first by creation.
 func (s *Store) Jobs() ([]Job, error) {
 	rows, err := s.db.Query(`SELECT `+jobColumns+` FROM jobs
 		WHERE state IN (?, ?, ?, ?) OR seq IN (SELECT seq FROM jobs WHERE state IN (?, ?, ?) ORDER BY seq DESC LIMIT 5)
-		ORDER BY seq DESC`, Queued, Running, Blocked, Manual, Done, Failed, Exhausted)
+		ORDER BY state IN (?, ?, ?) DESC, seq DESC`, Queued, Running, Blocked, Manual, Done, Failed, Exhausted, Blocked, Failed, Exhausted)
 	if err != nil {
 		return nil, err
 	}

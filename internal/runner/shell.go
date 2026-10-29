@@ -83,6 +83,9 @@ func seatbelt(writable, denyWrite, denyRead []string) (string, error) {
 	}
 	b.WriteString(")\n")
 	for _, path := range denyWrite {
+		if real, err := filepath.EvalSymlinks(path); err == nil {
+			path = real
+		}
 		b.WriteString("(deny file-write* (literal " + strconv.Quote(path) + ") (subpath " + strconv.Quote(path) + "))\n")
 	}
 	for _, dir := range denyRead {
